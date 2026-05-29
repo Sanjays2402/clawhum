@@ -1,0 +1,7 @@
+{
+  "id": "vad_020",
+  "silence_lead_s": 2.0,
+  "silence_trail_s": 1.0,
+  "voiced_s": 1.0,
+  "threshold_db": -45.0
+}

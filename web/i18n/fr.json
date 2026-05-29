@@ -1,0 +1,16 @@
+{
+  "title": "Fredonne. Trouve.",
+  "subtitle": "Stuck on a tune? Hum a few seconds. We will match it.",
+  "record": "FREDONNE",
+  "stop": "STOP",
+  "matching": "Matching...",
+  "top_k": "top_k",
+  "threshold": "threshold",
+  "library": "Bibliotheque",
+  "feedback": "Feedback",
+  "reindex": "Reindex",
+  "start": "Start",
+  "tracks": "Tracks",
+  "vectors": "Vectors",
+  "backend": "Backend"
+}

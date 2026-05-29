@@ -1,0 +1,16 @@
+{
+  "name": "house_of_rising_sun",
+  "freqs_hz": [
+    262,
+    330,
+    349,
+    392,
+    349,
+    330,
+    262,
+    294,
+    262
+  ],
+  "note_seconds": 0.4,
+  "sample_rate": 48000
+}

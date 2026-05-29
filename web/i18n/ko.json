@@ -1,0 +1,16 @@
+{
+  "title": "흥얼, 찾기.",
+  "subtitle": "Stuck on a tune? Hum a few seconds. We will match it.",
+  "record": "흥얼",
+  "stop": "STOP",
+  "matching": "Matching...",
+  "top_k": "top_k",
+  "threshold": "threshold",
+  "library": "Library",
+  "feedback": "Feedback",
+  "reindex": "Reindex",
+  "start": "Start",
+  "tracks": "Tracks",
+  "vectors": "Vectors",
+  "backend": "Backend"
+}

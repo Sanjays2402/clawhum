@@ -1,0 +1,7 @@
+{
+  "id": "match_003",
+  "top_k": 10,
+  "threshold": 0.15,
+  "expected_top": "track_3",
+  "rerank": true
+}

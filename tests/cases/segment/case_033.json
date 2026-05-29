@@ -1,0 +1,7 @@
+{
+  "id": "seg_033",
+  "window_s": 8,
+  "hop_s": 2,
+  "duration_s": 38,
+  "expected_min_segments": 18
+}

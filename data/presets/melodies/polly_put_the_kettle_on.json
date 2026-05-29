@@ -1,0 +1,19 @@
+{
+  "name": "polly_put_the_kettle_on",
+  "freqs_hz": [
+    392,
+    392,
+    440,
+    440,
+    494,
+    494,
+    494,
+    440,
+    392,
+    330,
+    294,
+    262
+  ],
+  "note_seconds": 0.4,
+  "sample_rate": 48000
+}

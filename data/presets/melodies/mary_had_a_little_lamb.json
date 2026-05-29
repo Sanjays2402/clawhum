@@ -1,0 +1,14 @@
+{
+  "name": "mary_had_a_little_lamb",
+  "freqs_hz": [
+    330,
+    294,
+    262,
+    294,
+    330,
+    330,
+    330
+  ],
+  "note_seconds": 0.4,
+  "sample_rate": 48000
+}

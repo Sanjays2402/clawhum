@@ -1,0 +1,16 @@
+{
+  "title": "Tararea. Encuentra.",
+  "subtitle": "Stuck on a tune? Hum a few seconds. We will match it.",
+  "record": "TARAREA",
+  "stop": "STOP",
+  "matching": "Matching...",
+  "top_k": "top_k",
+  "threshold": "threshold",
+  "library": "Biblioteca",
+  "feedback": "Feedback",
+  "reindex": "Reindex",
+  "start": "Start",
+  "tracks": "Tracks",
+  "vectors": "Vectors",
+  "backend": "Backend"
+}
