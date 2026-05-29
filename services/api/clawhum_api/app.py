@@ -12,6 +12,7 @@ from .routes import library as library_routes
 from .routes import feedback as feedback_routes
 from .routes import health as health_routes
 from .routes import spotify as spotify_routes
+from .middleware import RequestIDMiddleware, SimpleRateLimit
 
 
 @asynccontextmanager
@@ -27,6 +28,8 @@ async def _lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     app = FastAPI(title="ClawHum", version=__version__, lifespan=_lifespan)
+    app.add_middleware(SimpleRateLimit, max_per_minute=120)
+    app.add_middleware(RequestIDMiddleware)
     app.add_middleware(
         CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
     )
@@ -40,3 +43,5 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+# Attach middleware after create_app returns? They are added via factory below.
