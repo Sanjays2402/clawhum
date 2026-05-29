@@ -1,0 +1,15 @@
+{
+  "query_id": "d8f3...",
+  "elapsed_ms": 420,
+  "count": 3,
+  "results": [
+    {
+      "track_id": "local:abc",
+      "title": "Song",
+      "artist": "Artist",
+      "score": 0.78,
+      "segment_index": 2,
+      "source": "local"
+    }
+  ]
+}

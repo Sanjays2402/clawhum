@@ -1,0 +1,6 @@
+{
+  "tracks": 124,
+  "vectors": 987,
+  "dim": 512,
+  "backend": "FaissHNSW"
+}

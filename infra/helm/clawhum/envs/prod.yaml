@@ -1,0 +1,5 @@
+replicaCount: 3
+image:
+  tag: "latest"
+env:
+  CLAWHUM_LOG_LEVEL: "INFO"

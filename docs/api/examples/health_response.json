@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "version": "0.1.0",
+  "embedder": "ClapEmbedder",
+  "index_backend": "FaissHNSW",
+  "tracks": 124,
+  "vectors": 987
+}

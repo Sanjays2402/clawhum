@@ -1,0 +1,9 @@
+{
+  "description": "multipart upload with audio + params",
+  "content_type": "multipart/form-data",
+  "fields": {
+    "audio": "<binary wav/mp3/webm>",
+    "top_k": 10,
+    "threshold": 0.2
+  }
+}
