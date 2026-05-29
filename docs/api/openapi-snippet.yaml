@@ -1,0 +1,21 @@
+openapi: 3.1.0
+info:
+  title: ClawHum
+  version: 0.1.0
+paths:
+  /match:
+    post:
+      summary: Match audio against the library
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                audio: { type: string, format: binary }
+                top_k: { type: integer }
+                threshold: { type: number }
+      responses:
+        "200":
+          description: ranked matches
