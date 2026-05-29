@@ -1,0 +1,23 @@
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile
+    image: clawhum/api:dev
+    ports: ["7451:7451"]
+    env_file: ../../.env
+    volumes:
+      - ../../data:/app/data
+      - ../../models:/app/models
+    restart: unless-stopped
+
+  web:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm install --include=dev && npm run dev"
+    ports: ["7452:7452"]
+    environment:
+      CLAWHUM_API_URL: http://api:7451
+    volumes:
+      - ../../web:/app
+    depends_on: [api]

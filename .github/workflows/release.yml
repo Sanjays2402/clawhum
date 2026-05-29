@@ -1,0 +1,14 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    if: ${{ vars.ENABLE_CI == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

@@ -1,0 +1,26 @@
+image:
+  repository: ghcr.io/sanjays2402/clawhum
+  tag: latest
+  pullPolicy: IfNotPresent
+replicaCount: 2
+service:
+  type: ClusterIP
+  port: 7451
+ingress:
+  enabled: false
+  className: ""
+  host: clawhum.example.com
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+env:
+  CLAWHUM_LOG_LEVEL: INFO
+  CLAWHUM_DEVICE: cpu
+persistence:
+  enabled: true
+  storageClass: ""
+  size: 20Gi

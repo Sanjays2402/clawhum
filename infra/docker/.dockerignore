@@ -1,0 +1,10 @@
+.git
+.venv
+node_modules
+web/.next
+**/__pycache__
+data
+models
+.env
+*.log
+tests

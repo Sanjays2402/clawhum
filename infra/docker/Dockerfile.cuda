@@ -1,0 +1,13 @@
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 python3-pip libsndfile1 ffmpeg && rm -rf /var/lib/apt/lists/*
+COPY pyproject.toml README.md ./
+COPY packages ./packages
+COPY services ./services
+COPY cli ./cli
+RUN pip install --no-cache-dir -U pip && pip install --no-cache-dir ".[ml]"
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/packages/core:/app/packages/audio:/app/packages/embed:/app/packages/index:/app/packages/match:/app/packages/library:/app/services/api:/app/services/indexer:/app/cli
+EXPOSE 7451
+CMD ["uvicorn", "clawhum_api.app:app", "--host", "0.0.0.0", "--port", "7451"]
