@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #08090b;
+  --panel: #111317;
+  --line: #1d2026;
+  --text: #e8eaed;
+  --muted: #8a8f98;
+  --accent: #1db954;
+  --accent2: #5e6ad2;
+}
+
+html, body { background: var(--bg); color: var(--text); }
+body { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; }
+
+.gradient-hero {
+  background: radial-gradient(1200px 600px at 10% -20%, rgba(94, 106, 210, .35), transparent 60%),
+              radial-gradient(1000px 500px at 90% 0%, rgba(29, 185, 84, .25), transparent 60%),
+              linear-gradient(180deg, #0a0c10 0%, #08090b 100%);
+}
+
+.mic-ring {
+  position: relative;
+}
+.mic-ring::before, .mic-ring::after {
+  content: ""; position: absolute; inset: -8px; border-radius: 9999px;
+  border: 2px solid rgba(29,185,84,.35); animation: pulse 2.4s ease-out infinite;
+}
+.mic-ring::after { animation-delay: 1.2s; }
+@keyframes pulse {
+  0% { transform: scale(.9); opacity: .8 }
+  100% { transform: scale(1.6); opacity: 0 }
+}
