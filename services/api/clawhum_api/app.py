@@ -12,6 +12,7 @@ from .routes import library as library_routes
 from .routes import feedback as feedback_routes
 from .routes import health as health_routes
 from .routes import spotify as spotify_routes
+from .metrics import router as metrics_router
 from .middleware import RequestIDMiddleware, SimpleRateLimit
 
 
@@ -39,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(library_routes.router)
     app.include_router(feedback_routes.router)
     app.include_router(spotify_routes.router)
+    app.include_router(metrics_router)
     return app
 
 
