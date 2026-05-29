@@ -32,8 +32,14 @@ class NumpyIndex:
         order = top[np.argsort(-sims[top])]
         return [(int(i), float(sims[i])) for i in order]
 
-    def save(self, path: str) -> None:
+    def _normalize(self, path: str) -> Path:
         p = Path(path)
+        if p.suffix != ".npz":
+            p = p.with_suffix(p.suffix + ".npz") if p.suffix else Path(str(p) + ".npz")
+        return p
+
+    def save(self, path: str) -> None:
+        p = self._normalize(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         np.savez(str(p), vecs=np.stack(self._vecs) if self._vecs else np.zeros((0, self.dim), dtype=np.float32))
         with open(str(p) + ".meta.jsonl", "w") as f:
@@ -41,10 +47,8 @@ class NumpyIndex:
                 f.write(json.dumps(m) + "\n")
 
     def load(self, path: str) -> None:
-        p = Path(path)
-        if not p.with_suffix(".npz").exists() and not str(p).endswith(".npz"):
-            p = p.with_suffix(".npz")
-        if not Path(str(p)).exists():
+        p = self._normalize(path)
+        if not p.exists():
             return
         z = np.load(str(p))
         vecs = z["vecs"]

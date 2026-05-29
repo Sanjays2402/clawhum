@@ -26,11 +26,14 @@ def test_match_endpoint(monkeypatch, tmp_path):
         v = e.embed(melody(freqs), 48000)
         idx.add([IndexedItem(track_id=tid, segment_index=0, vector=v, meta={})])
         tracks.append(Track(id=tid, title=tid.upper()))
-    ix_path = tmp_path / "ix.npz"
+    ix_path = tmp_path / "ix"
     md_path = tmp_path / "meta.jsonl"
     idx.save(str(ix_path))
     write_metadata(md_path, tracks)
 
+    # Force NumPy backend so the API loads the same artifact we wrote
+    monkeypatch.setattr("clawhum_index.factory.make_index",
+                        lambda dim=None: NumpyIndex(dim or 512))
     monkeypatch.setenv("CLAWHUM_INDEX_PATH", str(ix_path))
     monkeypatch.setenv("CLAWHUM_METADATA_PATH", str(md_path))
     monkeypatch.setenv("CLAWHUM_API_KEY", "changeme")
