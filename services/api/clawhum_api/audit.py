@@ -83,6 +83,7 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                     "path": request.url.path,
                     "status": status_code,
                     "request_id": getattr(request.state, "request_id", None),
+                    "trace_id": getattr(request.state, "trace_id", None),
                     "client_ip": request.client.host if request.client else None,
                     "user_agent": request.headers.get("user-agent"),
                     "duration_ms": round((time.time() - started) * 1000, 2),

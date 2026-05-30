@@ -236,6 +236,39 @@ For multi-replica deployments the in-process limiter should be replaced
 with a shared store (Redis); the bucket id format (`key:<name>` or
 `ip:<addr>`) is stable so the swap is mechanical.
 
+### Request correlation and trace context
+
+Every request is tagged with a request id and a W3C Trace Context span
+so log lines, audit rows, and downstream calls can be stitched back
+together without guesswork.
+
+The `RequestIDMiddleware` runs as the outermost middleware and does
+four things on each request:
+
+- Accepts an inbound `X-Request-ID` header or generates a fresh UUID4.
+- Accepts an inbound `traceparent` header (W3C Trace Context, version
+  `00`) and reuses its 128 bit trace id. If the header is missing,
+  malformed, or carries the reserved `ff` version, a fresh trace id is
+  generated from `secrets.token_hex(16)`.
+- Mints a new 64 bit span id for this hop so the service appears as a
+  distinct span in any downstream collector even when forwarding.
+- Binds `request_id`, `trace_id`, `span_id`, `method`, and `path` into
+  structlog `contextvars` for the lifetime of the request. Every log
+  line emitted by application code under that request automatically
+  carries those fields with no extra plumbing. Context is cleared on
+  completion to prevent leakage across requests sharing a worker.
+
+Responses always echo `X-Request-ID` and `traceparent` so callers can
+plumb the same ids into their own logs. Audit log rows also capture
+`request_id` and `trace_id` for forensic joins against the structured
+log stream.
+
+To correlate a user report end to end, ask the caller for the
+`X-Request-ID` or `traceparent` returned with their failure, then
+`jq 'select(.trace_id == "...")' logs.json` or query your tracing
+backend with the same trace id. The audit log can be joined on
+`request_id` for any state-changing call.
+
 ### Audit log
 
 Every mutating HTTP request (anything that is not `GET`, `HEAD`, or `OPTIONS`)
@@ -250,6 +283,7 @@ Each line contains:
   Raw keys are never written to disk.
 - `method`, `path`, `status`, `client_ip`, `user_agent`.
 - `request_id` the `X-Request-Id` returned to the caller, for cross-log correlation.
+- `trace_id` the W3C trace id (32 hex chars) for joining against the structured log stream and any tracing backend.
 - `duration_ms` server-side latency.
 
 Configuration via env:
