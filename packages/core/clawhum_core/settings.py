@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 from functools import lru_cache
 from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -16,6 +18,8 @@ class Settings(BaseSettings):
     metadata_path: Path = Path("./data/index/metadata.jsonl")
     library_path: Path = Path("./data/audio")
     feedback_path: Path = Path("./data/feedback.jsonl")
+    audit_log_path: Path = Path("./data/audit.jsonl")
+    audit_enabled: bool = True
 
     model_id: str = "laion/clap-htsat-unfused"
     device: str = "auto"

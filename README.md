@@ -179,6 +179,87 @@ Exposed at `GET /metrics` (text/plain, Prometheus format):
 - `clawhum_match_total` (counter) `/match` calls.
 - `clawhum_match_latency_sum_s` (counter) cumulative `/match` latency.
 
+## Operations
+
+Day-2 operational concerns for running ClawHum in a shared or production environment.
+
+### Audit log
+
+Every mutating HTTP request (anything that is not `GET`, `HEAD`, or `OPTIONS`)
+is recorded to an append-only JSONL file. Read endpoints and the
+`/health`, `/ready`, and `/metrics` probes are skipped to keep the log
+focused on state-changing actions.
+
+Each line contains:
+
+- `ts` Unix epoch seconds when the request started.
+- `actor` `key:<sha256-prefix>` of the supplied `X-API-Key`, or `anonymous`.
+  Raw keys are never written to disk.
+- `method`, `path`, `status`, `client_ip`, `user_agent`.
+- `request_id` the `X-Request-Id` returned to the caller, for cross-log correlation.
+- `duration_ms` server-side latency.
+
+Configuration via env:
+
+- `CLAWHUM_AUDIT_LOG_PATH` (default `./data/audit.jsonl`)
+- `CLAWHUM_AUDIT_ENABLED` (default `true`)
+- `CLAWHUM_AUDIT_LOG_PATH` may also be set per-process to redirect output
+  (used by the test suite).
+
+The file is append-only and never rotated by the service. Use `logrotate`
+or a cron job to ship and truncate it. Example rotation policy:
+
+```
+/var/lib/clawhum/data/audit.jsonl {
+    daily
+    rotate 30
+    compress
+    missingok
+    copytruncate
+}
+```
+
+Review recent activity:
+
+```bash
+tail -n 200 data/audit.jsonl | jq -r '[.ts, .actor, .method, .path, .status] | @tsv'
+```
+
+### Deploy
+
+- Container image: `infra/docker/Dockerfile` (multi-stage, slim runtime).
+- Helm chart: `infra/helm/clawhum/` with `values.yaml` for replica count,
+  resource requests and limits, and persistent volume for the index.
+- Mount a `PersistentVolume` at `/app/data` so the audit log and FAISS index
+  survive pod restarts.
+
+### Scale
+
+- The current rate limiter and audit writer are in-process. For multi-replica
+  deployments, front the service with an external rate limiter (NGINX, Envoy,
+  or Redis-backed) and ship `data/audit.jsonl` to a central log store rather
+  than relying on the local file.
+- The FAISS index is loaded into memory at boot. Scale vertically before
+  horizontally.
+
+### Backup
+
+- `data/index/` FAISS index and metadata: snapshot the PVC nightly.
+- `data/audit.jsonl`: archived by logrotate, also shipped to a SIEM if
+  compliance requires.
+- `data/feedback.jsonl`: snapshot with the index.
+
+### On-call
+
+- Liveness: `GET /health` returns `200` with version, embedder, and index size.
+- Readiness: `GET /ready` returns `{"ready": true}` once the lifespan handler
+  has loaded the catalog.
+- Metrics: scrape `GET /metrics` from Prometheus.
+- Logs: structured JSON via `structlog`, one line per request including the
+  `request_id` header.
+- For a 5xx burst, grep `data/audit.jsonl` by `status` and `path` to find the
+  offending caller and request id.
+
 ## Project structure
 
 ```

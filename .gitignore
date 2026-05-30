@@ -18,6 +18,8 @@ node_modules/
 out/
 *.log
 .DS_Store
+data/audit.jsonl
+data/feedback.jsonl
 data/audio/
 data/index/*.faiss
 data/index/*.lance
