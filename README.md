@@ -254,6 +254,36 @@ Review recent activity:
 tail -n 200 data/audit.jsonl | jq -r '[.ts, .actor, .method, .path, .status] | @tsv'
 ```
 
+### GDPR data lifecycle
+
+ClawHum exposes two endpoints so a caller can exercise their right of
+access and right to erasure without an operator in the loop. Both are
+scoped to the caller's API key via the same hashed actor id used by the
+audit log.
+
+- `GET /v1/privacy/export` returns every audit event attributed to the
+  caller as JSON, plus the resolved actor digest and the friendly
+  `api_key_name` from the registry. Feedback rows are not currently
+  attributed to a specific key and are noted as such in the response.
+- `DELETE /v1/privacy/me` redacts the actor, client IP, user agent, and
+  request id on every matching audit row. The append only shape of the
+  log is preserved so the forensic timeline (timestamp, method, path,
+  status, duration) survives erasure. The endpoint replies with the
+  number of events redacted.
+
+The redactor rewrites the audit file via tempfile and `os.replace`, so
+a crash mid erasure leaves either the original file or the fully
+redacted file, never a half written one. A small subsequent audit row
+is written for the `DELETE` call itself; rerun the endpoint to sweep it
+if strict tombstoning is required.
+
+Example:
+
+```bash
+curl -H "x-api-key: $KEY" https://clawhum.example.com/v1/privacy/export > my-data.json
+curl -X DELETE -H "x-api-key: $KEY" https://clawhum.example.com/v1/privacy/me
+```
+
 ### Error tracking (Sentry)
 
 ClawHum ships with optional Sentry integration. The official `sentry-sdk`
