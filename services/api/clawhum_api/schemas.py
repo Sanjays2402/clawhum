@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from pydantic import BaseModel, Field
 
 
@@ -49,3 +50,10 @@ class HealthResponse(BaseModel):
     index_backend: str
     tracks: int
     vectors: int
+
+
+class ReadinessResponse(BaseModel):
+    ready: bool
+    version: str
+    checks: dict[str, str] = Field(default_factory=dict)
+    vectors: int = 0

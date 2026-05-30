@@ -21,6 +21,28 @@ env:
   CLAWHUM_LOG_LEVEL: INFO
   CLAWHUM_DEVICE: cpu
 
+# Kubernetes probes. Startup probe gates traffic during model and
+# index load (failureThreshold * periodSeconds = total budget).
+# Readiness probe gets a real /ready check that verifies embedder,
+# index, and auth registry. Liveness probe targets /live which only
+# requires the event loop to be responsive so slow boots do not get
+# the pod killed.
+probes:
+  startup:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    failureThreshold: 60
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+    timeoutSeconds: 3
+  liveness:
+    initialDelaySeconds: 30
+    periodSeconds: 20
+    failureThreshold: 3
+    timeoutSeconds: 3
+
 # Sentry error tracking. Leave dsn empty to disable. When set, the SDK
 # initializes during API lifespan startup and captures unhandled
 # exceptions from FastAPI routes. The api_key header is scrubbed

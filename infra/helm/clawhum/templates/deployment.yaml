@@ -50,14 +50,23 @@ spec:
               value: {{ .Values.sentry.tracesSampleRate | quote }}
             - name: CLAWHUM_SENTRY_PROFILES_SAMPLE_RATE
               value: {{ .Values.sentry.profilesSampleRate | quote }}
+          startupProbe:
+            httpGet: { path: /startup, port: http }
+            initialDelaySeconds: {{ .Values.probes.startup.initialDelaySeconds | default 5 }}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds | default 5 }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold | default 60 }}
           readinessProbe:
             httpGet: { path: /ready, port: http }
-            initialDelaySeconds: 5
-            periodSeconds: 10
+            initialDelaySeconds: {{ .Values.probes.readiness.initialDelaySeconds | default 5 }}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds | default 10 }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold | default 3 }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds | default 3 }}
           livenessProbe:
-            httpGet: { path: /health, port: http }
-            initialDelaySeconds: 15
-            periodSeconds: 20
+            httpGet: { path: /live, port: http }
+            initialDelaySeconds: {{ .Values.probes.liveness.initialDelaySeconds | default 30 }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds | default 20 }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold | default 3 }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds | default 3 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:

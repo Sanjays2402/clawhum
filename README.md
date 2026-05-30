@@ -360,6 +360,49 @@ than a plain env value, so the secret is never echoed in `kubectl describe`.
 - Mount a `PersistentVolume` at `/app/data` so the audit log and FAISS index
   survive pod restarts.
 
+### Health probes
+
+The API exposes four health endpoints with distinct semantics so that
+Kubernetes probes behave correctly during slow boots and degraded
+states.
+
+- `GET /live` returns `200 {"live": true}` while the event loop is
+  responsive. Wired to `livenessProbe`. Slow model load will not get
+  the pod killed.
+- `GET /startup` returns `200 {"started": true, ...}` only after the
+  FastAPI lifespan finishes booting the embedder and loading the index,
+  otherwise `503`. Wired to `startupProbe` with a generous failure
+  budget (default `failureThreshold: 60`, `periodSeconds: 5`, so up to
+  5 minutes to boot the CLAP model).
+- `GET /ready` runs real checks (boot complete, embedder constructed,
+  index loaded with vector count reported, API key registry resolved)
+  and returns `503` with a structured `checks` map if any check fails.
+  Wired to `readinessProbe`, so Kubernetes removes the pod from the
+  Service endpoint list while the dependency is unhealthy.
+- `GET /health` returns a richer status summary for humans and
+  dashboards, including embedder class, index backend, track count,
+  and vector count.
+
+Tune probe budgets per environment via `values.yaml`:
+
+```yaml
+probes:
+  startup:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    failureThreshold: 60
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+    timeoutSeconds: 3
+  liveness:
+    initialDelaySeconds: 30
+    periodSeconds: 20
+    failureThreshold: 3
+    timeoutSeconds: 3
+```
+
 ### Helm hardening
 
 The chart ships with production safety defaults and opt-in knobs for the rest.
