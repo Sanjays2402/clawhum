@@ -170,14 +170,36 @@ Pre-processing chain (`packages/audio/clawhum_audio/`):
 
 ## Metrics
 
-Exposed at `GET /metrics` (text/plain, Prometheus format):
+Exposed at `GET /metrics` (text/plain, Prometheus exposition format,
+produced by `prometheus_client`):
 
-- `clawhum_uptime_seconds` (counter) process uptime.
-- `clawhum_index_vectors` (gauge) vectors in index.
-- `clawhum_index_tracks` (gauge) tracks in catalog.
-- `clawhum_requests_total` (counter) HTTP requests served.
-- `clawhum_match_total` (counter) `/match` calls.
-- `clawhum_match_latency_sum_s` (counter) cumulative `/match` latency.
+- `clawhum_uptime_seconds` (gauge) seconds since the API started.
+- `clawhum_index_vectors` (gauge) vectors loaded in the search index.
+- `clawhum_index_tracks` (gauge) tracks loaded in library metadata.
+- `clawhum_http_requests_total{method,route,status}` (counter)
+  every HTTP request handled, labelled by HTTP method, the matched
+  FastAPI route path template, and the response status code. The
+  `route` label uses the templated path (for example `/v1/match`)
+  rather than the raw URL so Prometheus cardinality stays bounded
+  when path parameters are present.
+- `clawhum_http_request_duration_seconds{method,route}` (histogram)
+  request latency in seconds with buckets tuned for a mix of
+  sub-millisecond health checks and multi-second match calls.
+
+The `/metrics` endpoint itself is excluded from request metrics so
+Prom scrapes do not pollute the signal. Domain gauges are evaluated
+lazily by a custom collector at scrape time, so each scrape reflects
+the current process state without a background updater.
+
+Example PromQL:
+
+- p95 latency on the match route over 5 minutes:
+  `histogram_quantile(0.95, sum by (le) (rate(clawhum_http_request_duration_seconds_bucket{route="/v1/match"}[5m])))`
+- request error rate per route over 5 minutes:
+  `sum by (route) (rate(clawhum_http_requests_total{status=~"5.."}[5m]))`
+- queries per second by tenant via the structured access log
+  (tenant is bound into structlog contextvars rather than into the
+  Prometheus label set to keep cardinality low).
 
 ## Operations
 

@@ -11,9 +11,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .audit import AuditLogMiddleware
+from .metrics import PrometheusMiddleware, register_app_collector
 from .metrics import router as metrics_router
 from .middleware import RequestIDMiddleware, SimpleRateLimit
-from .tenant import TenantScopeMiddleware
 from .routes import feedback as feedback_routes
 from .routes import health as health_routes
 from .routes import library as library_routes
@@ -21,6 +21,7 @@ from .routes import match as match_routes
 from .routes import privacy as privacy_routes
 from .routes import spotify as spotify_routes
 from .state import AppState
+from .tenant import TenantScopeMiddleware
 
 
 @asynccontextmanager
@@ -51,6 +52,10 @@ def create_app() -> FastAPI:
     app.add_middleware(AuditLogMiddleware, enabled=settings.audit_enabled)
     app.add_middleware(TenantScopeMiddleware)
     app.add_middleware(SimpleRateLimit, max_per_minute=settings.rate_limit_per_minute)
+    # Prometheus middleware sits outside rate limiting so 429 responses
+    # are still counted, but inside RequestID so the matched route is
+    # resolved by the time we record the sample.
+    app.add_middleware(PrometheusMiddleware)
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(
         CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
@@ -63,6 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(spotify_routes.router)
     app.include_router(privacy_routes.router)
     app.include_router(metrics_router)
+    register_app_collector(app)
     return app
 
 
