@@ -1,13 +1,30 @@
+# syntax=docker/dockerfile:1.7
+
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.11 python3-pip libsndfile1 ffmpeg && rm -rf /var/lib/apt/lists/*
+    python3.11 python3-pip libsndfile1 ffmpeg tini && rm -rf /var/lib/apt/lists/*
+
+# Match the non-root uid/gid the Helm chart enforces. Same policy as the
+# CPU image so deployments can swap image tags without changing the
+# pod securityContext.
+RUN groupadd --system --gid 10001 clawhum \
+ && useradd --system --uid 10001 --gid 10001 --home-dir /app --shell /usr/sbin/nologin clawhum
+
 COPY pyproject.toml README.md ./
 COPY packages ./packages
 COPY services ./services
 COPY cli ./cli
 RUN pip install --no-cache-dir -U pip && pip install --no-cache-dir ".[ml]"
+
+RUN install -d -o 10001 -g 10001 -m 0775 /app/data
+
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/packages/core:/app/packages/audio:/app/packages/embed:/app/packages/index:/app/packages/match:/app/packages/library:/app/services/api:/app/services/indexer:/app/cli
+    PYTHONPATH=/app/packages/core:/app/packages/audio:/app/packages/embed:/app/packages/index:/app/packages/match:/app/packages/library:/app/services/api:/app/services/indexer:/app/cli \
+    HOME=/app
+
+USER 10001:10001
 EXPOSE 7451
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["uvicorn", "clawhum_api.app:app", "--host", "0.0.0.0", "--port", "7451"]

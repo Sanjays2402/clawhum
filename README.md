@@ -205,6 +205,28 @@ Example PromQL:
 
 Day-2 operational concerns for running ClawHum in a shared or production environment.
 
+### Container runtime hardening
+
+Both `infra/docker/Dockerfile` (CPU) and `infra/docker/Dockerfile.cuda`
+(GPU) build images that run as the dedicated non-root user `clawhum`
+(uid 10001, gid 10001). The uid matches the uid the Helm chart pins in
+`podSecurityContext.runAsUser`, so the chart's defaults (`runAsNonRoot:
+true`, `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation:
+false`, all capabilities dropped) work without overrides.
+
+The image pre-creates `/app/data` owned by uid 10001 so the container
+starts cleanly under `docker run` even when no PVC is mounted; in the
+chart that path is backed by a PVC or `emptyDir` and `/tmp` is an
+`emptyDir` mount, which are the only writable paths the app needs.
+
+`tini` is installed as PID 1 via `ENTRYPOINT ["/usr/bin/tini", "--"]`
+so `SIGTERM` from Kubernetes is forwarded to uvicorn for graceful
+shutdown within the pod's `terminationGracePeriodSeconds`.
+
+If you bump `runAsUser` in `infra/helm/clawhum/values.yaml` you must
+rebuild the image with the matching uid. `tests/unit/test_container_security.py`
+fails fast on that drift in CI.
+
 ### API keys, roles, and per-key rate limiting
 
 ClawHum supports multiple named API keys with independent rate-limit
