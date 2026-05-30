@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .audit import AuditLogMiddleware
 from .metrics import PrometheusMiddleware, register_app_collector
 from .metrics import router as metrics_router
-from .middleware import RequestIDMiddleware, SimpleRateLimit
+from .middleware import RequestIDMiddleware, SecurityHeadersMiddleware, SimpleRateLimit
 from .routes import feedback as feedback_routes
 from .routes import health as health_routes
 from .routes import library as library_routes
@@ -57,8 +57,31 @@ def create_app() -> FastAPI:
     # resolved by the time we record the sample.
     app.add_middleware(PrometheusMiddleware)
     app.add_middleware(RequestIDMiddleware)
+    cors_origins = settings.cors_origins_list()
+    cors_allow_credentials = settings.cors_allow_credentials and cors_origins != ["*"]
     app.add_middleware(
-        CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_methods=settings.cors_methods_list(),
+        allow_headers=settings.cors_headers_list(),
+        allow_credentials=cors_allow_credentials,
+        expose_headers=["X-Request-ID", "traceparent", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After"],
+        max_age=600,
+    )
+    # Security headers run outermost so they apply to every response,
+    # including CORS preflights and rate-limit 429s. Browsers honor
+    # HSTS only on HTTPS responses; the middleware checks the request
+    # scheme (or X-Forwarded-Proto) before setting the header so local
+    # http development is unaffected.
+    app.add_middleware(
+        SecurityHeadersMiddleware,
+        enabled=settings.security_headers_enabled,
+        hsts_max_age=settings.security_hsts_max_age,
+        hsts_include_subdomains=settings.security_hsts_include_subdomains,
+        hsts_preload=settings.security_hsts_preload,
+        csp=settings.security_csp,
+        referrer_policy=settings.security_referrer_policy,
+        permissions_policy=settings.security_permissions_policy,
     )
     init_telemetry(app)
     app.include_router(health_routes.router)

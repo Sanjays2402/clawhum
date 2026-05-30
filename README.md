@@ -227,6 +227,56 @@ If you bump `runAsUser` in `infra/helm/clawhum/values.yaml` you must
 rebuild the image with the matching uid. `tests/unit/test_container_security.py`
 fails fast on that drift in CI.
 
+### CORS and HTTP security headers
+
+The API ships defense-in-depth HTTP headers on every response and
+treats CORS as an explicit allowlist rather than a wildcard. Defaults
+live in `packages/core/clawhum_core/settings.py` and are wired in
+`services/api/clawhum_api/app.py`; all of them are configurable through
+`CLAWHUM_*` environment variables (see `.env.example`).
+
+Baseline response headers, emitted by `SecurityHeadersMiddleware`:
+
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: no-referrer`
+- `Permissions-Policy: geolocation=(), microphone=(), camera=()`
+- `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`
+  since the service returns JSON, not HTML
+- `Cross-Origin-Opener-Policy: same-origin` and
+  `Cross-Origin-Resource-Policy: same-origin`
+- `Strict-Transport-Security: max-age=63072000; includeSubDomains`
+  is added only when the request was served over HTTPS or arrived
+  through a proxy that set `X-Forwarded-Proto: https`. Local
+  `http://127.0.0.1` development never pins HSTS, so cleartext dev does
+  not lock browsers out of the production hostname later.
+
+Disable the whole middleware with `CLAWHUM_SECURITY_HEADERS_ENABLED=false`
+if you front the API with an ingress that owns these headers already.
+
+CORS is configured per environment:
+
+```
+CLAWHUM_CORS_ALLOW_ORIGINS=https://app.example.com,https://admin.example.com
+CLAWHUM_CORS_ALLOW_CREDENTIALS=true
+CLAWHUM_CORS_ALLOW_METHODS=GET,POST,PUT,PATCH,DELETE,OPTIONS
+CLAWHUM_CORS_ALLOW_HEADERS=Authorization,Content-Type,X-API-Key,X-Request-ID,traceparent
+```
+
+The default value of `CLAWHUM_CORS_ALLOW_ORIGINS=*` stays for local
+dev only. When origins are pinned to an explicit list,
+`CLAWHUM_CORS_ALLOW_CREDENTIALS=true` is honored and the middleware
+echoes the matching origin back. When origins are `*`, credentials are
+forced off regardless of the setting because browsers reject
+credentialed responses paired with a wildcard origin. Request ids and
+rate-limit headers are added to `expose_headers` so browser clients can
+read them for correlation and backoff.
+
+Regression tests live in `tests/integration/test_security_headers.py`
+and cover the default headers, HSTS gating on `X-Forwarded-Proto`,
+the disabled toggle, wildcard-blocks-credentials, and explicit origin
+matching for preflights.
+
 ### API keys, roles, and per-key rate limiting
 
 ClawHum supports multiple named API keys with independent rate-limit

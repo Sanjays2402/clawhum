@@ -62,6 +62,61 @@ class Settings(BaseSettings):
     otel_endpoint: str = ""
     service_name: str = "clawhum-api"
 
+    # CORS and HTTP security headers. cors_allow_origins is a comma
+    # separated list of exact origins (no wildcards in production); the
+    # legacy default of "*" stays for local dev but operators are
+    # expected to pin it. cors_allow_credentials only takes effect when
+    # origins are not the wildcard. Security headers are emitted by
+    # SecurityHeadersMiddleware on every response; HSTS is only sent
+    # when the request was served over HTTPS (or behind a TLS
+    # terminating proxy that sets X-Forwarded-Proto: https) so local
+    # http://127.0.0.1 development does not get pinned.
+    cors_allow_origins: str = Field(
+        default="*",
+        description=(
+            "Comma separated list of allowed CORS origins, or '*' for any. "
+            "Set to an explicit list in production."
+        ),
+    )
+    cors_allow_credentials: bool = False
+    cors_allow_methods: str = "GET,POST,PUT,PATCH,DELETE,OPTIONS"
+    cors_allow_headers: str = "Authorization,Content-Type,X-API-Key,X-Request-ID,traceparent"
+    security_headers_enabled: bool = True
+    security_hsts_max_age: int = Field(
+        default=63072000,
+        description="Strict-Transport-Security max-age in seconds. 2 years by default.",
+    )
+    security_hsts_include_subdomains: bool = True
+    security_hsts_preload: bool = False
+    security_csp: str = Field(
+        default="default-src 'none'; frame-ancestors 'none'",
+        description=(
+            "Content-Security-Policy header value for API responses. The default "
+            "locks everything down since the API serves JSON, not HTML. Set to an "
+            "empty string to disable the CSP header entirely."
+        ),
+    )
+    security_referrer_policy: str = "no-referrer"
+    security_permissions_policy: str = "geolocation=(), microphone=(), camera=()"
+
+    def cors_origins_list(self) -> list[str]:
+        raw = (self.cors_allow_origins or "").strip()
+        if not raw or raw == "*":
+            return ["*"]
+        return [o.strip() for o in raw.split(",") if o.strip()]
+
+    def cors_methods_list(self) -> list[str]:
+        raw = (self.cors_allow_methods or "").strip()
+        if not raw or raw == "*":
+            return ["*"]
+        return [m.strip().upper() for m in raw.split(",") if m.strip()]
+
+    def cors_headers_list(self) -> list[str]:
+        raw = (self.cors_allow_headers or "").strip()
+        if not raw or raw == "*":
+            return ["*"]
+        return [h.strip() for h in raw.split(",") if h.strip()]
+
     # Sentry error tracking. Empty DSN disables the integration entirely.
     sentry_dsn: str = ""
     sentry_environment: str = ""

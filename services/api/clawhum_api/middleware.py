@@ -146,3 +146,77 @@ class SimpleRateLimit(BaseHTTPMiddleware):
         resp.headers["X-RateLimit-Limit"] = str(limit)
         resp.headers["X-RateLimit-Remaining"] = str(max(0, limit - len(dq)))
         return resp
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Emit baseline HTTP security headers on every response.
+
+    Headers added (when not already set by the application or a proxy):
+
+    - Strict-Transport-Security on HTTPS requests only
+    - X-Content-Type-Options: nosniff
+    - X-Frame-Options: DENY
+    - Referrer-Policy
+    - Permissions-Policy
+    - Content-Security-Policy (locked down for a JSON API)
+    - Cross-Origin-Opener-Policy / Cross-Origin-Resource-Policy
+
+    Configurable via Settings. Designed to be safe to enable in front of
+    every route including /metrics and /health. We do not strip the
+    Server header here since Starlette does not set one by default and
+    operators typically handle that at the ingress layer.
+    """
+
+    def __init__(
+        self,
+        app,
+        *,
+        enabled: bool = True,
+        hsts_max_age: int = 63072000,
+        hsts_include_subdomains: bool = True,
+        hsts_preload: bool = False,
+        csp: str = "default-src 'none'; frame-ancestors 'none'",
+        referrer_policy: str = "no-referrer",
+        permissions_policy: str = "geolocation=(), microphone=(), camera=()",
+    ) -> None:
+        super().__init__(app)
+        self.enabled = enabled
+        self.hsts_max_age = max(0, int(hsts_max_age))
+        self.hsts_include_subdomains = hsts_include_subdomains
+        self.hsts_preload = hsts_preload
+        self.csp = csp or ""
+        self.referrer_policy = referrer_policy or ""
+        self.permissions_policy = permissions_policy or ""
+
+    def _is_https(self, request: Request) -> bool:
+        if request.url.scheme == "https":
+            return True
+        xfp = request.headers.get("x-forwarded-proto", "")
+        return xfp.split(",")[0].strip().lower() == "https"
+
+    def _hsts_value(self) -> str:
+        parts = [f"max-age={self.hsts_max_age}"]
+        if self.hsts_include_subdomains:
+            parts.append("includeSubDomains")
+        if self.hsts_preload:
+            parts.append("preload")
+        return "; ".join(parts)
+
+    async def dispatch(self, request: Request, call_next):
+        resp = await call_next(request)
+        if not self.enabled:
+            return resp
+        h = resp.headers
+        h.setdefault("X-Content-Type-Options", "nosniff")
+        h.setdefault("X-Frame-Options", "DENY")
+        if self.referrer_policy:
+            h.setdefault("Referrer-Policy", self.referrer_policy)
+        if self.permissions_policy:
+            h.setdefault("Permissions-Policy", self.permissions_policy)
+        if self.csp:
+            h.setdefault("Content-Security-Policy", self.csp)
+        h.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        h.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+        if self.hsts_max_age > 0 and self._is_https(request):
+            h.setdefault("Strict-Transport-Security", self._hsts_value())
+        return resp
