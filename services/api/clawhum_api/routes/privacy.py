@@ -21,7 +21,7 @@ from clawhum_core.settings import get_settings
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse
 
-from ..auth import require_api_key
+from ..auth import require_api_key, require_roles
 from ..privacy import actor_id_for, collect_events, redact_actor
 
 router = APIRouter(prefix="/v1/privacy", tags=["privacy"], dependencies=[Depends(require_api_key)])
@@ -57,7 +57,7 @@ async def export_my_data(
     }
 
 
-@router.delete("/me")
+@router.delete("/me", dependencies=[Depends(require_roles("admin"))])
 async def delete_my_data(
     x_api_key: str = Header(default=""),
 ) -> JSONResponse:

@@ -73,9 +73,12 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
         finally:
             try:
                 actor = _actor_id(request.headers.get("x-api-key"))
+                roles = getattr(request.state, "api_key_roles", None)
                 event = {
                     "ts": started,
                     "actor": actor,
+                    "api_key_name": getattr(request.state, "api_key_name", None),
+                    "roles": sorted(roles) if roles else [],
                     "method": request.method,
                     "path": request.url.path,
                     "status": status_code,

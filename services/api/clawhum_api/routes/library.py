@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 
 from clawhum_core.settings import get_settings
 from clawhum_indexer.build import build_index, IndexerOptions
-from ..auth import require_api_key
+from ..auth import require_api_key, require_roles
 from ..schemas import ReindexBody, StatsResponse
 from ..state import AppState
 
@@ -22,7 +22,11 @@ async def stats(request: Request):
     )
 
 
-@router.post("/reindex", response_model=dict)
+@router.post(
+    "/reindex",
+    response_model=dict,
+    dependencies=[Depends(require_roles("writer"))],
+)
 async def reindex(body: ReindexBody, request: Request, bg: BackgroundTasks):
     s = get_settings()
     lib = Path(body.library_path) if body.library_path else s.library_path
