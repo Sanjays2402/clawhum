@@ -1,33 +1,213 @@
 @import "tailwindcss";
 
+@theme {
+  --color-bg: #06090C;
+  --color-panel: #0B1014;
+  --color-panel-2: #0E141A;
+  --color-line: #1A2129;
+  --color-line-2: #232C36;
+  --color-text: #E6EBEF;
+  --color-muted: #6B7682;
+  --color-dim: #4A535D;
+  --color-phosphor: #3DFC8E;
+  --color-phosphor-dim: #1F8A4D;
+  --color-amber: #F59E0B;
+  --color-magenta: #FF3DBE;
+  --color-cyan: #4DD0E1;
+  --color-red: #FF4D5E;
+
+  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --font-mono: var(--font-plex-mono), "SF Mono", Menlo, Consolas, monospace;
+}
+
 :root {
-  --bg: #08090b;
-  --panel: #111317;
-  --line: #1d2026;
-  --text: #e8eaed;
-  --muted: #8a8f98;
-  --accent: #1db954;
-  --accent2: #5e6ad2;
+  color-scheme: dark;
 }
 
-html, body { background: var(--bg); color: var(--text); }
-body { font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", sans-serif; }
-
-.gradient-hero {
-  background: radial-gradient(1200px 600px at 10% -20%, rgba(94, 106, 210, .35), transparent 60%),
-              radial-gradient(1000px 500px at 90% 0%, rgba(29, 185, 84, .25), transparent 60%),
-              linear-gradient(180deg, #0a0c10 0%, #08090b 100%);
+html, body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "cv01", "cv11";
 }
 
-.mic-ring {
+body {
+  background-image:
+    radial-gradient(1200px 600px at 8% -10%, rgba(61, 252, 142, 0.04), transparent 60%),
+    radial-gradient(800px 400px at 95% 110%, rgba(255, 61, 190, 0.03), transparent 60%);
+  background-attachment: fixed;
+}
+
+/* tabular nums on everything mono */
+.font-mono, code, kbd, pre, samp {
+  font-feature-settings: "tnum", "zero", "ss01";
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+
+/* scanline + grid panels */
+.panel {
+  background: var(--color-panel);
+  border: 1px solid var(--color-line);
+}
+
+.panel-inset {
+  background:
+    linear-gradient(180deg, #06090C 0%, #080C10 100%);
+  border: 1px solid var(--color-line);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02);
+}
+
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(61,252,142,0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(61,252,142,0.05) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.scanlines::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0,0,0,0) 0px,
+    rgba(0,0,0,0) 2px,
+    rgba(255,255,255,0.015) 2px,
+    rgba(255,255,255,0.015) 3px
+  );
+  pointer-events: none;
+}
+
+.led-dot {
+  width: 8px; height: 8px; border-radius: 9999px;
+  background: var(--color-phosphor);
+  box-shadow: 0 0 8px rgba(61, 252, 142, 0.8), 0 0 2px rgba(61, 252, 142, 1);
+}
+.led-dot.amber { background: var(--color-amber); box-shadow: 0 0 8px rgba(245, 158, 11, 0.8); }
+.led-dot.red { background: var(--color-red); box-shadow: 0 0 8px rgba(255, 77, 94, 0.8); animation: blink 1s steps(2) infinite; }
+.led-dot.off { background: #1A2129; box-shadow: none; }
+
+@keyframes blink {
+  50% { opacity: 0.3; }
+}
+
+@keyframes sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+.scan-sweep::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(61,252,142,0.12), transparent);
+  animation: sweep 3s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* DAW meter bar */
+.meter-track {
+  background: linear-gradient(180deg, #050709 0%, #0A0E12 100%);
+  border: 1px solid var(--color-line);
   position: relative;
+  overflow: hidden;
 }
-.mic-ring::before, .mic-ring::after {
-  content: ""; position: absolute; inset: -8px; border-radius: 9999px;
-  border: 2px solid rgba(29,185,84,.35); animation: pulse 2.4s ease-out infinite;
+.meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg,
+    var(--color-phosphor) 0%,
+    var(--color-phosphor) 70%,
+    var(--color-amber) 85%,
+    var(--color-red) 100%);
+  transition: width 60ms linear;
 }
-.mic-ring::after { animation-delay: 1.2s; }
-@keyframes pulse {
-  0% { transform: scale(.9); opacity: .8 }
-  100% { transform: scale(1.6); opacity: 0 }
+
+/* button base */
+.btn-ghost {
+  border: 1px solid var(--color-line-2);
+  background: transparent;
+  color: var(--color-text);
+  transition: all 120ms;
+}
+.btn-ghost:hover { border-color: var(--color-phosphor); color: var(--color-phosphor); }
+.btn-ghost:disabled { opacity: 0.35; cursor: not-allowed; }
+.btn-ghost:disabled:hover { border-color: var(--color-line-2); color: var(--color-text); }
+
+.btn-primary {
+  background: var(--color-phosphor);
+  color: #04140A;
+  font-weight: 600;
+  transition: all 120ms;
+  box-shadow: 0 0 0 1px rgba(61,252,142,0.4), 0 0 24px rgba(61,252,142,0.15);
+}
+.btn-primary:hover { background: #5AFFA1; box-shadow: 0 0 0 1px rgba(61,252,142,0.6), 0 0 32px rgba(61,252,142,0.3); }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* "REC" indicator */
+.rec-dot {
+  width: 10px; height: 10px; border-radius: 9999px;
+  background: var(--color-red);
+  box-shadow: 0 0 12px rgba(255,77,94,0.8);
+  animation: blink 0.9s steps(2) infinite;
+}
+
+/* small uppercase label */
+.label-xs {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  font-weight: 500;
+}
+
+/* table */
+.dense-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.dense-table th {
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  font-weight: 500;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-line);
+  background: var(--color-panel);
+  position: sticky; top: 0;
+}
+.dense-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-line);
+  font-size: 13px;
+}
+.dense-table tbody tr:hover { background: rgba(61,252,142,0.03); }
+.dense-table tbody tr.selected { background: rgba(61,252,142,0.06); }
+
+/* spectrogram canvas crispness */
+canvas { image-rendering: pixelated; }
+
+/* focus ring */
+*:focus-visible {
+  outline: 1px solid var(--color-phosphor);
+  outline-offset: 2px;
+}
+
+/* selection */
+::selection { background: rgba(61,252,142,0.3); color: #fff; }
+
+input, select, textarea {
+  background: #06090C;
+  border: 1px solid var(--color-line-2);
+  color: var(--color-text);
+  padding: 6px 10px;
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--color-phosphor);
+  outline: none;
 }
