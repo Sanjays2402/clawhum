@@ -98,3 +98,45 @@ def redact_actor(actor: str, path: Path) -> int:
             raise
 
     return redacted_count
+
+
+_FEEDBACK_REDACT_FIELDS = ("query_id", "track_id")
+
+
+def redact_tenant_feedback(tenant_id: str, path: str | Path) -> int:
+    """Redact feedback identifiers for every row matching tenant_id.
+
+    Mirrors redact_actor: rewrites the JSONL file atomically via
+    tempfile + os.replace. Preserves row shape and the tenant_id tag so
+    downstream aggregate analytics still see the row as belonging to
+    the tenant; only the identifying fields query_id and track_id are
+    replaced with the literal string "redacted". Returns the count of
+    rows that were modified.
+    """
+    fpath = Path(path)
+    if not fpath.exists():
+        return 0
+
+    redacted = 0
+    with _redact_lock:
+        fpath.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=fpath.name + ".", suffix=".tmp", dir=str(fpath.parent)
+        )
+        try:
+            with os.fdopen(fd, "wb") as out:
+                for ev in _iter_events(fpath):
+                    if ev.get("tenant_id") == tenant_id:
+                        for field in _FEEDBACK_REDACT_FIELDS:
+                            if field in ev:
+                                ev[field] = _REDACTED
+                        redacted += 1
+                    line = json.dumps(ev, separators=(",", ":"), sort_keys=True)
+                    out.write(line.encode("utf-8") + b"\n")
+            os.replace(tmp_name, fpath)
+        except Exception:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(tmp_name)
+            raise
+
+    return redacted

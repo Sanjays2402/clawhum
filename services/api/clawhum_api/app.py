@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .audit import AuditLogMiddleware
 from .metrics import router as metrics_router
 from .middleware import RequestIDMiddleware, SimpleRateLimit
+from .tenant import TenantScopeMiddleware
 from .routes import feedback as feedback_routes
 from .routes import health as health_routes
 from .routes import library as library_routes
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
     # Audit runs innermost so it sees the final status code, but is added
     # before RequestID so request_id is already attached to request.state.
     app.add_middleware(AuditLogMiddleware, enabled=settings.audit_enabled)
+    app.add_middleware(TenantScopeMiddleware)
     app.add_middleware(SimpleRateLimit, max_per_minute=settings.rate_limit_per_minute)
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(

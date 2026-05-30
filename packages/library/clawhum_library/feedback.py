@@ -4,14 +4,27 @@ import time
 from pathlib import Path
 
 
-def record_feedback(path: str | Path, query_id: str, track_id: str, score: float, vote: int) -> None:
+def record_feedback(
+    path: str | Path,
+    query_id: str,
+    track_id: str,
+    score: float,
+    vote: int,
+    tenant_id: str | None = None,
+) -> None:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
+    row = {
+        "ts": time.time(),
+        "query_id": query_id,
+        "track_id": track_id,
+        "score": score,
+        "vote": vote,
+    }
+    if tenant_id:
+        row["tenant_id"] = tenant_id
     with open(p, "a") as f:
-        f.write(json.dumps({
-            "ts": time.time(), "query_id": query_id, "track_id": track_id,
-            "score": score, "vote": vote,
-        }) + "\n")
+        f.write(json.dumps(row) + "\n")
 
 
 def read_feedback(path: str | Path) -> list[dict]:

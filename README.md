@@ -194,7 +194,7 @@ CLAWHUM_API_KEYS=ops:sk_live_ops:600:admin,partner:sk_live_partner:120:writer|re
 CLAWHUM_RATE_LIMIT_PER_MINUTE=120
 ```
 
-Each entry is `name:secret[:rpm[:role1|role2|...]]`. The optional `rpm`
+Each entry is `name:secret[:rpm[:role1|role2|...[:tenant_id]]]`. The optional `rpm`
 overrides the default from `CLAWHUM_RATE_LIMIT_PER_MINUTE` for that key
 only, so noisy partners cannot starve interactive traffic. Buckets are
 per-key sliding windows; unauthenticated requests fall back to a per-IP
@@ -235,6 +235,43 @@ supplied key, so rotating a leaked secret is a one-line config change.
 For multi-replica deployments the in-process limiter should be replaced
 with a shared store (Redis); the bucket id format (`key:<name>` or
 `ip:<addr>`) is stable so the swap is mechanical.
+
+### Multi-tenant scoping
+
+Every API key is bound to a `tenant_id`. The tenant is the optional
+fifth field in `CLAWHUM_API_KEYS`, defaulting to the key name when
+omitted so single tenant deployments keep working unchanged. Tenant
+ids are normalised to lowercase `[a-z0-9-_]` at parse time so a noisy
+spec entry cannot smuggle path traversal or log injection into
+downstream sinks.
+
+```
+CLAWHUM_API_KEYS=ops:sk_live_ops:600:admin:acme,partner:sk_live_partner:120:writer|reader:globex
+```
+
+The resolved tenant rides through the request lifecycle in three
+places:
+
+- `request.state.tenant_id` is set by the auth dependency and exposed
+  through the `current_tenant` FastAPI dependency for route handlers
+  that need it.
+- Every response carries an `X-Tenant-Id` header and every structlog
+  line emitted during the request is bound with `tenant_id=...` for
+  cross-service correlation.
+- Audit events include the tenant id alongside the actor digest, so a
+  shared bus or SIEM can group activity per tenant without rejoining
+  against the key registry.
+
+Feedback rows persisted under `CLAWHUM_FEEDBACK_PATH` carry the
+writer's `tenant_id`. The privacy export endpoint returns only the
+caller's tenant's feedback rows, and the privacy delete endpoint
+redacts the identifying fields on those rows in place while preserving
+the row shape so aggregate analytics stay valid. Rows written before
+multi tenancy was enabled have no `tenant_id` tag and are surfaced
+only to the `default` tenant rather than orphaned.
+
+Dev mode (no `CLAWHUM_API_KEYS` set) collapses to a single `dev`
+tenant so local workflows stay frictionless.
 
 ### Request correlation and trace context
 

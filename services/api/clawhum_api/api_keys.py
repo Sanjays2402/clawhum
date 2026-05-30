@@ -2,9 +2,11 @@
 
 Parses a compact spec from the CLAWHUM_API_KEYS environment variable:
 
-    CLAWHUM_API_KEYS="ops:sk_live_abc:600:admin|writer,partner:sk_live_xyz:120:writer,readonly:sk_ro_qqq::reader"
+    CLAWHUM_API_KEYS="ops:sk_live_abc:600:admin|writer:acme,partner:sk_live_xyz:120:writer:globex,readonly:sk_ro_qqq::reader"
 
-Each entry is name:key[:requests_per_minute[:role1|role2|...]].
+Each entry is name:key[:requests_per_minute[:role1|role2|...[:tenant_id]]].
+When tenant_id is omitted it defaults to the key name, so single tenant
+deployments keep working without any configuration change.
 The legacy single key CLAWHUM_API_KEY is still honoured and registered
 as the "default" key when no multi-key spec is provided. Legacy keys
 receive the full role set so they keep working unchanged.
@@ -30,12 +32,18 @@ ROLES: frozenset[str] = frozenset({"admin", "writer", "reader"})
 ADMIN_ROLE = "admin"
 
 
+# Sentinel tenant used when auth is open (dev mode) or no key matched.
+DEV_TENANT_ID = "dev"
+ANON_TENANT_ID = "anonymous"
+
+
 @dataclass(frozen=True)
 class APIKey:
     name: str
     secret: str
     rpm: int  # 0 means "use middleware default"
     roles: frozenset[str] = field(default_factory=frozenset)
+    tenant_id: str = ""
 
     def has_role(self, role: str) -> bool:
         return ADMIN_ROLE in self.roles or role in self.roles
@@ -90,10 +98,32 @@ def _parse_spec(spec: str, default_rpm: int) -> dict[str, APIKey]:
         roles: frozenset[str] = ROLES  # default: full access, matches legacy
         if len(parts) >= 4 and parts[3].strip():
             roles = _parse_roles(parts[3])
+        tenant_id = name
+        if len(parts) >= 5 and parts[4].strip():
+            tenant_id = _normalise_tenant_id(parts[4])
         if not name or not secret:
             continue
-        out[secret] = APIKey(name=name, secret=secret, rpm=rpm, roles=roles)
+        out[secret] = APIKey(
+            name=name, secret=secret, rpm=rpm, roles=roles, tenant_id=tenant_id,
+        )
     return out
+
+
+_TENANT_ALLOWED = set(
+    "abcdefghijklmnopqrstuvwxyz0123456789-_"
+)
+
+
+def _normalise_tenant_id(raw: str) -> str:
+    """Lowercase, strip, and keep only safe id chars. Empty -> "default".
+
+    Tenant ids land in filenames and log fields, so we lock the alphabet
+    down to ascii lowercase plus -_ to avoid path traversal or log
+    injection surprises.
+    """
+    s = raw.strip().lower()
+    cleaned = "".join(c for c in s if c in _TENANT_ALLOWED)
+    return cleaned or "default"
 
 
 def build_registry(default_rpm: int = 120) -> KeyRegistry:
@@ -103,7 +133,13 @@ def build_registry(default_rpm: int = 120) -> KeyRegistry:
         return KeyRegistry(by_secret=_parse_spec(spec, default_rpm), default_rpm=default_rpm)
     # Legacy single-key path. Legacy keys keep full access.
     if s.api_key and s.api_key != "changeme":
-        legacy = APIKey(name="default", secret=s.api_key, rpm=default_rpm, roles=ROLES)
+        legacy = APIKey(
+            name="default",
+            secret=s.api_key,
+            rpm=default_rpm,
+            roles=ROLES,
+            tenant_id="default",
+        )
         return KeyRegistry(by_secret={legacy.secret: legacy}, default_rpm=default_rpm)
     # Dev mode: no auth configured.
     return KeyRegistry(by_secret={}, default_rpm=default_rpm)

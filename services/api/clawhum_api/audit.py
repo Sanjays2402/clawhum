@@ -78,6 +78,7 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                     "ts": started,
                     "actor": actor,
                     "api_key_name": getattr(request.state, "api_key_name", None),
+                    "tenant_id": getattr(request.state, "tenant_id", None),
                     "roles": sorted(roles) if roles else [],
                     "method": request.method,
                     "path": request.url.path,

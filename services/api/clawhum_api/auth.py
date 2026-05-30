@@ -4,7 +4,7 @@ from collections.abc import Iterable
 
 from fastapi import Header, HTTPException, Request, status
 
-from .api_keys import ROLES, get_registry
+from .api_keys import ANON_TENANT_ID, DEV_TENANT_ID, ROLES, get_registry
 
 
 async def require_api_key(
@@ -21,12 +21,14 @@ async def require_api_key(
     if registry.is_open():
         request.state.api_key_name = "dev"
         request.state.api_key_roles = ROLES
+        request.state.tenant_id = DEV_TENANT_ID
         return "dev"
     key = registry.lookup(x_api_key)
     if key is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid api key")
     request.state.api_key_name = key.name
     request.state.api_key_roles = key.roles
+    request.state.tenant_id = key.tenant_id or ANON_TENANT_ID
     return x_api_key
 
 

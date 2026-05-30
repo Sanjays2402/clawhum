@@ -18,11 +18,13 @@ from pathlib import Path
 from typing import Any
 
 from clawhum_core.settings import get_settings
+from clawhum_library.feedback import read_feedback
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse
 
 from ..auth import require_api_key, require_roles
-from ..privacy import actor_id_for, collect_events, redact_actor
+from ..privacy import actor_id_for, collect_events, redact_actor, redact_tenant_feedback
+from ..tenant import current_tenant_id, scope_rows
 
 router = APIRouter(prefix="/v1/privacy", tags=["privacy"], dependencies=[Depends(require_api_key)])
 
@@ -45,28 +47,45 @@ async def export_my_data(
     """
     actor = actor_id_for(x_api_key or None)
     events = collect_events(actor, _audit_path())
+    tenant_id = current_tenant_id(request)
+    feedback_rows = scope_rows(read_feedback(get_settings().feedback_path), tenant_id)
     return {
         "actor": actor,
         "api_key_name": getattr(request.state, "api_key_name", None),
+        "tenant_id": tenant_id,
         "audit_event_count": len(events),
         "audit_events": events,
+        "feedback_row_count": len(feedback_rows),
+        "feedback_rows": feedback_rows,
         "notes": [
-            "Feedback rows are not attributed to a specific API key and"
-            " are therefore not included in this export.",
+            "Feedback rows are scoped by tenant_id. Rows written before"
+            " multi tenancy was enabled have no tenant tag and are only"
+            " surfaced to the 'default' tenant.",
         ],
     }
 
 
 @router.delete("/me", dependencies=[Depends(require_roles("admin"))])
 async def delete_my_data(
+    request: Request,
     x_api_key: str = Header(default=""),
 ) -> JSONResponse:
     """Redact actor-identifying fields for every matching audit event.
 
-    Returns the number of events redacted. The audit log is preserved
-    in append only form; only PII fields are replaced with the literal
-    string "redacted".
+    Returns the number of events redacted in the audit log and the
+    number of feedback rows scrubbed for the caller's tenant. The audit
+    log is preserved in append only form; only PII fields are replaced
+    with the literal string "redacted". Feedback rows for the tenant
+    have their identifiers redacted while the row shape is preserved so
+    aggregate analytics remain valid.
     """
     actor = actor_id_for(x_api_key or None)
+    tenant_id = current_tenant_id(request)
     count = redact_actor(actor, _audit_path())
-    return JSONResponse({"actor": actor, "redacted_events": count})
+    feedback_redacted = redact_tenant_feedback(tenant_id, get_settings().feedback_path)
+    return JSONResponse({
+        "actor": actor,
+        "tenant_id": tenant_id,
+        "redacted_events": count,
+        "redacted_feedback_rows": feedback_redacted,
+    })
