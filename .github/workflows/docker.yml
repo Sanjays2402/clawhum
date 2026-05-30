@@ -7,7 +7,13 @@ jobs:
   build:
     if: ${{ vars.ENABLE_CI == 'true' }}
     runs-on: ubuntu-latest
-    permissions: { contents: read, packages: write }
+    permissions:
+      contents: read
+      packages: write
+      # id-token is required for cosign keyless signing via GitHub OIDC.
+      id-token: write
+      # attestations is required for build provenance attestations.
+      attestations: write
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -16,7 +22,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: infra/docker/Dockerfile
@@ -24,3 +32,31 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/clawhum:latest
             ghcr.io/${{ github.repository_owner }}/clawhum:${{ github.sha }}
+          # SBOM and provenance baked into the image manifest. Consumers
+          # can pull these with `docker buildx imagetools inspect` or
+          # `cosign download attestation`.
+          sbom: true
+          provenance: mode=max
+
+      # Keyless signing: cosign exchanges a GitHub OIDC token for a
+      # short-lived Fulcio certificate, signs the image digest, and
+      # publishes the signature to the Rekor transparency log. No
+      # long-lived keys to rotate.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Sign published image (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/clawhum
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      # GitHub-native attestation, complements the cosign signature and
+      # is verifiable with `gh attestation verify`.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/clawhum
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

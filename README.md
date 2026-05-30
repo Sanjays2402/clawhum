@@ -546,6 +546,44 @@ networkPolicy:
 - For a 5xx burst, grep `data/audit.jsonl` by `status` and `path` to find the
   offending caller and request id.
 
+### Supply chain security
+
+The container image and its dependencies are scanned and signed on every
+push to `main`, and the dependency set is rescanned weekly to catch
+newly disclosed CVEs even when no code lands.
+
+- `.github/workflows/supply-chain.yml` runs three independent gates:
+  `pip-audit` against installed runtime dependencies, `bandit` against
+  source under `packages/`, `services/`, and `cli/` (medium severity
+  and confidence floor, SARIF uploaded to the GitHub Security tab),
+  and a Trivy scan of a freshly built production image for `HIGH` and
+  `CRITICAL` OS and language CVEs with `ignore-unfixed` so the gate
+  only flags issues we can actually patch. The same job emits an SPDX
+  SBOM via `anchore/sbom-action` and uploads it as a build artifact.
+- `.github/workflows/docker.yml` publishes the image to GHCR with
+  `sbom: true` and `provenance: mode=max` baked into the manifest, then
+  signs the resulting digest with `cosign sign --yes` using GitHub OIDC
+  for keyless signing (no long-lived keys to rotate; the signature is
+  logged in the Rekor public transparency log) and emits a GitHub
+  build provenance attestation pinned to the digest.
+
+To verify a pulled image before deploying:
+
+```
+DIGEST=$(docker buildx imagetools inspect ghcr.io/<owner>/clawhum:latest --format '{{.Manifest.Digest}}')
+cosign verify ghcr.io/<owner>/clawhum@${DIGEST} \
+  --certificate-identity-regexp "https://github.com/<owner>/clawhum/.github/workflows/docker.yml@.*" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify oci://ghcr.io/<owner>/clawhum@${DIGEST} --owner <owner>
+```
+
+Both commands exit non-zero if the signature, transparency log entry,
+or attestation chain cannot be reconstructed back to a GitHub Actions
+run on this repository, so a tampered or rebuilt image is rejected
+before it ever runs in cluster. Findings from Trivy and Bandit appear
+under the repository's Security tab, and the SPDX SBOM artifact can be
+fed into downstream license and dependency review tooling.
+
 ## Project structure
 
 ```

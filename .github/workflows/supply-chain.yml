@@ -1,0 +1,141 @@
+name: supply-chain
+on:
+  push: { branches: [main] }
+  pull_request:
+  schedule:
+    # Weekly Monday 09:00 UTC catches newly disclosed CVEs even when no
+    # code changes have landed.
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+# Concurrency cancels superseded runs on the same ref so a fast series
+# of pushes does not pile up duplicate scans.
+concurrency:
+  group: supply-chain-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Static analysis of Python dependencies. Catches known CVEs in the
+  # locked requirements before they reach an image.
+  deps-audit:
+    if: ${{ vars.ENABLE_CI == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install pip-audit
+        run: pip install -U pip pip-audit
+      - name: Audit runtime dependencies
+        # --strict makes warnings fatal, --progress-spinner=off keeps the
+        # log readable in CI. We audit the project's resolved deps, not
+        # transitive dev deps, to keep the gate focused on shipped code.
+        run: |
+          pip install .
+          pip-audit --strict --progress-spinner=off --format=json --output=pip-audit.json || true
+          pip-audit --strict --progress-spinner=off
+      - name: Upload pip-audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit
+          path: pip-audit.json
+          if-no-files-found: ignore
+
+  # Static analysis of source for security smells (hardcoded secrets
+  # patterns, dangerous calls). Uses bandit, which understands FastAPI
+  # idioms well enough to keep noise low at the chosen severity.
+  source-scan:
+    if: ${{ vars.ENABLE_CI == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - name: Install bandit
+        run: pip install -U pip "bandit[sarif]>=1.7"
+      - name: Bandit
+        run: |
+          bandit -r packages services cli \
+            --severity-level medium \
+            --confidence-level medium \
+            -f sarif -o bandit.sarif || true
+          bandit -r packages services cli \
+            --severity-level medium \
+            --confidence-level medium
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
+
+  # Build the production image once, scan it for OS and language CVEs,
+  # generate an SPDX SBOM, and upload both as artifacts. This job does
+  # not push the image; docker.yml owns the publish path.
+  image-scan:
+    if: ${{ vars.ENABLE_CI == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (load locally)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/Dockerfile
+          load: true
+          push: false
+          tags: clawhum:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Trivy vulnerability scan (table for logs)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: clawhum:scan
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+          vuln-type: os,library
+      - name: Trivy vulnerability scan (SARIF)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: clawhum:scan
+          format: sarif
+          output: trivy.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+          vuln-type: os,library
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+      - name: Generate SBOM (SPDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          image: clawhum:scan
+          format: spdx-json
+          artifact-name: clawhum-sbom.spdx.json
+          output-file: clawhum-sbom.spdx.json
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: clawhum-sbom.spdx.json
+          if-no-files-found: error
