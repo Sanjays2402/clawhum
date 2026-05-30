@@ -233,6 +233,51 @@ tail -n 200 data/audit.jsonl | jq -r '[.ts, .actor, .method, .path, .status] | @
 - Mount a `PersistentVolume` at `/app/data` so the audit log and FAISS index
   survive pod restarts.
 
+### Helm hardening
+
+The chart ships with production safety defaults and opt-in knobs for the rest.
+
+On by default:
+
+- Dedicated `ServiceAccount` per release with `automountServiceAccountToken: false`.
+- Pod runs as non-root UID/GID `10001`, `fsGroup` `10001`, `seccompProfile: RuntimeDefault`.
+- Container has `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`,
+  and drops all Linux capabilities. A `tmp` emptyDir is mounted at `/tmp` so
+  uvicorn and friends still have a writable scratch dir.
+- `PodDisruptionBudget` with `minAvailable: 1` (auto-skipped when
+  `replicaCount` is 1).
+- Readiness and liveness probes against `/ready` and `/health`.
+- Resource requests and limits on every container.
+
+Opt-in (set `--set` or override in your environment values file):
+
+- `autoscaling.enabled=true` provisions an `HorizontalPodAutoscaler` (CPU + memory).
+  When enabled, the static `replicas` field is omitted so the HPA owns the count.
+  Defaults: min 2, max 10, target 70 percent CPU, 80 percent memory.
+- `networkPolicy.enabled=true` provisions a `NetworkPolicy` that:
+  - allows ingress only on TCP 7451 from pods or namespaces matching
+    `networkPolicy.ingressFromPodLabels` / `ingressFromNamespaceLabels`
+    (so wire your ingress controller labels here),
+  - always permits egress to kube-dns,
+  - permits TCP 443/80 egress to either an explicit `egressCIDRs` allowlist or,
+  if none is given, to the public internet only (RFC1918 ranges excluded).
+
+Example production overlay:
+
+```yaml
+replicaCount: 3
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 12
+networkPolicy:
+  enabled: true
+  ingressFromNamespaceLabels:
+    kubernetes.io/metadata.name: ingress-nginx
+  egressCIDRs:
+    - 10.20.0.0/16
+```
+
 ### Scale
 
 - The current rate limiter and audit writer are in-process. For multi-replica

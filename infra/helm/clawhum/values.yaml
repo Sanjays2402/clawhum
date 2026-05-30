@@ -24,3 +24,54 @@ persistence:
   enabled: true
   storageClass: ""
   size: 20Gi
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod-level security context. Non-root, read-only root FS, no privilege escalation.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+  capabilities:
+    drop:
+      - ALL
+
+# Horizontal Pod Autoscaler. Disabled by default; enable in prod.
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# PodDisruptionBudget protects against voluntary disruptions during cluster
+# maintenance. Enabled when replicaCount > 1.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# NetworkPolicy locks down ingress to the API port and egress to DNS + HTTPS.
+networkPolicy:
+  enabled: false
+  # Restrict ingress to pods carrying these labels (e.g. ingress controller).
+  ingressFromNamespaceLabels: {}
+  ingressFromPodLabels: {}
+  # Allow egress to these CIDRs in addition to DNS. Empty = all egress.
+  egressCIDRs: []
+
+# Sets restrictive Topology / scheduling defaults.
+nodeSelector: {}
+tolerations: []
+affinity: {}
