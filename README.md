@@ -1,5 +1,8 @@
 # ClawHum
 
+![landing](docs/screenshots/landing.png)
+
+
 Query-by-humming. Hum a melody, get matching tracks from your library or Spotify.
 
 ```
