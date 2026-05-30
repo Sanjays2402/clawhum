@@ -30,6 +30,20 @@ class Settings(BaseSettings):
     feedback_path: Path = Path("./data/feedback.jsonl")
     audit_log_path: Path = Path("./data/audit.jsonl")
     audit_enabled: bool = True
+    # Size-based rotation for the audit JSONL file. When the active file
+    # exceeds audit_max_bytes, it is renamed with a numeric suffix and a
+    # fresh file is started. audit_backup_count is the maximum number of
+    # rotated files kept on disk; older files are deleted. Set
+    # audit_max_bytes to 0 to disable in process rotation entirely and
+    # fall back to external rotation (logrotate, sidecar).
+    audit_max_bytes: int = Field(
+        default=50 * 1024 * 1024,
+        description="Rotate the audit log when it exceeds this many bytes. 0 disables rotation.",
+    )
+    audit_backup_count: int = Field(
+        default=5,
+        description="Maximum number of rotated audit log files to retain.",
+    )
 
     model_id: str = "laion/clap-htsat-unfused"
     device: str = "auto"

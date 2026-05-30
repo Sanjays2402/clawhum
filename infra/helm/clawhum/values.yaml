@@ -20,6 +20,13 @@ resources:
 env:
   CLAWHUM_LOG_LEVEL: INFO
   CLAWHUM_DEVICE: cpu
+  # Audit log rotation. Default is 50 MiB per file, 5 backups, all
+  # written under the data PVC so they survive pod restarts but are
+  # bounded so a noisy tenant cannot fill the volume. Set
+  # CLAWHUM_AUDIT_MAX_BYTES to "0" to delegate rotation to logrotate
+  # or a sidecar.
+  CLAWHUM_AUDIT_MAX_BYTES: "52428800"
+  CLAWHUM_AUDIT_BACKUP_COUNT: "5"
 
 # Kubernetes probes. Startup probe gates traffic during model and
 # index load (failureThreshold * periodSeconds = total budget).

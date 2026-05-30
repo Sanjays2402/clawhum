@@ -349,11 +349,23 @@ Configuration via env:
 
 - `CLAWHUM_AUDIT_LOG_PATH` (default `./data/audit.jsonl`)
 - `CLAWHUM_AUDIT_ENABLED` (default `true`)
+- `CLAWHUM_AUDIT_MAX_BYTES` (default `52428800`, 50 MiB) rotate the
+  active file when it exceeds this size. Set to `0` to disable in
+  process rotation and delegate to logrotate or a sidecar.
+- `CLAWHUM_AUDIT_BACKUP_COUNT` (default `5`) maximum number of
+  rotated files kept on disk. Older files are deleted.
 - `CLAWHUM_AUDIT_LOG_PATH` may also be set per-process to redirect output
   (used by the test suite).
 
-The file is append-only and never rotated by the service. Use `logrotate`
-or a cron job to ship and truncate it. Example rotation policy:
+Rotation runs in process: when the active file passes the threshold,
+it is renamed `audit.jsonl.1`, existing `.N` files shift to `.N+1`,
+and anything past `CLAWHUM_AUDIT_BACKUP_COUNT` is deleted. The rename
+uses `os.replace` so the file pointer swap is atomic on POSIX. The
+export and erasure endpoints walk every rotated sibling, so GDPR
+requests still see the full retained history.
+
+If you prefer an external rotator (logrotate, fluent-bit, sidecar),
+set `CLAWHUM_AUDIT_MAX_BYTES=0` and use a policy like:
 
 ```
 /var/lib/clawhum/data/audit.jsonl {
