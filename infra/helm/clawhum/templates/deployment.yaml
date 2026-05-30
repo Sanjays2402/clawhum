@@ -39,6 +39,17 @@ spec:
                 secretKeyRef:
                   name: {{ .Release.Name }}-secrets
                   key: api_key
+            - name: CLAWHUM_SENTRY_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Release.Name }}-secrets
+                  key: sentry_dsn
+            - name: CLAWHUM_SENTRY_ENVIRONMENT
+              value: {{ .Values.sentry.environment | quote }}
+            - name: CLAWHUM_SENTRY_TRACES_SAMPLE_RATE
+              value: {{ .Values.sentry.tracesSampleRate | quote }}
+            - name: CLAWHUM_SENTRY_PROFILES_SAMPLE_RATE
+              value: {{ .Values.sentry.profilesSampleRate | quote }}
           readinessProbe:
             httpGet: { path: /ready, port: http }
             initialDelaySeconds: 5

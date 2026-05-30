@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
+from clawhum_core.error_tracking import init_error_tracking
 from clawhum_core.logging import configure_logging, get_logger
 from clawhum_core.settings import get_settings
 from clawhum_core.telemetry import init_telemetry
@@ -24,10 +25,12 @@ from .state import AppState
 async def _lifespan(app: FastAPI):
     configure_logging()
     log = get_logger("clawhum.api")
+    sentry_active = init_error_tracking()
     app.state.clawhum = AppState.boot(prefer_clap=False)  # default to fallback at startup; reindex can flip
     log.info("clawhum_boot", version=__version__,
              tracks=len(app.state.clawhum.tracks),
-             vectors=app.state.clawhum.index.size())
+             vectors=app.state.clawhum.index.size(),
+             sentry=sentry_active)
     yield
 
 

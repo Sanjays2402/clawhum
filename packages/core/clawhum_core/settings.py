@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     otel_endpoint: str = ""
     service_name: str = "clawhum-api"
 
+    # Sentry error tracking. Empty DSN disables the integration entirely.
+    sentry_dsn: str = ""
+    sentry_environment: str = ""
+    sentry_traces_sample_rate: float = 0.0
+    sentry_profiles_sample_rate: float = 0.0
+
 
 @lru_cache
 def get_settings() -> Settings:

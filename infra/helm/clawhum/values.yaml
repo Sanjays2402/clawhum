@@ -20,6 +20,16 @@ resources:
 env:
   CLAWHUM_LOG_LEVEL: INFO
   CLAWHUM_DEVICE: cpu
+
+# Sentry error tracking. Leave dsn empty to disable. When set, the SDK
+# initializes during API lifespan startup and captures unhandled
+# exceptions from FastAPI routes. The api_key header is scrubbed
+# before events leave the pod.
+sentry:
+  dsn: ""
+  environment: production
+  tracesSampleRate: 0.0
+  profilesSampleRate: 0.0
 persistence:
   enabled: true
   storageClass: ""

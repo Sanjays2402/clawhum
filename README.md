@@ -225,6 +225,50 @@ Review recent activity:
 tail -n 200 data/audit.jsonl | jq -r '[.ts, .actor, .method, .path, .status] | @tsv'
 ```
 
+### Error tracking (Sentry)
+
+ClawHum ships with optional Sentry integration. The official `sentry-sdk`
+with the FastAPI integration is wired in `clawhum_core.error_tracking` and
+initialized during the API lifespan startup. When `CLAWHUM_SENTRY_DSN`
+is empty (the default) the helper is a no-op and the SDK is never loaded.
+
+Install the extra in production builds:
+
+```bash
+pip install ".[sentry]"
+```
+
+Configuration via env:
+
+- `CLAWHUM_SENTRY_DSN` (default empty, disables Sentry).
+- `CLAWHUM_SENTRY_ENVIRONMENT` (default `production`).
+- `CLAWHUM_SENTRY_TRACES_SAMPLE_RATE` float 0.0 to 1.0, default `0.0`.
+- `CLAWHUM_SENTRY_PROFILES_SAMPLE_RATE` float 0.0 to 1.0, default `0.0`.
+
+What the integration does:
+
+- Captures unhandled exceptions raised by FastAPI routes with full stack
+  traces, tagged with `release=clawhum@<version>` so issues group per deploy.
+- Sets `send_default_pii=false` and runs a `before_send` scrubber that
+  filters the `x-api-key`, `Authorization`, `Cookie`, and `Set-Cookie`
+  headers before events leave the pod.
+- Attaches the ClawHum `request_id` as a Sentry tag when the FastAPI
+  scope exposes it, so a Sentry event and a `data/audit.jsonl` row can
+  be correlated by id.
+
+In Kubernetes, set the DSN on the Helm chart and it lands in the
+release secret alongside the API key:
+
+```bash
+helm upgrade --install clawhum infra/helm/clawhum \
+  --set sentry.dsn=$SENTRY_DSN \
+  --set sentry.environment=prod \
+  --set sentry.tracesSampleRate=0.05
+```
+
+The deployment reads the DSN from `secretKeyRef` (`sentry_dsn`) rather
+than a plain env value, so the secret is never echoed in `kubectl describe`.
+
 ### Deploy
 
 - Container image: `infra/docker/Dockerfile` (multi-stage, slim runtime).
