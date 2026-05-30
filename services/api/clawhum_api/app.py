@@ -26,11 +26,18 @@ async def _lifespan(app: FastAPI):
     configure_logging()
     log = get_logger("clawhum.api")
     sentry_active = init_error_tracking()
+    # Drop any cached registry so settings overrides applied via env in
+    # tests or restarts take effect immediately on boot.
+    from .api_keys import get_registry, reset_registry_cache
+    reset_registry_cache()
+    registry = get_registry()
     app.state.clawhum = AppState.boot(prefer_clap=False)  # default to fallback at startup; reindex can flip
     log.info("clawhum_boot", version=__version__,
              tracks=len(app.state.clawhum.tracks),
              vectors=app.state.clawhum.index.size(),
-             sentry=sentry_active)
+             sentry=sentry_active,
+             api_keys=len(registry.by_secret),
+             auth_open=registry.is_open())
     yield
 
 
@@ -40,7 +47,7 @@ def create_app() -> FastAPI:
     # Audit runs innermost so it sees the final status code, but is added
     # before RequestID so request_id is already attached to request.state.
     app.add_middleware(AuditLogMiddleware, enabled=settings.audit_enabled)
-    app.add_middleware(SimpleRateLimit, max_per_minute=120)
+    app.add_middleware(SimpleRateLimit, max_per_minute=settings.rate_limit_per_minute)
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(
         CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],

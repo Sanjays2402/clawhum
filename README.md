@@ -183,6 +183,35 @@ Exposed at `GET /metrics` (text/plain, Prometheus format):
 
 Day-2 operational concerns for running ClawHum in a shared or production environment.
 
+### API keys and per-key rate limiting
+
+ClawHum supports multiple named API keys with independent rate-limit
+buckets. Configure via `CLAWHUM_API_KEYS` with a comma-separated spec:
+
+```
+CLAWHUM_API_KEYS=ops:sk_live_ops:600,partner:sk_live_partner:120,readonly:sk_ro_xyz
+CLAWHUM_RATE_LIMIT_PER_MINUTE=120
+```
+
+Each entry is `name:secret[:rpm]`. The optional `rpm` overrides the
+default from `CLAWHUM_RATE_LIMIT_PER_MINUTE` for that key only, so noisy
+partners cannot starve interactive traffic. Buckets are per-key sliding
+windows; unauthenticated requests fall back to a per-IP bucket sized by
+the default. When no keys are configured the API runs in open dev mode.
+
+The legacy `CLAWHUM_API_KEY` setting is still honoured and registered as
+the `default` key when `CLAWHUM_API_KEYS` is empty, so existing
+deployments keep working without changes.
+
+Clients receive `X-RateLimit-Limit` and `X-RateLimit-Remaining` on every
+response, plus `Retry-After` on `429`s, so they can pace requests
+without guesswork. Audit log `actor` ids are hashed digests of the
+supplied key, so rotating a leaked secret is a one-line config change.
+
+For multi-replica deployments the in-process limiter should be replaced
+with a shared store (Redis); the bucket id format (`key:<name>` or
+`ip:<addr>`) is stable so the swap is mechanical.
+
 ### Audit log
 
 Every mutating HTTP request (anything that is not `GET`, `HEAD`, or `OPTIONS`)

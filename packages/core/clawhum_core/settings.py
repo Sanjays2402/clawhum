@@ -10,7 +10,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CLAWHUM_", env_file=".env", extra="ignore")
 
-    api_key: str = Field(default="changeme", description="Static API key for /match etc.")
+    api_key: str = Field(default="changeme", description="Legacy single API key. Prefer api_keys.")
+    api_keys: str = Field(
+        default="",
+        description=(
+            "Multi-key spec: 'name:secret:rpm,name2:secret2:rpm'. "
+            "rpm is optional and defaults to the rate-limit default."
+        ),
+    )
+    rate_limit_per_minute: int = Field(
+        default=120, description="Default requests-per-minute applied per API key or per IP."
+    )
     log_level: str = "INFO"
     log_json: bool = True
 
