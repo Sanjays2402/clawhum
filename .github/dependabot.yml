@@ -1,0 +1,131 @@
+# Dependabot configuration.
+#
+# Procurement teams ask: "How do you find out about vulnerable
+# dependencies?" This file answers it. Dependabot opens weekly PRs for
+# every package ecosystem this repo uses, and the existing
+# dependabot-auto-merge workflow handles low-risk patch updates.
+#
+# Notes:
+#  * This is a Dependabot CONFIG file, not a GitHub Actions workflow.
+#  * Groups keep PR volume sane. Security advisories always open
+#    their own PRs (Dependabot ignores grouping for security updates).
+#  * `open-pull-requests-limit` caps noise per ecosystem.
+#  * `versioning-strategy: increase` keeps lockfiles aligned with the
+#    pinned ranges in pyproject.toml / package.json.
+
+version: 2
+updates:
+  # ---------------- Python (uv / pyproject.toml) ----------------
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 10
+    versioning-strategy: "increase"
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    groups:
+      python-runtime:
+        applies-to: version-updates
+        patterns:
+          - "fastapi"
+          - "uvicorn*"
+          - "pydantic*"
+          - "python-multipart"
+          - "httpx"
+          - "tenacity"
+      python-ml:
+        applies-to: version-updates
+        patterns:
+          - "numpy"
+          - "scipy"
+          - "librosa"
+          - "soundfile"
+          - "faiss-cpu"
+      python-observability:
+        applies-to: version-updates
+        patterns:
+          - "opentelemetry-*"
+          - "prometheus-client"
+          - "structlog"
+
+  # ---------------- Next.js web app (pnpm) ----------------
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 10
+    versioning-strategy: "increase"
+    labels:
+      - "dependencies"
+      - "javascript"
+    commit-message:
+      prefix: "chore(deps-web)"
+      include: "scope"
+    groups:
+      next-stack:
+        applies-to: version-updates
+        patterns:
+          - "next"
+          - "react"
+          - "react-dom"
+          - "@next/*"
+      ui-stack:
+        applies-to: version-updates
+        patterns:
+          - "tailwind*"
+          - "@tailwindcss/*"
+          - "shadcn*"
+          - "lucide-react"
+          - "@phosphor-icons/*"
+          - "class-variance-authority"
+          - "clsx"
+          - "tailwind-merge"
+      types:
+        applies-to: version-updates
+        patterns:
+          - "@types/*"
+          - "typescript"
+          - "eslint*"
+
+  # ---------------- GitHub Actions used by existing workflows ----------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(actions)"
+      include: "scope"
+
+  # ---------------- Container base images ----------------
+  - package-ecosystem: "docker"
+    directory: "/infra/docker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "America/Los_Angeles"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(docker)"
+      include: "scope"

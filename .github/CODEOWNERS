@@ -1,0 +1,51 @@
+# CODEOWNERS
+#
+# Every PR touching code in this repo is automatically reviewed by the
+# listed owners. Enterprise procurement reviews look for this file as
+# evidence that changes are gated by a named accountable party.
+#
+# Format: <path glob>  <@user-or-team> [@additional-owner ...]
+# Later matches win, so put broad rules first and overrides last.
+
+# Default owner for everything not matched below.
+*                                   @Sanjays2402
+
+# ---------- Backend (FastAPI) ----------
+/services/api/                      @Sanjays2402
+/services/indexer/                  @Sanjays2402
+/packages/                          @Sanjays2402
+
+# ---------- Frontend (Next.js) ----------
+/web/                               @Sanjays2402
+
+# ---------- Auth, RBAC, tenant isolation ----------
+# These paths are the security-critical core. Any change here needs
+# explicit signoff because regressions become CVEs.
+/services/api/clawhum_api/auth.py           @Sanjays2402
+/services/api/clawhum_api/api_keys.py       @Sanjays2402
+/services/api/clawhum_api/pat_store.py      @Sanjays2402
+/services/api/clawhum_api/mfa.py            @Sanjays2402
+/services/api/clawhum_api/tenant.py         @Sanjays2402
+/services/api/clawhum_api/ip_allowlist.py   @Sanjays2402
+/services/api/clawhum_api/sso_store.py      @Sanjays2402
+/services/api/clawhum_api/audit.py          @Sanjays2402
+/services/api/clawhum_api/middleware.py     @Sanjays2402
+/services/api/clawhum_api/webhook_safety.py @Sanjays2402
+
+# ---------- Privacy, retention, exports (GDPR/CCPA) ----------
+/services/api/clawhum_api/privacy.py            @Sanjays2402
+/services/api/clawhum_api/retention.py          @Sanjays2402
+/services/api/clawhum_api/workspace_export.py   @Sanjays2402
+
+# ---------- CI, supply chain, infra ----------
+/.github/                           @Sanjays2402
+/infra/                             @Sanjays2402
+/Makefile                           @Sanjays2402
+/pyproject.toml                     @Sanjays2402
+/uv.lock                            @Sanjays2402
+/web/package.json                   @Sanjays2402
+/web/pnpm-lock.yaml                 @Sanjays2402
+
+# ---------- Security policy and threat model ----------
+/SECURITY.md                        @Sanjays2402
+/docs/security/                     @Sanjays2402
