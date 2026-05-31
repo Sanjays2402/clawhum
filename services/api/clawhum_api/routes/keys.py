@@ -19,8 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from .. import pat_store
-from ..api_keys import ROLES
-from ..auth import require_mfa, require_roles
+from ..api_keys import ROLES, SCOPES, normalise_scopes, scopes_allowed_for_roles
+from ..auth import require_mfa, require_roles, require_scopes
 from ..tenant import current_tenant_id
 from clawhum_core.settings import get_settings
 
@@ -41,6 +41,15 @@ class CreateKeyBody(BaseModel):
             "clamp to the configured max when a cap is set."
         ),
     )
+    scopes: list[str] | None = Field(
+        default=None,
+        description=(
+            "Fine-grained scopes for least-privilege machine tokens. "
+            "Omit or pass an empty list to grant every scope this PAT's "
+            "roles permit. Unknown scopes are silently dropped; scopes "
+            "above the caller's role are clamped server-side."
+        ),
+    )
 
 
 class KeyView(BaseModel):
@@ -53,6 +62,8 @@ class KeyView(BaseModel):
     secret_hint: str
     expires_at: float
     expired: bool
+    scopes: list[str]
+    effective_scopes: list[str]
 
 
 class KeyCreateResponse(KeyView):
@@ -62,6 +73,8 @@ class KeyCreateResponse(KeyView):
 class KeyPolicyResponse(BaseModel):
     max_ttl_days: int
     default_ttl_days: int
+    available_scopes: list[str]
+    allowed_scopes: list[str]
 
 
 @router.get(
@@ -79,16 +92,22 @@ async def list_keys(request: Request) -> list[dict[str, Any]]:
     response_model=KeyPolicyResponse,
     dependencies=[Depends(require_roles("writer"))],
 )
-async def keys_policy() -> dict[str, int]:
+async def keys_policy(request: Request) -> dict[str, Any]:
     """Expose the workspace PAT lifetime policy to the UI.
 
     The mint form reads this to render the TTL picker so it never
-    offers a value the server will reject.
+    offers a value the server will reject. The scope arrays let the
+    UI render checkboxes that already reflect the caller's role
+    ceiling, so a reader is not offered ``write:library`` to begin
+    with.
     """
     s = get_settings()
+    caller_roles: frozenset[str] = getattr(request.state, "api_key_roles", frozenset())
     return {
         "max_ttl_days": int(s.pat_max_ttl_days or 0),
         "default_ttl_days": int(s.pat_default_ttl_days or 0),
+        "available_scopes": sorted(SCOPES),
+        "allowed_scopes": sorted(scopes_allowed_for_roles(caller_roles)),
     }
 
 
@@ -122,6 +141,7 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
         roles=requested,
         rpm=body.rpm or 0,
         expires_in_days=body.expires_in_days,
+        scopes=normalise_scopes(body.scopes or []),
     )
     view = pat_store.public_view(pat)
     view["secret"] = secret

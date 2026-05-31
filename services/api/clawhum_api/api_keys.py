@@ -31,6 +31,70 @@ from clawhum_core.settings import get_settings
 ROLES: frozenset[str] = frozenset({"admin", "writer", "reader"})
 ADMIN_ROLE = "admin"
 
+# Canonical fine-grained scope set for personal access tokens.
+#
+# Roles are coarse (admin / writer / reader) and govern what a human
+# operator can do via the dashboard. Scopes are the contract a machine
+# token signs: a CI job that only needs to call /match should be able
+# to mint a token with read:matches and nothing else, so a leak of
+# that token cannot rewrite the library or rotate keys. Enterprise
+# procurement reviews specifically ask for this least-privilege shape.
+#
+# A PAT may carry zero scopes; in that case it is treated as "all
+# scopes the role set permits" so existing tokens minted before this
+# release keep working unchanged. The `admin` role always implies
+# every scope, mirroring role semantics.
+SCOPES: frozenset[str] = frozenset({
+    "read:matches",
+    "write:matches",
+    "read:library",
+    "write:library",
+    "read:keys",
+    "write:keys",
+    "admin",
+})
+
+# Map each scope to the minimum role that may mint or use it. This
+# keeps a `reader` PAT from being upgraded with a `write:*` scope
+# at mint time, regardless of what the body asked for.
+SCOPE_MIN_ROLE: dict[str, str] = {
+    "read:matches": "reader",
+    "write:matches": "writer",
+    "read:library": "reader",
+    "write:library": "writer",
+    "read:keys": "reader",
+    "write:keys": "writer",
+    "admin": "admin",
+}
+
+
+def normalise_scopes(values) -> frozenset[str]:
+    """Lower-case, dedupe, drop anything outside the canonical set.
+
+    Silently dropping unknown scopes (rather than raising) matches how
+    roles are parsed and prevents a typo in a customer integration
+    from accidentally granting wider access than intended.
+    """
+    if not values:
+        return frozenset()
+    parts = {str(v).strip().lower() for v in values if v is not None}
+    return frozenset(parts & SCOPES)
+
+
+def scopes_allowed_for_roles(roles: frozenset[str]) -> frozenset[str]:
+    """Return the maximum scope set a caller with these roles may hold."""
+    if ADMIN_ROLE in roles:
+        return SCOPES
+    out: set[str] = set()
+    for scope, min_role in SCOPE_MIN_ROLE.items():
+        if min_role == ADMIN_ROLE:
+            continue
+        if min_role == "writer" and "writer" in roles:
+            out.add(scope)
+        elif min_role == "reader" and ("reader" in roles or "writer" in roles):
+            out.add(scope)
+    return frozenset(out)
+
 
 # Sentinel tenant used when auth is open (dev mode) or no key matched.
 DEV_TENANT_ID = "dev"

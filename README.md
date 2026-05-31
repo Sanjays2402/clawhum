@@ -46,6 +46,26 @@ curl 'http://127.0.0.1:7451/v1/audit/export?format=csv&method=DELETE&dry_run=exc
   -H "X-API-Key: $CLAWHUM_KEY" -o audit-deletes-24h.csv
 ```
 
+## Fine-grained PAT scopes
+
+Roles (`reader`, `writer`, `admin`) decide what a human operator can do in the dashboard. Scopes are the contract a machine token signs. `POST /keys` now accepts a `scopes` array drawn from `read:matches`, `write:matches`, `read:library`, `write:library`, `read:keys`, `write:keys`, and `admin`, so a CI bot that only needs `/match` gets a token that cannot rewrite the library or rotate other keys if it leaks. Scopes requested above the caller's role ceiling are silently clamped at mint, unknown scopes are dropped, and an empty list keeps the legacy behaviour of inheriting every scope the role permits. `GET /keys/policy` advertises both the full canonical set and the subset the caller may grant so the `/settings/keys` UI renders checkboxes a `reader` cannot misuse. Every protected route declares its required scope via `require_scopes(...)`, returning `403` with the missing scope list when a narrowly scoped PAT reaches outside its lane. Coverage in `tests/integration/test_pat_scopes.py` pins the mint-time clamp, the runtime denial, and the legacy no-scopes path.
+
+### Try it (mint a least-privilege PAT)
+
+```bash
+# Mint a token that can only read matches.
+curl -X POST http://127.0.0.1:7452/api/keys \
+  -H "X-API-Key: $CLAWHUM_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"ci-bot","scopes":["read:matches"]}'
+
+# Using that token against a write route returns 403 with the missing scope.
+curl -X POST http://127.0.0.1:7452/api/reindex \
+  -H "X-API-Key: pat_..." -d '{}'
+```
+
+Workspace owners can also see and pick scopes in the browser at `http://127.0.0.1:7452/settings/keys`.
+
 ## Bulk personal-access-token revocation
 
 When a personal access token leaks, you do not want to revoke 47 tokens one by one. `POST /keys/revoke-all` tombstones every PAT in the calling workspace in a single call, with cross-tenant isolation guaranteed by the store layer. By default the token that authenticated the request is preserved so the operator running incident response stays signed in; pass `{"include_self": true}` to revoke that one too. The endpoint requires the `writer` role and a fresh `X-MFA-Code` once the actor has enrolled TOTP. `?dry_run=true` returns the ids that would be revoked without writing. Every call flows through the global audit log, so reviewers can later see who pulled the plug, when, from which IP, and how many credentials were invalidated. The `/settings/keys` page exposes the same control behind a confirm dialog.

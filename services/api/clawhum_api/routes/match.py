@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, R
 from clawhum_core.settings import get_settings
 from clawhum_match.matcher import Matcher
 from clawhum_audio.io import load_audio
-from ..auth import require_api_key
+from ..auth import require_api_key, require_scopes
 from ..schemas import MatchResponse, MatchResult
 from ..tenant import current_tenant_id
 from . import webhooks as webhooks_routes
@@ -15,7 +15,11 @@ from . import webhooks as webhooks_routes
 router = APIRouter(tags=["match"])
 
 
-@router.post("/match", response_model=MatchResponse, dependencies=[Depends(require_api_key)])
+@router.post(
+    "/match",
+    response_model=MatchResponse,
+    dependencies=[Depends(require_scopes("read:matches"))],
+)
 async def match(
     request: Request,
     audio: UploadFile = File(...),

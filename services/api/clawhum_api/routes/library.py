@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from clawhum_core.settings import get_settings
 from clawhum_indexer.build import build_index, IndexerOptions
-from ..auth import require_api_key, require_roles
+from ..auth import require_api_key, require_roles, require_scopes
 from ..schemas import ReindexBody, StatsResponse
 from ..state import AppState
 
@@ -25,7 +25,11 @@ _AUDIO_MIMES = {
 router = APIRouter(tags=["library"], dependencies=[Depends(require_api_key)])
 
 
-@router.get("/stats", response_model=StatsResponse)
+@router.get(
+    "/stats",
+    response_model=StatsResponse,
+    dependencies=[Depends(require_scopes("read:library"))],
+)
 async def stats(request: Request):
     st = request.app.state.clawhum
     return StatsResponse(
@@ -39,7 +43,7 @@ async def stats(request: Request):
 @router.post(
     "/reindex",
     response_model=dict,
-    dependencies=[Depends(require_roles("writer"))],
+    dependencies=[Depends(require_roles("writer")), Depends(require_scopes("write:library"))],
 )
 async def reindex(body: ReindexBody, request: Request, bg: BackgroundTasks):
     s = get_settings()

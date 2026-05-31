@@ -6,7 +6,7 @@ from fastapi import Header, HTTPException, Request, status
 
 from clawhum_core.settings import get_settings
 
-from .api_keys import ANON_TENANT_ID, DEV_TENANT_ID, ROLES, get_registry
+from .api_keys import ANON_TENANT_ID, DEV_TENANT_ID, ROLES, SCOPES, scopes_allowed_for_roles, get_registry
 from . import ip_allowlist, pat_store
 
 
@@ -24,6 +24,7 @@ async def require_api_key(
     if registry.is_open():
         request.state.api_key_name = "dev"
         request.state.api_key_roles = ROLES
+        request.state.api_key_scopes = SCOPES
         request.state.tenant_id = DEV_TENANT_ID
         _enforce_ip_allowlist(request)
         return "dev"
@@ -35,6 +36,7 @@ async def require_api_key(
             if pat is not None:
                 request.state.api_key_name = f"pat:{pat.name}"
                 request.state.api_key_roles = pat.roles
+                request.state.api_key_scopes = pat.effective_scopes()
                 request.state.tenant_id = pat.tenant_id or ANON_TENANT_ID
                 request.state.pat_id = pat.id
                 # Best-effort, fire and forget. Failures must never block auth.
@@ -47,6 +49,7 @@ async def require_api_key(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid api key")
     request.state.api_key_name = key.name
     request.state.api_key_roles = key.roles
+    request.state.api_key_scopes = scopes_allowed_for_roles(key.roles)
     request.state.tenant_id = key.tenant_id or ANON_TENANT_ID
     _enforce_ip_allowlist(request)
     return x_api_key
@@ -74,6 +77,44 @@ def require_roles(*roles: str):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"missing role: one of {sorted(required)}",
+            )
+        return x_api_key or "dev"
+
+    return _dep
+
+
+def require_scopes(*scopes: str):
+    """Build a FastAPI dependency enforcing PAT-style fine-grained scopes.
+
+    Auth flow: authenticate as usual, then require that the caller's
+    effective scope set contains *every* scope listed. PATs minted
+    with a narrow scope list (least privilege) will be rejected if
+    they try to call a route outside that list, even when their role
+    would otherwise permit it. Legacy PATs and API keys minted before
+    scopes existed expose the maximum scope set their roles imply,
+    so this dependency is backwards compatible.
+
+    The `admin` scope always satisfies any requirement, mirroring the
+    `admin` role rule used by ``require_roles``. Returns 403 with the
+    list of missing scopes so SDKs can surface a useful error.
+    """
+    required = frozenset(s.strip().lower() for s in scopes if s)
+
+    async def _dep(
+        request: Request,
+        x_api_key: str = Header(default=""),
+    ) -> str:
+        await require_api_key(request, x_api_key=x_api_key)
+        granted: frozenset[str] = getattr(
+            request.state, "api_key_scopes", frozenset()
+        )
+        if "admin" in granted:
+            return x_api_key or "dev"
+        missing = required - granted
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"missing scope(s): {sorted(missing)}",
             )
         return x_api_key or "dev"
 

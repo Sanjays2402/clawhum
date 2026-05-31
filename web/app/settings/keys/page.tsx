@@ -34,6 +34,8 @@ interface KeyRow {
   secret_hint: string;
   expires_at: number;
   expired: boolean;
+  scopes: string[];
+  effective_scopes: string[];
 }
 
 interface CreatedKey extends KeyRow {
@@ -43,6 +45,8 @@ interface CreatedKey extends KeyRow {
 interface KeyPolicy {
   max_ttl_days: number;
   default_ttl_days: number;
+  available_scopes: string[];
+  allowed_scopes: string[];
 }
 
 type ListState =
@@ -99,6 +103,7 @@ export default function KeysPage() {
   const [name, setName] = useState("");
   const [ttlDays, setTtlDays] = useState<string>("90");
   const [policy, setPolicy] = useState<KeyPolicy | null>(null);
+  const [selectedScopes, setSelectedScopes] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [justCreated, setJustCreated] = useState<CreatedKey | null>(null);
@@ -176,6 +181,7 @@ export default function KeysPage() {
         body: JSON.stringify({
           name: name.trim(),
           expires_in_days: ttlDays === "never" ? 0 : Number(ttlDays),
+          scopes: Array.from(selectedScopes),
         }),
       });
       if (!r.ok) {
@@ -186,6 +192,7 @@ export default function KeysPage() {
       const created = (await r.json()) as CreatedKey;
       setJustCreated(created);
       setName("");
+      setSelectedScopes(new Set());
       await refresh();
     } catch (e: any) {
       setCreateError(e?.message || String(e));
@@ -373,6 +380,56 @@ export default function KeysPage() {
             workspace cap: {policy.max_ttl_days}d
           </p>
         )}
+        {policy && policy.allowed_scopes.length > 0 && (
+          <fieldset className="mt-4 space-y-2">
+            <legend className="text-[11px] font-mono uppercase tracking-wider text-[var(--color-muted)]">
+              scopes (leave empty for role default)
+            </legend>
+            <div className="flex flex-wrap gap-2">
+              {policy.allowed_scopes.map((s) => {
+                const checked = selectedScopes.has(s);
+                return (
+                  <label
+                    key={s}
+                    className={`inline-flex items-center gap-1.5 rounded border px-2 py-1 text-[11px] font-mono cursor-pointer select-none ${
+                      checked
+                        ? "border-[var(--color-accent)] bg-[color-mix(in_srgb,var(--color-accent)_10%,var(--color-bg))]"
+                        : "border-[var(--color-line)] hover:bg-[var(--color-bg)]"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={checked}
+                      onChange={(e) => {
+                        setSelectedScopes((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(s);
+                          else next.delete(s);
+                          return next;
+                        });
+                      }}
+                    />
+                    <span
+                      aria-hidden
+                      className={`inline-block h-3 w-3 rounded-sm border ${
+                        checked
+                          ? "bg-[var(--color-accent)] border-[var(--color-accent)]"
+                          : "border-[var(--color-line)]"
+                      }`}
+                    />
+                    {s}
+                  </label>
+                );
+              })}
+            </div>
+            {selectedScopes.size === 0 && (
+              <p className="text-[11px] text-[var(--color-muted)]">
+                No scopes selected. Token will get every scope its role permits.
+              </p>
+            )}
+          </fieldset>
+        )}
         {createError && (
           <p className="mt-2 text-xs text-red-500 flex items-center gap-1">
             <Warning size={12} weight="bold" /> {createError}
@@ -526,6 +583,9 @@ export default function KeysPage() {
                   </div>
                   <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-muted)] font-mono uppercase tracking-wider">
                     <span>roles: {row.roles.join(", ") || "reader"}</span>
+                    <span title={row.effective_scopes.join(", ")}>
+                      scopes: {row.scopes.length > 0 ? row.scopes.join(", ") : "role default"}
+                    </span>
                     <span>used: {timeAgo(row.last_used_at)}</span>
                     <span>created: {timeAgo(row.created_at)}</span>
                     <span
