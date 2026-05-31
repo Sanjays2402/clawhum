@@ -25,9 +25,11 @@ from .routes import privacy as privacy_routes
 from .routes import history as history_routes
 from .routes import share as share_routes
 from .routes import spotify as spotify_routes
+from .routes import usage as usage_routes
 from .routes import webhooks as webhooks_routes
 from .state import AppState
 from .tenant import TenantScopeMiddleware
+from .usage import UsageRecorderMiddleware
 
 
 @asynccontextmanager
@@ -56,6 +58,7 @@ def create_app() -> FastAPI:
     # Audit runs innermost so it sees the final status code, but is added
     # before RequestID so request_id is already attached to request.state.
     app.add_middleware(AuditLogMiddleware, enabled=settings.audit_enabled)
+    app.add_middleware(UsageRecorderMiddleware)
     app.add_middleware(TenantScopeMiddleware)
     app.add_middleware(SimpleRateLimit, max_per_minute=settings.rate_limit_per_minute)
     # Prometheus middleware sits outside rate limiting so 429 responses
@@ -101,6 +104,7 @@ def create_app() -> FastAPI:
     app.include_router(share_routes.router)
     app.include_router(history_routes.router)
     app.include_router(me_routes.router)
+    app.include_router(usage_routes.router)
     app.include_router(webhooks_routes.router)
     app.include_router(metrics_router)
     register_app_collector(app)

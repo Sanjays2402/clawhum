@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     feedback_path: Path = Path("./data/feedback.jsonl")
     shares_path: Path = Path("./data/shares.jsonl")
     history_path: Path = Path("./data/history.jsonl")
+    usage_path: Path = Path("./data/usage.jsonl")
     webhooks_path: Path = Path("./data/webhooks.jsonl")
     webhook_deliveries_path: Path = Path("./data/webhook_deliveries.jsonl")
     webhook_timeout_sec: float = 5.0

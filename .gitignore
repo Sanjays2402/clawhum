@@ -33,3 +33,4 @@ models/
 *.tsbuildinfo
 .idea/
 .vscode/
+data/usage.jsonl

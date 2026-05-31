@@ -13,6 +13,7 @@ const TABS: { href: string; label: string; hint: string }[] = [
   { href: "/catalog", label: "catalog", hint: "fingerprinted tracks" },
   { href: "/metrics", label: "metrics", hint: "prometheus" },
   { href: "/library", label: "index", hint: "reindex / stats" },
+  { href: "/usage", label: "usage", hint: "quota + meter" },
   { href: "/settings", label: "settings", hint: "api key + usage" },
   { href: "/webhooks", label: "webhooks", hint: "outbound events" },
 ];

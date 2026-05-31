@@ -10,6 +10,17 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Try it (usage + quota meter)
+
+ClawHum now tracks per-tenant chargeable activity (match, batch, pitch, share, history, webhook) and exposes a live quota meter at `http://127.0.0.1:7452/usage`. The page shows the rolling minute / day / month totals, a 30 day daily sparkline, a per-event breakdown, and an upgrade CTA that fires when you cross 80% of the free monthly quota. The default free quota is 1000 requests / 30 days; override with `CLAWHUM_FREE_QUOTA_MONTH=5000`.
+
+```bash
+# inspect your own usage
+curl http://127.0.0.1:7451/usage -H 'X-API-Key: dev'
+```
+
+Events are recorded by middleware on every 2xx response to a billable route and persisted to `data/usage.jsonl` (override with `CLAWHUM_USAGE_PATH`). Tenant scoping means each API key only sees its own counters.
+
 ## Try it (cloud history)
 
 ClawHum now syncs every match to your account so history survives device switches and browser-storage wipes. Open `http://127.0.0.1:7452/history` after setting an API key in `/settings` and you'll see every run, searchable by query name, filename, artist, or title, with rename, tag, and delete inline. The `/matches` page keeps the local-only log for offline use.
