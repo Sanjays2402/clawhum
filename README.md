@@ -10,6 +10,15 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Try it (pricing page)
+
+ClawHum now ships a real pricing page at `http://127.0.0.1:7452/pricing` with three tiers (Free, Studio, Label), monthly quotas, a feature matrix, and an accessible FAQ. The free plan CTA drops users straight into the capture page. Paid CTAs open Stripe Payment Links when `NEXT_PUBLIC_STRIPE_LINK_STUDIO` / `NEXT_PUBLIC_STRIPE_LINK_LABEL` are set at build time, and fall back to a real `mailto:` so customers can always reach you. The existing usage page "upgrade" buttons now route here instead of dead ending in settings.
+
+```bash
+# preview the page
+curl -s http://127.0.0.1:7452/pricing | grep -i '"clawhum / pricing"'
+```
+
 ## Try it (install to your phone)
 
 ClawHum is now an installable PWA. Open `http://127.0.0.1:7452/` on Chrome / Edge (desktop or Android) and tap the install banner that appears in the bottom right, or use the browser menu → Install. On iOS Safari use Share → Add to Home Screen. The service worker precaches an offline shell so navigating to a stale tab without network shows a useful `/offline` page that still lets you read your saved history. Live matching always hits the network because the fingerprint index lives on the server, so `/api/*` is never cached.

@@ -246,7 +246,7 @@ function UsageView({ data }: { data: UsagePayload }) {
               </div>
             </div>
             <Link
-              href="/settings"
+              href="/pricing"
               className="ml-auto self-center inline-flex items-center gap-1 border border-red-400/60 text-red-300 px-2 py-1 font-mono text-[10px] uppercase tracking-widest hover:bg-red-500/10"
             >
               <Sparkle size={12} weight="duotone" /> upgrade
@@ -264,7 +264,7 @@ function UsageView({ data }: { data: UsagePayload }) {
               </div>
             </div>
             <Link
-              href="/settings"
+              href="/pricing"
               className="ml-auto self-center inline-flex items-center gap-1 border border-amber-400/60 text-amber-200 px-2 py-1 font-mono text-[10px] uppercase tracking-widest hover:bg-amber-400/10"
             >
               <Sparkle size={12} weight="duotone" /> upgrade
