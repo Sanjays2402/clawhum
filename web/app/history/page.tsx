@@ -17,6 +17,8 @@ import {
   FileCode,
 } from "@phosphor-icons/react/dist/ssr";
 import { useApiKey } from "@/lib/apiKey";
+import { historyToShareInput } from "@/lib/share";
+import ShareButton from "@/components/ShareButton";
 
 interface MatchResult {
   track_id: string;
@@ -305,6 +307,10 @@ export default function HistoryPage() {
                   >
                     <Tag size={13} weight="duotone" />
                   </button>
+                  <ShareButton
+                    compact
+                    input={historyToShareInput(it, it.name ?? null)}
+                  />
                   <button
                     title="delete"
                     onClick={() => remove(it.id)}
