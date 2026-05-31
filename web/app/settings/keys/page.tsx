@@ -22,6 +22,7 @@ import {
   Terminal,
   ArrowLeft,
   GlobeHemisphereWest,
+  ClockCounterClockwise,
 } from "@phosphor-icons/react/dist/ssr";
 import { getApiKey, useApiKey } from "@/lib/apiKey";
 
@@ -47,6 +48,22 @@ interface KeyRow {
 
 interface CreatedKey extends KeyRow {
   secret: string;
+}
+
+interface IpHistoryItem {
+  ip: string;
+  first_seen: number;
+  last_seen: number;
+  count: number;
+  last_ua?: string;
+}
+
+interface IpHistoryView {
+  id: string;
+  name: string;
+  distinct_ips: number;
+  truncated: boolean;
+  items: IpHistoryItem[];
 }
 
 interface KeyPolicy {
@@ -127,6 +144,10 @@ export default function KeysPage() {
   const [ipSaving, setIpSaving] = useState<string | null>(null);
   const [ipError, setIpError] = useState<string | null>(null);
   const [revokeAllError, setRevokeAllError] = useState<string | null>(null);
+  const [historyId, setHistoryId] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState<string | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyData, setHistoryData] = useState<IpHistoryView | null>(null);
   const [revokeAllResult, setRevokeAllResult] = useState<
     { revoked: number; preserved: boolean } | null
   >(null);
@@ -288,6 +309,41 @@ export default function KeysPage() {
       setIpError(e?.message || String(e));
     } finally {
       setIpSaving(null);
+    }
+  }
+
+  async function openHistory(id: string) {
+    if (historyId === id) {
+      setHistoryId(null);
+      setHistoryData(null);
+      setHistoryError(null);
+      return;
+    }
+    setHistoryId(id);
+    setHistoryData(null);
+    setHistoryError(null);
+    setHistoryLoading(id);
+    try {
+      const r = await fetch(`/api/keys/${id}/ip-history`, {
+        headers: authHeaders(),
+      });
+      if (!r.ok) {
+        const msg = await r.text().catch(() => "");
+        if (r.status === 403) {
+          setHistoryError("Admin role required to view source IP history.");
+        } else if (r.status === 404) {
+          setHistoryError("Token not found in this workspace.");
+        } else {
+          setHistoryError(msg || `failed with ${r.status}`);
+        }
+        return;
+      }
+      const body: IpHistoryView = await r.json();
+      setHistoryData(body);
+    } catch (e: any) {
+      setHistoryError(e?.message || String(e));
+    } finally {
+      setHistoryLoading(null);
     }
   }
 
@@ -843,12 +899,96 @@ export default function KeysPage() {
                       <GlobeHemisphereWest size={12} weight="duotone" /> ip allowlist
                     </button>
                     <button
+                      onClick={() => openHistory(row.id)}
+                      className={`inline-flex items-center gap-1 px-3 py-1.5 rounded border text-xs hover:bg-[var(--color-bg)] ${
+                        historyId === row.id
+                          ? "border-[var(--color-accent)] text-[var(--color-accent)]"
+                          : "border-[var(--color-line)]"
+                      }`}
+                      aria-label={`Show source IP history for ${row.name}`}
+                      title="List every distinct source IP that has successfully authenticated with this token. Admin role required."
+                    >
+                      <ClockCounterClockwise size={12} weight="duotone" />{" "}
+                      {historyLoading === row.id ? "loading..." : "ip history"}
+                    </button>
+                    <button
                       onClick={() => setConfirmId(row.id)}
                       className="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-[var(--color-line)] text-xs hover:bg-[var(--color-bg)]"
                       aria-label={`Revoke ${row.name}`}
                     >
                       <Trash size={12} weight="bold" /> revoke
                     </button>
+                  </div>
+                )}
+                {historyId === row.id && (
+                  <div className="w-full mt-3 border border-[var(--color-line)] rounded p-3 bg-[var(--color-bg)]">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-xs font-mono uppercase tracking-wider text-[var(--color-muted)]">
+                        source ip history
+                        {historyData ? (
+                          <span className="ml-2 normal-case tracking-normal">
+                            {historyData.distinct_ips} distinct ip
+                            {historyData.distinct_ips === 1 ? "" : "s"}
+                            {historyData.truncated ? " (truncated)" : ""}
+                          </span>
+                        ) : null}
+                      </div>
+                      <button
+                        onClick={() => openHistory(row.id)}
+                        className="text-[11px] text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+                      >
+                        close
+                      </button>
+                    </div>
+                    {historyError ? (
+                      <p className="text-[11px] text-red-500">{historyError}</p>
+                    ) : !historyData ? (
+                      <p className="text-[11px] text-[var(--color-muted)]">loading...</p>
+                    ) : historyData.items.length === 0 ? (
+                      <p className="text-[11px] text-[var(--color-muted)]">
+                        No successful authentications recorded yet. The token
+                        has been minted but never used.
+                      </p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-[11px] font-mono">
+                          <thead className="text-[var(--color-muted)] uppercase tracking-wider">
+                            <tr className="text-left">
+                              <th className="py-1 pr-3">ip</th>
+                              <th className="py-1 pr-3">count</th>
+                              <th className="py-1 pr-3">first seen</th>
+                              <th className="py-1 pr-3">last seen</th>
+                              <th className="py-1">user agent</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {historyData.items.map((item) => (
+                              <tr
+                                key={item.ip}
+                                className="border-t border-[var(--color-line)]"
+                              >
+                                <td className="py-1 pr-3 break-all">{item.ip}</td>
+                                <td className="py-1 pr-3">{item.count}</td>
+                                <td className="py-1 pr-3">
+                                  {timeAgo(item.first_seen)}
+                                </td>
+                                <td className="py-1 pr-3">
+                                  {timeAgo(item.last_seen)}
+                                </td>
+                                <td className="py-1 break-all text-[var(--color-muted)]">
+                                  {item.last_ua || ""}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    <p className="mt-2 text-[11px] text-[var(--color-muted)]">
+                      An unexpected ip with a high count is the signal to
+                      rotate or revoke. Cross workspace lookups are not
+                      possible.
+                    </p>
                   </div>
                 )}
               </div>

@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     usage_path: Path = Path("./data/usage.jsonl")
     webhooks_path: Path = Path("./data/webhooks.jsonl")
     pat_path: Path = Path("./data/personal_access_tokens.jsonl")
+    pat_ip_history_path: Path = Path("./data/pat_ip_history.jsonl")
     mfa_path: Path = Path("./data/mfa.jsonl")
     quota_path: Path = Path("./data/quotas.jsonl")
     residency_path: Path = Path("./data/residency.jsonl")

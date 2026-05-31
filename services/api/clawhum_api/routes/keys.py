@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from .. import pat_store
+from .. import pat_ip_history
 from ..api_keys import ROLES, SCOPES, normalise_scopes, scopes_allowed_for_roles
 from ..auth import require_mfa, require_roles, require_scopes
 from ..tenant import current_tenant_id
@@ -387,3 +388,68 @@ async def set_key_ip_allowlist(
             status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
         )
     return {"ok": True, "id": updated.id, "ip_cidrs": sorted(updated.ip_cidrs)}
+
+
+
+class IpHistoryEntryView(BaseModel):
+    ip: str
+    first_seen: float
+    last_seen: float
+    count: int
+    last_ua: str = ""
+
+
+class IpHistoryResponse(BaseModel):
+    id: str
+    name: str
+    distinct_ips: int
+    truncated: bool = False
+    items: list[IpHistoryEntryView]
+
+
+_HISTORY_MAX_ITEMS = 100
+
+
+@router.get(
+    "/keys/{key_id}/ip-history",
+    response_model=IpHistoryResponse,
+    dependencies=[Depends(require_roles("admin"))],
+)
+async def key_ip_history(key_id: str, request: Request) -> dict[str, Any]:
+    """Forensic timeline of every source IP that has used this token.
+
+    Admin only. Cross tenant lookups return 404 (not 403) so a probing
+    attacker cannot enumerate token ids across workspaces. Each entry
+    records first_seen, last_seen, total successful auth count, and a
+    truncated user-agent from the most recent hit. Use this to triage
+    a suspected credential leak: an unexpected ip with a high count is
+    the signal to rotate or revoke.
+    """
+    tenant = current_tenant_id(request)
+    existing = next(
+        (p for p in pat_store.live_for_tenant(tenant) if p.id == key_id),
+        None,
+    )
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    rows = pat_ip_history.list_for_pat(tenant, key_id)
+    truncated = len(rows) > _HISTORY_MAX_ITEMS
+    rows = rows[:_HISTORY_MAX_ITEMS]
+    return {
+        "id": existing.id,
+        "name": existing.name,
+        "distinct_ips": len(rows),
+        "truncated": truncated,
+        "items": [
+            {
+                "ip": r.ip,
+                "first_seen": r.first_seen,
+                "last_seen": r.last_seen,
+                "count": r.count,
+                "last_ua": r.last_ua,
+            }
+            for r in rows
+        ],
+    }

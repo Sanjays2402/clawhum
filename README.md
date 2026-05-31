@@ -4,6 +4,25 @@ Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local
 
 ![landing](docs/screenshots/landing.png)
 
+## Per-token source IP history
+
+Every successful authentication with a personal access token records the resolved source IP, with first and last seen timestamps, an incrementing count, and the most recent user agent. Workspace admins can list the distinct IP timeline for any token they own to triage a suspected credential leak. Cross workspace lookups return 404, never 403, so token ids cannot be enumerated across tenants.
+
+### Try it (per-token IP history)
+
+```
+curl -s -X POST http://127.0.0.1:7452/keys \
+  -H 'X-API-Key: $ADMIN_KEY' -H 'Content-Type: application/json' \
+  -d '{"name":"ci"}'
+
+curl -s http://127.0.0.1:7452/me -H 'X-API-Key: $PAT_SECRET' -H 'X-Forwarded-For: 203.0.113.10'
+curl -s http://127.0.0.1:7452/me -H 'X-API-Key: $PAT_SECRET' -H 'X-Forwarded-For: 198.51.100.7'
+
+curl -s http://127.0.0.1:7452/keys/$PAT_ID/ip-history -H 'X-API-Key: $ADMIN_KEY' | jq
+```
+
+Open <http://127.0.0.1:3000/settings/keys> and click `ip history` on any row.
+
 ## Share link expiry and 410 governance
 
 Enterprise security reviews flag any product that mints permanent public URLs: a leaked link is a leaked record forever. Public `/r/<id>` share pages now carry an optional `expires_at` and the server enforces it. Callers can pass `expires_in_days` on `POST /share` (0 means no expiry, omitted falls back to the workspace default), and the same field on `PATCH /share/{id}` extends or clears the lifetime without rotating the id. Once the clock passes, the public `GET /share/{id}` returns HTTP 410 Gone with a structured `share link expired` body instead of 200, so crawlers, oEmbed consumers, and Slack unfurls stop pointing at the resource. The owner's `/share` listing still returns the row with `expired: true` so the workspace can either revoke it or extend it; cross-tenant patches and revokes still 404 by design. Two new server-side knobs make this a procurement lever: `CLAWHUM_SHARE_DEFAULT_TTL_DAYS` applies an automatic lifetime to every new share (set it to 30 once and every client respects it), and `CLAWHUM_SHARE_MAX_TTL_DAYS` clamps any caller request, including legacy clients that ask for non-expiring links when a deployment-wide ceiling is in force. The shares table at [`/shares`](http://127.0.0.1:7452/shares) renders a duotone `expires in 7d` badge (warning tint inside 72 hours, magenta when expired) and the public page swaps in a calm 410 surface instead of a generic 404. Audit middleware already captures share create, patch, and revoke so the expiry policy plugs straight into the tamper-evident hash chain. Workspace default application, server-side max clamp, 410 on expired reads, owner-driven extension, expiry isolation across tenants, and the no-default-expiry baseline are pinned by `tests/integration/test_share.py`.

@@ -60,6 +60,20 @@ async def require_api_key(
                         client_ip=resolved_ip,
                         user_agent=ua,
                     )
+                    # Record this IP in the per-PAT history so admins
+                    # can spot a leaked token used from multiple sources.
+                    # Strictly best effort; auth must not fail because
+                    # the forensic store is unwriteable.
+                    try:
+                        from . import pat_ip_history
+                        pat_ip_history.record(
+                            tenant_id=pat.tenant_id,
+                            pat_id=pat.id,
+                            ip=resolved_ip,
+                            user_agent=ua,
+                        )
+                    except Exception:
+                        pass
                 except Exception:
                     pass
                 _enforce_ip_allowlist(request)
