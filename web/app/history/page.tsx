@@ -24,6 +24,7 @@ import {
 import { useApiKey } from "@/lib/apiKey";
 import { historyToShareInput } from "@/lib/share";
 import ShareButton from "@/components/ShareButton";
+import SavedViews, { type ViewFilters } from "@/components/SavedViews";
 
 interface MatchResult {
   track_id: string;
@@ -305,6 +306,16 @@ export default function HistoryPage() {
         </div>
       </div>
 
+      <SavedViews
+        current={{ q, tag, sort, starred: starredOnly }}
+        onApply={(f: ViewFilters) => {
+          setQ(f.q);
+          setTag(f.tag);
+          setSort(f.sort);
+          setStarredOnly(f.starred);
+        }}
+        hasApiKey={!!apiKey}
+      />
       {/* Filters */}
       <div className="panel rounded-[2px] p-3 flex flex-wrap gap-2 items-center">
         <div className="flex items-center gap-2 flex-1 min-w-[200px]">

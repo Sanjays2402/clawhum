@@ -144,6 +144,41 @@ console.log(await r.json());`,
     }),
   },
   {
+    id: "history-views",
+    method: "POST",
+    path: "/v1/history/views",
+    summary: "save a named filter combination (search query, tag, sort, starred) for the history page",
+    body: "json: { name, filters: { q, tag, sort, starred } }",
+    snippet: (origin, key) => ({
+      curl: `curl -X POST "${origin}/api/v1/history/views" \\
+  -H "X-API-Key: ${ph(key)}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"name":"Top jazz","filters":{"q":"","tag":"jazz","sort":"top_score","starred":true}}'`,
+      python: `import requests
+
+r = requests.post(
+    "${origin}/api/v1/history/views",
+    headers={"X-API-Key": "${ph(key)}"},
+    json={
+        "name": "Top jazz",
+        "filters": {"q": "", "tag": "jazz", "sort": "top_score", "starred": True},
+    },
+    timeout=30,
+)
+r.raise_for_status()
+print(r.json())`,
+      javascript: `const r = await fetch("${origin}/api/v1/history/views", {
+  method: "POST",
+  headers: { "X-API-Key": "${ph(key)}", "Content-Type": "application/json" },
+  body: JSON.stringify({
+    name: "Top jazz",
+    filters: { q: "", tag: "jazz", sort: "top_score", starred: true },
+  }),
+});
+console.log(await r.json());`,
+    }),
+  },
+  {
     id: "history-export",
     method: "GET",
     path: "/v1/history/export",

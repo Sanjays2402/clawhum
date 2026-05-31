@@ -23,6 +23,7 @@ from .routes import me as me_routes
 from .routes import pitch as pitch_routes
 from .routes import privacy as privacy_routes
 from .routes import history as history_routes
+from .routes import history_views as history_views_routes
 from .routes import share as share_routes
 from .routes import spotify as spotify_routes
 from .routes import usage as usage_routes
@@ -104,6 +105,7 @@ def create_app() -> FastAPI:
     app.include_router(spotify_routes.router)
     app.include_router(privacy_routes.router)
     app.include_router(share_routes.router)
+    app.include_router(history_views_routes.router)
     app.include_router(history_routes.router)
     app.include_router(me_routes.router)
     app.include_router(usage_routes.router)
@@ -117,6 +119,7 @@ def create_app() -> FastAPI:
     app.include_router(batch_routes.router, prefix="/v1")
     app.include_router(share_routes.router, prefix="/v1")
     app.include_router(collections_routes.router, prefix="/v1")
+    app.include_router(history_views_routes.router, prefix="/v1")
     app.include_router(history_routes.router, prefix="/v1")
     app.include_router(me_routes.router, prefix="/v1")
     app.include_router(usage_routes.router, prefix="/v1")

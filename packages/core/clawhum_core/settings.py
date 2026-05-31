@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     shares_path: Path = Path("./data/shares.jsonl")
     collections_path: Path = Path("./data/collections.jsonl")
     history_path: Path = Path("./data/history.jsonl")
+    history_views_path: Path = Path("./data/history_views.jsonl")
     usage_path: Path = Path("./data/usage.jsonl")
     webhooks_path: Path = Path("./data/webhooks.jsonl")
     webhook_deliveries_path: Path = Path("./data/webhook_deliveries.jsonl")
