@@ -8,6 +8,7 @@ import Spectrogram from "@/components/Spectrogram";
 import PitchOverlay from "@/components/PitchOverlay";
 import { getMatch, type StoredMatch } from "@/lib/history";
 import ShareButton from "@/components/ShareButton";
+import ExportMenu from "@/components/ExportMenu";
 
 type RefAudioState =
   | { status: "idle" }
@@ -160,7 +161,8 @@ export default function MatchDetail({ params }: { params: Promise<{ id: string }
           <span className="text-[var(--color-text)] tabular-nums">{dur.toFixed(2)}</span>
           <span className="text-[var(--color-dim)] ml-0.5">s</span>
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <ExportMenu matches={[m]} variant="inline" stem={`clawhum-match-${m.query_id.slice(0, 8)}`} />
           <ShareButton match={m} />
         </div>
       </div>

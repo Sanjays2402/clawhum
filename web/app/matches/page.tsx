@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import Spectrogram from "@/components/Spectrogram";
 import { clearMatches, loadMatches, type StoredMatch } from "@/lib/history";
+import ExportMenu from "@/components/ExportMenu";
 
 function fmtRelative(ms: number): string {
   const d = Date.now() - ms;
@@ -61,6 +62,7 @@ export default function MatchesPage() {
             onChange={e => setFilter(e.target.value)}
             className="w-72"
           />
+          <ExportMenu matches={filtered} />
           <button
             onClick={() => { if (confirm("clear local query log?")) { clearMatches(); setItems([]); } }}
             className="btn-ghost px-3 py-1.5 rounded-[2px] font-mono text-[11px] uppercase tracking-widest"

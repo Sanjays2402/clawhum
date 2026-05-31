@@ -25,7 +25,17 @@ Next.js 15 App Router UI for the clawhum acoustic fingerprint matcher.
 npm install
 npm run dev     # :7452
 npm run build
+npm test        # exports unit tests via tsx --test
 ```
+
+## Export
+The `/matches` page has an **Export** menu (top right) that downloads the current
+filtered query log as either:
+- `csv` — flat, one row per candidate, RFC 4180 quoted (open in Excel/Sheets/pandas)
+- `json` — nested, one object per query, with the bulky waveform/pitch arrays stripped
+
+Individual queries can be exported from `/matches/[id]` using the inline `csv` / `json`
+buttons next to the share action. Files are named `clawhum-matches-YYYYMMDD-HHMMSS.{csv,json}`.
 
 Set `CLAWHUM_API_URL` env to point rewrites at the API (default `http://127.0.0.1:7451`).
 The `/api/*` rewrites proxy to `/match`, `/stats`, `/reindex`, `/feedback`, `/metrics`, `/health`.
