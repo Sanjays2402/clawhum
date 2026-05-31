@@ -37,6 +37,7 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
        http://127.0.0.1:7451/pitch
   ```
 - 8 locale files under `web/i18n/` (de, en, es, fr, it, ja, ko, pt).
+- `/insights` route renders a local-only analytics dashboard over your query log: KPI tiles (hit rate, strong-hit rate, mean top score, latency p95, total audio sent), a top-score histogram, a latency histogram, an activity-over-time area chart, and a most-matched-tracks leaderboard. Powered entirely by `localStorage` (`clawhum.matches.v1`), so it works without any backend round-trip and reveals nothing to the API. Visit `http://127.0.0.1:7452/insights` after running a few captures or the `/demo` samples.
 - OpenTelemetry FastAPI instrumentation, OTLP exporter when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 
 ## Stack
