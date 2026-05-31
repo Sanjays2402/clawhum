@@ -2,6 +2,21 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace PAT scope policy
+
+Enterprise procurement keeps asking the same question: "can an admin in our workspace ever mint a PAT carrying `write:keys` or `admin` scope?". With nothing in place the answer is yes, because the admin role implies every scope. Workspace owners can now pin the maximum scope set their workspace is ever allowed to mint at [`/settings/scope-policy`](http://127.0.0.1:7452/settings/scope-policy). When a policy is active, `POST /keys` clamps requested scopes to (caller role scopes ∩ workspace policy scopes), and any explicit out-of-policy scope is rejected with HTTP 403 and a machine-parseable `scope_not_allowed` error code carrying the denied scope list. Default (unset) PATs minted under an active policy are stored with scopes already clamped so the dashboard's effective-scopes column never lies. `GET /keys/policy` surfaces the workspace pin so the create-key UI never offers a scope the server will reject. Mutations require the admin role plus a fresh MFA step-up and are written to the tamper-evident audit chain with before and after snapshots. Tenant scoped end to end: tenant A cannot read or affect tenant B's pin. Pinned by `tests/integration/test_scope_policy.py`.
+
+### Try it (scope policy)
+
+```bash
+curl -sS -X PUT http://127.0.0.1:7451/scope-policy \
+  -H 'X-API-Key: sk_admin' \
+  -H 'Content-Type: application/json' \
+  -d '{"scopes":["read:matches","read:library"]}'
+
+curl -sS http://127.0.0.1:7451/scope-policy -H 'X-API-Key: sk_admin'
+```
+
 ## Per-workspace security and breach notification contacts
 
 EU customers and enterprise procurement teams will not sign a paid contract without a documented contact path for security incidents (GDPR Art. 33 requires processors to notify controllers "without undue delay" on becoming aware of a personal data breach; SOC2 CC7.4 requires defined incident communication channels). Each workspace can now register the people we will reach during an incident at [`/settings/security-contacts`](http://127.0.0.1:7452/settings/security-contacts). Each contact carries an email, optional name and phone, and a role from `security`, `privacy`, `legal`, or `ops`. Exactly one contact per workspace may be marked primary; promoting a new primary demotes the previous one in a single audit-logged step. The roster is tenant scoped end to end: an admin in tenant A cannot list, create, delete, or promote contacts belonging to tenant B even when guessing the contact id (HTTP 404). Mutations require the admin role plus a fresh MFA step-up, and flow through the existing tamper-evident audit chain so reviewers get a forensic record of every change to the incident contact list. Email validation, role allowlisting, and duplicate-email rejection return structured 400s the admin console renders inline. Cross-tenant isolation, RBAC, and validation are pinned by `tests/integration/test_security_contacts.py`.

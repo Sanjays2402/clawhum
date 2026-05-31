@@ -169,6 +169,7 @@ class Settings(BaseSettings):
     embed_origins_path: Path = Path("./data/embed_origins.jsonl")
     security_contacts_path: Path = Path("./data/security_contacts.jsonl")
     invite_domains_path: Path = Path("./data/invite_domains.jsonl")
+    scope_policy_path: Path = Path("./data/scope_policy.jsonl")
     dpa_acceptances_path: Path = Path("./data/dpa_acceptances.jsonl")
     sessions_path: Path = Path("./data/sessions.jsonl")
     session_policy_path: Path = Path("./data/session_policy.jsonl")

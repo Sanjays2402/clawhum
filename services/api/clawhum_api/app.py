@@ -30,6 +30,7 @@ from .routes import history as history_routes
 from .routes import history_views as history_views_routes
 from .routes import ip_allowlist as ip_allowlist_routes
 from .routes import invite_domains as invite_domains_routes
+from .routes import scope_policy as scope_policy_routes
 from .routes import dpa as dpa_routes
 from .routes import keys as keys_routes
 from .routes import library as library_routes
@@ -70,6 +71,8 @@ async def _lifespan(app: FastAPI):
     _ip_allowlist.reset_cache()
     from . import security_contacts as _security_contacts
     _security_contacts.reset_cache()
+    from . import scope_policy as _scope_policy
+    _scope_policy.reset_cache()
     from . import sso_store as _sso_store
     _sso_store.reset_cache()
     from . import quota_store as _quota_store
@@ -164,6 +167,7 @@ def create_app() -> FastAPI:
     app.include_router(keys_routes.router)
     app.include_router(ip_allowlist_routes.router)
     app.include_router(invite_domains_routes.router)
+    app.include_router(scope_policy_routes.router)
     app.include_router(dpa_routes.router)
     app.include_router(mfa_routes.router)
     app.include_router(members_routes.router)
@@ -195,6 +199,7 @@ def create_app() -> FastAPI:
     app.include_router(keys_routes.router, prefix="/v1")
     app.include_router(ip_allowlist_routes.router, prefix="/v1")
     app.include_router(invite_domains_routes.router, prefix="/v1")
+    app.include_router(scope_policy_routes.router, prefix="/v1")
     app.include_router(dpa_routes.router, prefix="/v1")
     app.include_router(mfa_routes.router, prefix="/v1")
     app.include_router(members_routes.router, prefix="/v1")

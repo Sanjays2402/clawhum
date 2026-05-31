@@ -492,6 +492,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Workspace PAT scope policy */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">scope policy</span>
+            <a
+              href="/settings/scope-policy"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            pin the maximum scope set this workspace may mint on a personal access token. blocks even admins from minting write:keys or admin scope when not permitted. admin role plus MFA required.
+          </p>
+        </section>
+
         {/* Workspace embed origin allowlist */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

@@ -284,7 +284,31 @@ def create(
     common case (mint a writer PAT, use it everywhere) stays one click.
     """
     safe_roles = frozenset(r for r in roles if r in ROLES) or frozenset({"reader"})
-    safe_scopes = normalise_scopes(scopes) & scopes_allowed_for_roles(safe_roles)
+    requested_scopes = normalise_scopes(scopes)
+    # Workspace scope policy: when an admin has pinned the set of scopes
+    # this workspace may ever mint, any request for a scope outside it
+    # is a hard error so the operator notices instead of silently
+    # getting a narrower token than they asked for. Import inline to
+    # keep pat_store dependency free at module load.
+    try:
+        from . import scope_policy as _scope_policy
+        _scope_policy.assert_allowed(tenant_id, requested_scopes)
+    except ImportError:
+        pass
+    safe_scopes = requested_scopes & scopes_allowed_for_roles(safe_roles)
+    # When the caller didn't ask for explicit scopes the PAT inherits
+    # "every scope the roles allow" lazily via effective_scopes(). The
+    # workspace policy still applies at *use* time through
+    # scopes_allowed_for_roles ∩ allowed_scopes(tenant), but we also
+    # materialise the intersection here when a policy is active so the
+    # stored token is honest about what it can do and the dashboard's
+    # "effective scopes" column does not lie.
+    try:
+        from . import scope_policy as _scope_policy
+        if not safe_scopes and _scope_policy.has_policy(tenant_id):
+            safe_scopes = scopes_allowed_for_roles(safe_roles) & _scope_policy.allowed_scopes(tenant_id)
+    except ImportError:
+        pass
     safe_cidrs = normalise_cidrs(ip_cidrs)
     secret = new_secret()
     now = time.time()

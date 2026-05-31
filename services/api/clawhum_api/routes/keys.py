@@ -98,6 +98,8 @@ class KeyPolicyResponse(BaseModel):
     default_ttl_days: int
     available_scopes: list[str]
     allowed_scopes: list[str]
+    workspace_scope_policy: list[str] = Field(default_factory=list)
+    workspace_scope_policy_enforcing: bool = False
 
 
 @router.get(
@@ -126,11 +128,18 @@ async def keys_policy(request: Request) -> dict[str, Any]:
     """
     s = get_settings()
     caller_roles: frozenset[str] = getattr(request.state, "api_key_roles", frozenset())
+    from .. import scope_policy as _scope_policy
+    tenant = current_tenant_id(request)
+    role_allowed = scopes_allowed_for_roles(caller_roles)
+    workspace_allowed = _scope_policy.allowed_scopes(tenant)
+    effective = role_allowed & workspace_allowed
     return {
         "max_ttl_days": int(s.pat_max_ttl_days or 0),
         "default_ttl_days": int(s.pat_default_ttl_days or 0),
         "available_scopes": sorted(SCOPES),
-        "allowed_scopes": sorted(scopes_allowed_for_roles(caller_roles)),
+        "allowed_scopes": sorted(effective),
+        "workspace_scope_policy": sorted(workspace_allowed) if _scope_policy.has_policy(tenant) else [],
+        "workspace_scope_policy_enforcing": _scope_policy.has_policy(tenant),
     }
 
 
@@ -169,6 +178,19 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
             ip_cidrs=body.ip_cidrs or [],
         )
     except ValueError as exc:
+        # scope_policy.ScopeNotAllowedError is a ValueError subclass;
+        # surface its denied set so the UI can show which scopes the
+        # workspace policy forbids without grepping the message.
+        from .. import scope_policy as _scope_policy
+        if isinstance(exc, _scope_policy.ScopeNotAllowedError):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "error": "scope_not_allowed",
+                    "message": str(exc),
+                    "denied": sorted(exc.denied),
+                },
+            )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"invalid ip_cidrs: {exc}",
