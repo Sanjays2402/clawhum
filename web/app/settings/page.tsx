@@ -380,6 +380,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Workspace quota plan */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">workspace quota</span>
+            <a
+              href="/settings/quotas"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            cap aggregate requests-per-minute and daily quota across every api key in this workspace. pick a plan or set custom ceilings. enforced at the edge with standard X-RateLimit-* headers. admin role plus MFA required to change.
+          </p>
+        </section>
+
         {/* Workspace IP allowlist */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

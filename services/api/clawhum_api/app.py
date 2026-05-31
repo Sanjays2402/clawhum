@@ -37,6 +37,7 @@ from .routes import members as members_routes
 from .routes import sso as sso_routes
 from .routes import retention as retention_routes
 from .routes import audit as audit_routes
+from .routes import quotas as quotas_routes
 from .state import AppState
 from .tenant import TenantScopeMiddleware
 from .usage import UsageRecorderMiddleware
@@ -56,6 +57,8 @@ async def _lifespan(app: FastAPI):
     _ip_allowlist.reset_cache()
     from . import sso_store as _sso_store
     _sso_store.reset_cache()
+    from . import quota_store as _quota_store
+    _quota_store.reset_cache()
     app.state.clawhum = AppState.boot(prefer_clap=False)  # default to fallback at startup; reindex can flip
     log.info("clawhum_boot", version=__version__,
              tracks=len(app.state.clawhum.tracks),
@@ -88,7 +91,7 @@ def create_app() -> FastAPI:
         allow_methods=settings.cors_methods_list(),
         allow_headers=settings.cors_headers_list(),
         allow_credentials=cors_allow_credentials,
-        expose_headers=["X-Request-ID", "traceparent", "X-RateLimit-Limit", "X-RateLimit-Remaining", "Retry-After"],
+        expose_headers=["X-Request-ID", "traceparent", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-RateLimit-Scope", "X-RateLimit-Plan", "X-RateLimit-Limit-Day", "X-RateLimit-Remaining-Day", "Retry-After"],
         max_age=600,
     )
     # Security headers run outermost so they apply to every response,
@@ -130,6 +133,7 @@ def create_app() -> FastAPI:
     app.include_router(sso_routes.router)
     app.include_router(retention_routes.router)
     app.include_router(audit_routes.router)
+    app.include_router(quotas_routes.router)
     # Stable, version-pinned public API surface. The same routers are
     # mounted again under /v1 so integrators can target a URL we will not
     # break, while existing unversioned routes stay alive for the web UI.
@@ -149,6 +153,7 @@ def create_app() -> FastAPI:
     app.include_router(sso_routes.router, prefix="/v1")
     app.include_router(retention_routes.router, prefix="/v1")
     app.include_router(audit_routes.router, prefix="/v1")
+    app.include_router(quotas_routes.router, prefix="/v1")
     app.include_router(library_routes.router, prefix="/v1")
     app.include_router(metrics_router)
     register_app_collector(app)

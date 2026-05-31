@@ -11,7 +11,8 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from .api_keys import get_registry
+from .api_keys import ANON_TENANT_ID, get_registry
+from . import quota_store
 
 # W3C Trace Context: version-traceid-parentid-flags
 # https://www.w3.org/TR/trace-context/
@@ -108,43 +109,120 @@ class SimpleRateLimit(BaseHTTPMiddleware):
         super().__init__(app)
         self.default_max = max(1, int(max_per_minute))
         self.window = 60.0
+        self.day_window = 86400.0
         self._hits: dict[str, deque[float]] = defaultdict(deque)
+        # Per-workspace minute and day buckets, independent of per-key.
+        self._ws_minute: dict[str, deque[float]] = defaultdict(deque)
+        self._ws_day: dict[str, deque[float]] = defaultdict(deque)
 
-    def _bucket_key(self, request: Request) -> tuple[str, int]:
-        """Return (bucket id, requests-per-minute limit) for this request."""
+    def _bucket_key(self, request: Request) -> tuple[str, int, str]:
+        """Return (bucket id, requests-per-minute limit, tenant_id)."""
         api_key = request.headers.get("x-api-key", "")
         if api_key:
             registry = get_registry()
             entry = registry.lookup(api_key)
             if entry is not None:
                 limit = entry.rpm if entry.rpm > 0 else self.default_max
-                return f"key:{entry.name}", limit
+                tenant = entry.tenant_id or ANON_TENANT_ID
+                return f"key:{entry.name}", limit, tenant
         ip = request.client.host if request.client else "0.0.0.0"
-        return f"ip:{ip}", self.default_max
+        return f"ip:{ip}", self.default_max, ANON_TENANT_ID
+
+    @staticmethod
+    def _trim(dq: deque[float], now: float, window: float) -> None:
+        while dq and now - dq[0] > window:
+            dq.popleft()
+
+    def _limit_response(
+        self,
+        *,
+        limit: int,
+        retry_after: int,
+        reset_epoch: int,
+        scope: str,
+    ) -> JSONResponse:
+        return JSONResponse(
+            {"detail": f"rate limit ({scope})", "scope": scope},
+            status_code=429,
+            headers={
+                "Retry-After": str(retry_after),
+                "X-RateLimit-Limit": str(limit),
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": str(reset_epoch),
+                "X-RateLimit-Scope": scope,
+            },
+        )
 
     async def dispatch(self, request, call_next):
         if request.url.path in {"/health", "/ready", "/metrics"}:
             return await call_next(request)
-        bucket, limit = self._bucket_key(request)
+        bucket, limit, tenant_id = self._bucket_key(request)
         now = time.monotonic()
+        wall = time.time()
+
+        # Per-key (or per-IP) minute bucket. Existing behaviour preserved.
         dq = self._hits[bucket]
-        while dq and now - dq[0] > self.window:
-            dq.popleft()
+        self._trim(dq, now, self.window)
         if len(dq) >= limit:
             retry_after = max(1, int(self.window - (now - dq[0])))
-            return JSONResponse(
-                {"detail": "rate limit"},
-                status_code=429,
-                headers={
-                    "Retry-After": str(retry_after),
-                    "X-RateLimit-Limit": str(limit),
-                    "X-RateLimit-Remaining": "0",
-                },
+            return self._limit_response(
+                limit=limit,
+                retry_after=retry_after,
+                reset_epoch=int(wall + retry_after),
+                scope="key",
             )
+
+        # Workspace-level enforcement. A workspace can mint many keys;
+        # the plan caps aggregate traffic so a noisy customer cannot
+        # blow past the contract by spreading load across keys.
+        plan = quota_store.get_plan(tenant_id)
+        ws_min = self._ws_minute[tenant_id]
+        ws_day = self._ws_day[tenant_id]
+        self._trim(ws_min, now, self.window)
+        self._trim(ws_day, now, self.day_window)
+
+        if plan.rpm_ceiling > 0 and len(ws_min) >= plan.rpm_ceiling:
+            retry_after = max(1, int(self.window - (now - ws_min[0])))
+            return self._limit_response(
+                limit=plan.rpm_ceiling,
+                retry_after=retry_after,
+                reset_epoch=int(wall + retry_after),
+                scope="workspace_minute",
+            )
+        if plan.daily_quota > 0 and len(ws_day) >= plan.daily_quota:
+            retry_after = max(1, int(self.day_window - (now - ws_day[0])))
+            return self._limit_response(
+                limit=plan.daily_quota,
+                retry_after=retry_after,
+                reset_epoch=int(wall + retry_after),
+                scope="workspace_day",
+            )
+
         dq.append(now)
+        ws_min.append(now)
+        ws_day.append(now)
         resp = await call_next(request)
-        resp.headers["X-RateLimit-Limit"] = str(limit)
-        resp.headers["X-RateLimit-Remaining"] = str(max(0, limit - len(dq)))
+        # Expose the tightest binding limit so well-behaved clients can
+        # back off before they hit 429. The workspace ceiling wins when
+        # set, otherwise the per-key bucket is reported.
+        effective_limit = limit
+        effective_remaining = max(0, limit - len(dq))
+        effective_reset = int(wall + max(1, int(self.window - (now - dq[0]))))
+        if plan.rpm_ceiling > 0:
+            ws_remaining = max(0, plan.rpm_ceiling - len(ws_min))
+            if ws_remaining < effective_remaining:
+                effective_limit = plan.rpm_ceiling
+                effective_remaining = ws_remaining
+                effective_reset = int(wall + max(1, int(self.window - (now - ws_min[0]))))
+        resp.headers["X-RateLimit-Limit"] = str(effective_limit)
+        resp.headers["X-RateLimit-Remaining"] = str(effective_remaining)
+        resp.headers["X-RateLimit-Reset"] = str(effective_reset)
+        if plan.daily_quota > 0:
+            resp.headers["X-RateLimit-Limit-Day"] = str(plan.daily_quota)
+            resp.headers["X-RateLimit-Remaining-Day"] = str(
+                max(0, plan.daily_quota - len(ws_day))
+            )
+        resp.headers["X-RateLimit-Plan"] = plan.plan
         return resp
 
 

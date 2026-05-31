@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     webhooks_path: Path = Path("./data/webhooks.jsonl")
     pat_path: Path = Path("./data/personal_access_tokens.jsonl")
     mfa_path: Path = Path("./data/mfa.jsonl")
+    quota_path: Path = Path("./data/quotas.jsonl")
     mfa_required_for_admin: bool = Field(
         default=True,
         description=(

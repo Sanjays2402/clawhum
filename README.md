@@ -10,6 +10,27 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Workspace quota plan
+
+Per-key rate limits cap individual credentials. Enterprise contracts also need a ceiling on aggregate traffic: a workspace can mint many keys and silently outgrow its plan unless the server enforces a tenant wide cap. `GET /quotas` returns the active plan plus a catalog of presets (`free`, `team`, `business`, `enterprise`, `custom`) and `PUT /quotas` upserts it. Each plan defines an `rpm_ceiling` and a `daily_quota` (both `0` mean unlimited so existing tenants are unaffected). The rate-limit middleware checks both ceilings on every request alongside the per-key bucket; the tightest binding limit is advertised back via standard headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, `X-RateLimit-Scope` (`key`, `workspace_minute`, `workspace_day`), `X-RateLimit-Plan`, `X-RateLimit-Limit-Day`, `X-RateLimit-Remaining-Day`, plus `Retry-After` on 429. Reads require the `admin` role; writes also require a fresh `X-MFA-Code` once the actor has enrolled TOTP. Every plan change flows through the audit log with a before/after diff. Cross-tenant isolation is covered by `tests/integration/test_workspace_quota.py`, which proves the ceiling fires even when each individual key in the workspace is well under its own RPM, and that a sibling tenant is unaffected when one tenant is throttled. The workspace UI lives at `http://127.0.0.1:7452/settings/quotas`.
+
+### Try it (workspace quota)
+
+```bash
+# Read the active plan (admin role required).
+curl -s -H "x-api-key: $CLAWHUM_ADMIN_KEY" http://127.0.0.1:7451/quotas | jq
+
+# Move the workspace to the team preset; MFA required if enrolled.
+curl -s -X PUT http://127.0.0.1:7451/quotas \
+  -H "x-api-key: $CLAWHUM_ADMIN_KEY" \
+  -H "x-mfa-code: 123456" \
+  -H 'content-type: application/json' \
+  -d '{"plan":"team","rpm_ceiling":600,"daily_quota":100000}' | jq
+
+# Inspect the rate-limit headers on any normal call.
+curl -sI -H "x-api-key: $CLAWHUM_ADMIN_KEY" http://127.0.0.1:7451/library/tracks | grep -i ratelimit
+```
+
 ## Audit log search and export
 
 Every mutating call already lands in the workspace audit log via middleware. `GET /audit` lets a workspace admin search that log without shell access to the JSONL files. Filters: free-text `q`, `actor`, HTTP `method`, `path` prefix, status range `status_min`/`status_max`, time window `since`/`until` (unix seconds), and `dry_run=only|exclude|any` to separate previews from real mutations. Results are newest first, paginated with `limit`+`offset`, and strictly scoped to the caller's tenant. `GET /audit/export?format=csv|json` returns the matching rows as a download for compliance reviewers (SOC2 CC7.2, ISO 27001 A.12.4, GDPR Art. 30). Reads require the `admin` role; the underlying file is never exposed. Reads walk rotated siblings (`audit.jsonl.1`...) so coverage stays complete across log rotation.
