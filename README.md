@@ -22,6 +22,24 @@ The query log at `/matches` is now a full local CRM for your hums: every capture
 
 The pure filter / sort / tag helpers live in `web/lib/history.ts` and are covered by `web/tests/history.test.ts` (run `pnpm test` from `web/`).
 
+## Try it (settings + api key)
+
+ClawHum now has a Settings page at `http://127.0.0.1:7452/settings` where you paste an API key once and every subsequent `/api/*` call from the browser carries it as `X-API-Key`. The page also calls a new `/me` endpoint and shows:
+
+- Resolved tenant id, key name, and role set.
+- Configured per-minute rate limit, plus a live session usage meter.
+- A copy-paste curl example pre-filled with your stored key.
+
+The key stays in `localStorage` on that device, never gets synced anywhere, and a one-click *clear* button wipes it. Probe the new endpoint directly:
+
+```bash
+curl http://127.0.0.1:7451/me -H 'x-api-key: dev'
+# -> {"tenant_id":"dev","key_name":"dev","roles":[...],
+#     "rate_limit_per_minute":120,"auth_mode":"open","masked_key":"dev"}
+```
+
+Backed by `tests/integration/test_me.py` (open mode, valid key, and 401 on missing key in key-required mode).
+
 ## Try it (share)
 
 Share any match result with one click. Open any item in `/matches`, hit *share* in the top strip, and a public read-only URL is copied to your clipboard. The link works in an incognito window without an API key:

@@ -1,0 +1,317 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import {
+  Key,
+  ShieldCheck,
+  Gauge,
+  Copy,
+  Check,
+  Eye,
+  EyeSlash,
+  Trash,
+  Warning,
+} from "@phosphor-icons/react/dist/ssr";
+import { getApiKey, maskKey, setApiKey, useApiKey } from "@/lib/apiKey";
+
+interface MeResponse {
+  tenant_id: string;
+  key_name: string;
+  roles: string[];
+  rate_limit_per_minute: number;
+  auth_mode: "open" | "key";
+  masked_key: string;
+}
+
+type IdentityState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "ok"; me: MeResponse }
+  | { kind: "error"; status: number; message: string };
+
+function curlExample(origin: string, key: string): string {
+  const k = key || "YOUR_API_KEY";
+  return `curl -X POST ${origin}/api/match \\\n  -H "X-API-Key: ${k}" \\\n  -F "audio=@hum.wav"`;
+}
+
+export default function SettingsPage() {
+  const [stored, save] = useApiKey();
+  const [draft, setDraft] = useState("");
+  const [reveal, setReveal] = useState(false);
+  const [copied, setCopied] = useState<"key" | "curl" | null>(null);
+  const [identity, setIdentity] = useState<IdentityState>({ kind: "idle" });
+  const [origin, setOrigin] = useState("http://127.0.0.1:7452");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") setOrigin(window.location.origin);
+  }, []);
+
+  useEffect(() => {
+    setDraft(stored);
+  }, [stored]);
+
+  async function probe() {
+    setIdentity({ kind: "loading" });
+    try {
+      const headers: Record<string, string> = {};
+      const k = getApiKey();
+      if (k) headers["X-API-Key"] = k;
+      const r = await fetch("/api/me", { headers, cache: "no-store" });
+      if (!r.ok) {
+        const text = await r.text().catch(() => "");
+        setIdentity({
+          kind: "error",
+          status: r.status,
+          message: text || r.statusText,
+        });
+        return;
+      }
+      const me = (await r.json()) as MeResponse;
+      setIdentity({ kind: "ok", me });
+    } catch (e: any) {
+      setIdentity({
+        kind: "error",
+        status: 0,
+        message: e?.message || String(e),
+      });
+    }
+  }
+
+  // Re-probe whenever the stored key changes.
+  useEffect(() => {
+    probe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stored]);
+
+  async function copy(label: "key" | "curl", text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+      setTimeout(() => setCopied(null), 1200);
+    } catch {
+      /* clipboard may be blocked; silent */
+    }
+  }
+
+  const dirty = draft !== stored;
+  const rpm = identity.kind === "ok" ? identity.me.rate_limit_per_minute : 0;
+  // Local quota meter: how many same-origin calls we've fired since the
+  // page loaded. Real per-tenant counters live server side under
+  // /metrics; this gives the user immediate feedback against rpm.
+  const [windowCount, setWindowCount] = useState(0);
+  useEffect(() => {
+    const w = window as any;
+    if (w.__clawhumApiCount != null) {
+      setWindowCount(w.__clawhumApiCount);
+      return;
+    }
+    let count = 0;
+    const origFetch = window.fetch.bind(window);
+    window.fetch = async (input: any, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input?.url || "";
+      if (url.startsWith("/api/") || url.startsWith(window.location.origin + "/api/")) {
+        count += 1;
+        w.__clawhumApiCount = count;
+        setWindowCount(count);
+      }
+      return origFetch(input, init);
+    };
+  }, []);
+
+  const usagePct = rpm > 0 ? Math.min(100, Math.round((windowCount / rpm) * 100)) : 0;
+
+  return (
+    <div className="px-4 py-4 space-y-4 max-w-[1100px]">
+      <div className="flex items-center justify-between">
+        <h1 className="font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)]">
+          settings / api key + usage
+        </h1>
+        <span className="font-mono text-[10px] uppercase tracking-widest text-[var(--color-dim)]">
+          stored locally / never synced
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {/* API key */}
+        <section className="panel rounded-[2px] p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Key size={14} weight="duotone" className="text-[var(--color-phosphor)]" />
+            <span className="label-xs">api key</span>
+            {stored && (
+              <span className="ml-auto font-mono text-[10px] uppercase tracking-widest text-[var(--color-dim)]">
+                saved / {maskKey(stored)}
+              </span>
+            )}
+          </div>
+
+          <label className="block space-y-1">
+            <span className="font-mono text-[10px] uppercase tracking-widest text-[var(--color-dim)]">
+              x-api-key header value
+            </span>
+            <div className="flex gap-1">
+              <input
+                aria-label="API key"
+                type={reveal ? "text" : "password"}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="sk_live_..."
+                className="flex-1 bg-[var(--color-bg)] border border-[var(--color-line)] px-2 py-1.5 font-mono text-[12px] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-phosphor)]"
+                autoComplete="off"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                onClick={() => setReveal((r) => !r)}
+                aria-label={reveal ? "Hide key" : "Show key"}
+                className="border border-[var(--color-line)] px-2 hover:bg-[var(--color-panel)]"
+              >
+                {reveal ? <EyeSlash size={14} weight="duotone" /> : <Eye size={14} weight="duotone" />}
+              </button>
+            </div>
+          </label>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => save(draft.trim())}
+              disabled={!dirty}
+              className="border border-[var(--color-phosphor)] text-[var(--color-phosphor)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest hover:bg-[rgba(0,255,140,0.06)] disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              {stored ? "update" : "save"}
+            </button>
+            <button
+              type="button"
+              onClick={() => copy("key", stored)}
+              disabled={!stored}
+              className="border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-panel)] disabled:opacity-30 inline-flex items-center gap-1.5"
+            >
+              {copied === "key" ? <Check size={12} weight="duotone" /> : <Copy size={12} weight="duotone" />}
+              {copied === "key" ? "copied" : "copy"}
+            </button>
+            <button
+              type="button"
+              onClick={() => { save(""); setDraft(""); }}
+              disabled={!stored}
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-amber)] hover:bg-[rgba(245,158,11,0.06)] disabled:opacity-30 inline-flex items-center gap-1.5"
+            >
+              <Trash size={12} weight="duotone" />
+              clear
+            </button>
+          </div>
+
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            keys live in localStorage on this device. every /api/* call from this browser sends it as X-API-Key. clear before signing out of a shared machine.
+          </p>
+        </section>
+
+        {/* Identity */}
+        <section className="panel rounded-[2px] p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <ShieldCheck size={14} weight="duotone" className="text-[var(--color-phosphor)]" />
+            <span className="label-xs">identity</span>
+            <button
+              type="button"
+              onClick={probe}
+              className="ml-auto font-mono text-[10px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-text)]"
+            >
+              refresh
+            </button>
+          </div>
+
+          {identity.kind === "loading" && (
+            <div className="space-y-2" aria-busy="true">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="h-3 bg-[var(--color-panel)] animate-pulse rounded-[2px]" />
+              ))}
+            </div>
+          )}
+
+          {identity.kind === "error" && (
+            <div className="border border-[var(--color-amber)] bg-[rgba(245,158,11,0.06)] p-2 font-mono text-[11px] text-[var(--color-amber)] flex items-start gap-2">
+              <Warning size={14} weight="duotone" className="mt-0.5" />
+              <div>
+                <div className="uppercase tracking-widest">
+                  {identity.status === 401 ? "invalid key" : identity.status === 0 ? "api unreachable" : `error / ${identity.status}`}
+                </div>
+                <div className="text-[10px] text-[var(--color-dim)] mt-0.5 break-words">{identity.message}</div>
+              </div>
+            </div>
+          )}
+
+          {identity.kind === "ok" && (
+            <div className="font-mono text-[11px] grid grid-cols-2 gap-2">
+              <span className="text-[var(--color-muted)]">tenant</span>
+              <span className="text-[var(--color-text)]">{identity.me.tenant_id}</span>
+              <span className="text-[var(--color-muted)]">key name</span>
+              <span className="text-[var(--color-text)]">{identity.me.key_name}</span>
+              <span className="text-[var(--color-muted)]">roles</span>
+              <span className="text-[var(--color-text)]">{identity.me.roles.join(", ") || "none"}</span>
+              <span className="text-[var(--color-muted)]">auth mode</span>
+              <span className="text-[var(--color-text)]">
+                {identity.me.auth_mode === "open" ? (
+                  <span className="text-[var(--color-amber)]">open / dev</span>
+                ) : (
+                  <span className="text-[var(--color-phosphor)]">key</span>
+                )}
+              </span>
+              <span className="text-[var(--color-muted)]">rate limit</span>
+              <span className="text-[var(--color-text)] tabular-nums">{identity.me.rate_limit_per_minute} / min</span>
+            </div>
+          )}
+        </section>
+
+        {/* Usage meter */}
+        <section className="panel rounded-[2px] p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Gauge size={14} weight="duotone" className="text-[var(--color-phosphor)]" />
+            <span className="label-xs">usage / this session</span>
+            <span className="ml-auto font-mono text-[10px] uppercase tracking-widest text-[var(--color-dim)] tabular-nums">
+              {windowCount} / {rpm || "—"}
+            </span>
+          </div>
+          <div className="h-2 bg-[var(--color-bg)] border border-[var(--color-line)] overflow-hidden">
+            <div
+              className={`h-full transition-[width] duration-300 ${usagePct >= 90 ? "bg-[var(--color-amber)]" : "bg-[var(--color-phosphor)]"}`}
+              style={{ width: `${usagePct}%` }}
+              role="progressbar"
+              aria-valuenow={windowCount}
+              aria-valuemin={0}
+              aria-valuemax={rpm || 100}
+            />
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            counts every /api/* call since page load. server-enforced rate limit comes from your key configuration. exceeding it returns 429.
+          </p>
+        </section>
+
+        {/* Curl */}
+        <section className="panel rounded-[2px] p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">try the api</span>
+            <button
+              type="button"
+              onClick={() => copy("curl", curlExample(origin, stored))}
+              className="ml-auto border border-[var(--color-line)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-panel)] inline-flex items-center gap-1.5"
+            >
+              {copied === "curl" ? <Check size={11} weight="duotone" /> : <Copy size={11} weight="duotone" />}
+              {copied === "curl" ? "copied" : "copy"}
+            </button>
+          </div>
+          <pre className="bg-[var(--color-bg)] border border-[var(--color-line)] p-2 font-mono text-[11px] text-[var(--color-text)] whitespace-pre-wrap break-all">
+{curlExample(origin, stored)}
+          </pre>
+          {!stored && (
+            <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+              save an api key above and the snippet will fill in automatically.
+            </p>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}

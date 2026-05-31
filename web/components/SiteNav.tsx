@@ -11,6 +11,7 @@ const TABS: { href: string; label: string; hint: string }[] = [
   { href: "/catalog", label: "catalog", hint: "fingerprinted tracks" },
   { href: "/metrics", label: "metrics", hint: "prometheus" },
   { href: "/library", label: "index", hint: "reindex / stats" },
+  { href: "/settings", label: "settings", hint: "api key + usage" },
 ];
 
 export default function SiteNav() {

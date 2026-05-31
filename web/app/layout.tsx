@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Inter, IBM_Plex_Mono } from "next/font/google";
 import TransportBar from "@/components/TransportBar";
 import SiteNav from "@/components/SiteNav";
+import ApiKeyProvider from "@/components/ApiKeyProvider";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -28,6 +29,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${inter.variable} ${plexMono.variable}`}>
       <body>
         <div className="min-h-screen flex flex-col">
+          <ApiKeyProvider />
           <TransportBar />
           <SiteNav />
           <main className="flex-1">{children}</main>
