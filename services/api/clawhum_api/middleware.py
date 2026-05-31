@@ -12,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from .api_keys import ANON_TENANT_ID, get_registry
-from . import quota_store
+from . import pat_store, quota_store
 
 # W3C Trace Context: version-traceid-parentid-flags
 # https://www.w3.org/TR/trace-context/
@@ -116,7 +116,14 @@ class SimpleRateLimit(BaseHTTPMiddleware):
         self._ws_day: dict[str, deque[float]] = defaultdict(deque)
 
     def _bucket_key(self, request: Request) -> tuple[str, int, str]:
-        """Return (bucket id, requests-per-minute limit, tenant_id)."""
+        """Return (bucket id, requests-per-minute limit, tenant_id).
+
+        Resolution order: legacy registry API key, then user-minted PAT
+        (whose `rpm` field acts as a per-token ceiling, 0 meaning fall
+        back to the workspace default), then per-IP. PATs each get an
+        isolated bucket keyed by their token id so one noisy PAT cannot
+        starve a sibling PAT in the same workspace.
+        """
         api_key = request.headers.get("x-api-key", "")
         if api_key:
             registry = get_registry()
@@ -125,6 +132,12 @@ class SimpleRateLimit(BaseHTTPMiddleware):
                 limit = entry.rpm if entry.rpm > 0 else self.default_max
                 tenant = entry.tenant_id or ANON_TENANT_ID
                 return f"key:{entry.name}", limit, tenant
+            if pat_store.looks_like_pat(api_key):
+                pat = pat_store.lookup_by_secret(api_key)
+                if pat is not None:
+                    limit = pat.rpm if pat.rpm > 0 else self.default_max
+                    tenant = pat.tenant_id or ANON_TENANT_ID
+                    return f"pat:{pat.id}", limit, tenant
         ip = request.client.host if request.client else "0.0.0.0"
         return f"ip:{ip}", self.default_max, ANON_TENANT_ID
 

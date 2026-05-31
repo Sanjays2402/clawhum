@@ -1113,13 +1113,16 @@ without guesswork. Audit log `actor` ids are hashed digests of the
 supplied key, so rotating a leaked secret is a one-line config change.
 
 For multi-replica deployments the in-process limiter should be replaced
-with a shared store (Redis); the bucket id format (`key:<name>` or
-`ip:<addr>`) is stable so the swap is mechanical.
+with a shared store (Redis); the bucket id format (`key:<name>`,
+`pat:<id>`, or `ip:<addr>`) is stable so the swap is mechanical.
 
-Clients receive `X-RateLimit-Limit` and `X-RateLimit-Remaining` on every
-response, plus `Retry-After` on `429`s, so they can pace requests
-without guesswork. Audit log `actor` ids are hashed digests of the
-supplied key, so rotating a leaked secret is a one-line config change.
+Personal access tokens minted through `POST /keys` carry the same
+`rpm` field as the env-configured keys. The rate limiter looks up the
+PAT on every request and applies its per-token ceiling against an
+isolated bucket (`pat:<token-id>`), so one noisy PAT cannot starve a
+sibling PAT inside the same workspace, and a buyer who scopes a CI
+bot down to `rpm=10` actually gets `10`. Setting `rpm=0` keeps the
+workspace default. Covered by `tests/integration/test_pat_rate_limit.py`.
 
 For multi-replica deployments the in-process limiter should be replaced
 with a shared store (Redis); the bucket id format (`key:<name>` or
