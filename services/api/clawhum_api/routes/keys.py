@@ -64,6 +64,9 @@ class KeyView(BaseModel):
     expired: bool
     scopes: list[str]
     effective_scopes: list[str]
+    prior_secret_hint: str = ""
+    prior_secret_expires_at: float = 0.0
+    rotation_active: bool = False
 
 
 class KeyCreateResponse(KeyView):
@@ -220,3 +223,73 @@ async def revoke_key(key_id: str, request: Request) -> dict[str, Any]:
     if not ok:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="key not found")
     return {"ok": True, "id": key_id}
+
+
+class RotateKeyBody(BaseModel):
+    grace_minutes: int | None = Field(
+        default=None,
+        ge=0,
+        le=10_080,
+        description=(
+            "Minutes the previous secret keeps authenticating after "
+            "rotation. Omit to use the workspace default. 0 revokes "
+            "the old secret immediately. The server clamps to the "
+            "operator cap (pat_rotation_max_grace_minutes)."
+        ),
+    )
+
+
+class RotateKeyResponse(KeyView):
+    secret: str  # plaintext, shown ONCE
+
+
+@router.post(
+    "/keys/{key_id}/rotate",
+    response_model=RotateKeyResponse,
+    dependencies=[Depends(require_roles("writer")), Depends(require_mfa())],
+)
+async def rotate_key(
+    key_id: str,
+    body: RotateKeyBody,
+    request: Request,
+) -> dict[str, Any]:
+    """Mint a fresh secret for an existing PAT, keeping the id stable.
+
+    The new secret is returned exactly once in the response. The old
+    secret keeps authenticating for ``grace_minutes`` so a rolling
+    deploy can swap credentials without dropping requests. Pass 0 to
+    revoke the old secret immediately (use this when you suspect a
+    leak). The server clamps the grace window to the operator-defined
+    ceiling so a workspace owner cannot extend it indefinitely.
+    """
+    from ..dry_run import is_dry_run, preview
+    tenant = current_tenant_id(request)
+    existing = next(
+        (p for p in pat_store.live_for_tenant(tenant) if p.id == key_id),
+        None,
+    )
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    if is_dry_run(request):
+        return preview(
+            "api_key_rotation",
+            key_id,
+            tenant_id=tenant,
+            name=existing.name,
+            grace_minutes=body.grace_minutes,
+        )
+    result = pat_store.rotate(
+        tenant_id=tenant,
+        pat_id=key_id,
+        grace_minutes=body.grace_minutes,
+    )
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    pat, secret = result
+    view = pat_store.public_view(pat)
+    view["secret"] = secret
+    return view

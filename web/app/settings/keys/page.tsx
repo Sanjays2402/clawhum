@@ -36,6 +36,9 @@ interface KeyRow {
   expired: boolean;
   scopes: string[];
   effective_scopes: string[];
+  prior_secret_hint?: string;
+  prior_secret_expires_at?: number;
+  rotation_active?: boolean;
 }
 
 interface CreatedKey extends KeyRow {
@@ -109,6 +112,10 @@ export default function KeysPage() {
   const [justCreated, setJustCreated] = useState<CreatedKey | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [rotateId, setRotateId] = useState<string | null>(null);
+  const [rotateGrace, setRotateGrace] = useState<string>("30");
+  const [rotating, setRotating] = useState<string | null>(null);
+  const [rotateError, setRotateError] = useState<string | null>(null);
   const [revokeAllOpen, setRevokeAllOpen] = useState(false);
   const [revokingAll, setRevokingAll] = useState(false);
   const [revokeAllError, setRevokeAllError] = useState<string | null>(null);
@@ -198,6 +205,34 @@ export default function KeysPage() {
       setCreateError(e?.message || String(e));
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function rotate(id: string) {
+    if (rotating) return;
+    setRotating(id);
+    setRotateError(null);
+    try {
+      const grace =
+        rotateGrace === "now" ? 0 : Math.max(0, parseInt(rotateGrace, 10) || 0);
+      const r = await fetch(`/api/keys/${id}/rotate`, {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ grace_minutes: grace }),
+      });
+      if (!r.ok) {
+        const msg = await r.text().catch(() => "");
+        setRotateError(msg || `failed with ${r.status}`);
+        return;
+      }
+      const body = (await r.json()) as CreatedKey;
+      setJustCreated(body);
+      setRotateId(null);
+      await refresh();
+    } catch (e: any) {
+      setRotateError(e?.message || String(e));
+    } finally {
+      setRotating(null);
     }
   }
 
@@ -580,6 +615,14 @@ export default function KeysPage() {
                         <Warning size={10} weight="bold" /> expired
                       </span>
                     )}
+                    {row.rotation_active && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider text-amber-500"
+                        title={`Previous secret pat_...${row.prior_secret_hint} still valid until ${row.prior_secret_expires_at ? new Date(row.prior_secret_expires_at * 1000).toLocaleString() : ""}`}
+                      >
+                        <ShieldCheck size={10} weight="bold" /> rotating
+                      </span>
+                    )}
                   </div>
                   <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-muted)] font-mono uppercase tracking-wider">
                     <span>roles: {row.roles.join(", ") || "reader"}</span>
@@ -613,14 +656,66 @@ export default function KeysPage() {
                       cancel
                     </button>
                   </div>
+                ) : rotateId === row.id ? (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="text-[11px] text-[var(--color-muted)] font-mono uppercase tracking-wider">
+                      grace
+                    </label>
+                    <select
+                      value={rotateGrace}
+                      onChange={(e) => setRotateGrace(e.target.value)}
+                      className="px-2 py-1 rounded border border-[var(--color-line)] bg-[var(--color-bg)] text-xs"
+                      aria-label="Rotation grace window"
+                    >
+                      <option value="now">revoke old now</option>
+                      <option value="5">5 minutes</option>
+                      <option value="15">15 minutes</option>
+                      <option value="30">30 minutes</option>
+                      <option value="60">60 minutes</option>
+                    </select>
+                    <button
+                      onClick={() => rotate(row.id)}
+                      disabled={rotating === row.id}
+                      className="px-3 py-1.5 rounded bg-amber-500 text-black text-xs font-medium hover:opacity-90 disabled:opacity-50"
+                    >
+                      {rotating === row.id ? "rotating..." : "confirm rotate"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setRotateId(null);
+                        setRotateError(null);
+                      }}
+                      className="px-3 py-1.5 rounded border border-[var(--color-line)] text-xs"
+                    >
+                      cancel
+                    </button>
+                    {rotateError && (
+                      <span className="text-[11px] text-red-500">{rotateError}</span>
+                    )}
+                  </div>
                 ) : (
-                  <button
-                    onClick={() => setConfirmId(row.id)}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-[var(--color-line)] text-xs hover:bg-[var(--color-bg)]"
-                    aria-label={`Revoke ${row.name}`}
-                  >
-                    <Trash size={12} weight="bold" /> revoke
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setRotateId(row.id);
+                        setRotateGrace("30");
+                        setRotateError(null);
+                      }}
+                      disabled={row.expired}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-[var(--color-line)] text-xs hover:bg-[var(--color-bg)] disabled:opacity-50"
+                      aria-label={`Rotate ${row.name}`}
+                      title="Mint a new secret for this token. The old secret keeps working briefly so deployed clients can swap without downtime."
+                    >
+                      <ShieldCheck size={12} weight="bold" /> rotate
+                    </button>
+                    <button
+                      onClick={() => setConfirmId(row.id)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-[var(--color-line)] text-xs hover:bg-[var(--color-bg)]"
+                      aria-label={`Revoke ${row.name}`}
+                    >
+                      <Trash size={12} weight="bold" /> revoke
+                    </button>
+                  </div>
                 )}
               </div>
             ))}

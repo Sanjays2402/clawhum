@@ -63,6 +63,15 @@ class Settings(BaseSettings):
             "by pat_max_ttl_days when that cap is enabled."
         ),
     )
+    pat_rotation_max_grace_minutes: int = Field(
+        default=60,
+        description=(
+            "Maximum grace window (minutes) during which a rotated PAT's "
+            "previous secret keeps authenticating. Mint and rotate calls "
+            "that ask for a longer grace are clamped down. 0 disables "
+            "grace entirely so rotation revokes the old secret immediately."
+        ),
+    )
     members_path: Path = Path("./data/members.jsonl")
     member_invite_ttl_hours: int = Field(
         default=168,

@@ -105,6 +105,26 @@ curl -X POST http://127.0.0.1:7451/v1/keys/revoke-all \
 
 UI: open http://127.0.0.1:7452/settings/keys and click `revoke all`.
 
+## Personal-access-token rotation with grace window
+
+Key rotation is a baseline SOC 2 control, but the naive "delete and re-mint" loop causes an outage every time because deployed clients still hold the old secret. `POST /keys/{id}/rotate` mints a fresh secret for an existing PAT in place: same id, same name, same roles, same scopes, same expiry, same last-used timestamp. The new secret is returned exactly once. The previous secret keeps authenticating for `grace_minutes` (default 30, clamped by the operator-defined `pat_rotation_max_grace_minutes` ceiling) so a rolling deploy can pick up the new value without dropping requests. Pass `grace_minutes: 0` for emergency rotation after a suspected leak: the old secret stops working immediately. The endpoint requires the `writer` role plus a fresh `X-MFA-Code` once TOTP is enrolled, honours `?dry_run=true`, and every rotation is captured by the audit log middleware so reviewers can answer "who rotated which token, from which IP, and when did the grace window close" without digging through files. The `/settings/keys` page surfaces a `rotate` button per token with a grace selector and a `rotating` chip while the previous secret is still alive.
+
+### Try it (rotate a PAT without downtime)
+
+```bash
+# Rotate with the default 30-minute grace. Returns the new secret ONCE.
+curl -X POST http://127.0.0.1:7451/v1/keys/<key_id>/rotate \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "X-MFA-Code: 123456" \
+  -H "Content-Type: application/json" -d '{"grace_minutes":30}'
+
+# Emergency: invalidate the old secret immediately.
+curl -X POST http://127.0.0.1:7451/v1/keys/<key_id>/rotate \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "X-MFA-Code: 123456" \
+  -H "Content-Type: application/json" -d '{"grace_minutes":0}'
+```
+
+UI: open http://127.0.0.1:7452/settings/keys, click `rotate` on any token, pick a grace window, copy the new secret once, swap it into your deploy.
+
 
 ## Workspace audit log search and export
 

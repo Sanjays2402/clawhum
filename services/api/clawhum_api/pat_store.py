@@ -77,6 +77,18 @@ class PAT:
     # "every scope this PAT's roles permit", which keeps PATs minted
     # before this field existed working without a migration.
     scopes: frozenset[str] = frozenset()
+    # Rotation: when a token is rotated, the previous secret stays
+    # valid for a short grace window so deployed clients can swap to
+    # the new secret without downtime. Both fields are 0.0/"" when no
+    # rotation is in flight.
+    prior_secret_hash: str = ""
+    prior_secret_hint: str = ""
+    prior_secret_expires_at: float = 0.0
+
+    def prior_secret_active(self, now: float | None = None) -> bool:
+        if not self.prior_secret_hash or self.prior_secret_expires_at <= 0:
+            return False
+        return (now if now is not None else time.time()) < self.prior_secret_expires_at
 
     def effective_scopes(self) -> frozenset[str]:
         if self.scopes:
@@ -134,6 +146,9 @@ def _from_record(rec: dict[str, Any]) -> PAT:
         deleted=bool(rec.get("deleted", False)),
         expires_at=float(rec.get("expires_at", 0.0) or 0.0),
         scopes=normalise_scopes(rec.get("scopes") or []),
+        prior_secret_hash=str(rec.get("prior_secret_hash", "") or ""),
+        prior_secret_hint=str(rec.get("prior_secret_hint", "") or ""),
+        prior_secret_expires_at=float(rec.get("prior_secret_expires_at", 0.0) or 0.0),
     )
 
 
@@ -172,6 +187,13 @@ def lookup_by_secret(secret: str) -> PAT | None:
         if tok.deleted:
             continue
         if hmac_compare(tok.secret_hash, h):
+            if tok.is_expired(now):
+                return None
+            return tok
+        # Accept the previous secret while the rotation grace window
+        # is still open. Once the window closes, the prior hash is
+        # treated as if it were never minted.
+        if tok.prior_secret_active(now) and hmac_compare(tok.prior_secret_hash, h):
             if tok.is_expired(now):
                 return None
             return tok
@@ -256,9 +278,77 @@ def create(
         "deleted": False,
         "expires_at": expires_at,
         "scopes": sorted(safe_scopes),
+        "prior_secret_hash": "",
+        "prior_secret_hint": "",
+        "prior_secret_expires_at": 0.0,
     }
     _append(rec)
     return _from_record(rec), secret
+
+
+# Default grace window during which the previous secret keeps working
+# after a rotation. Long enough for a rolling deploy to pick up the
+# new value, short enough that a leaked old secret is not useful for
+# long. Clamped per call by the operator via `pat_rotation_max_grace_minutes`.
+_DEFAULT_ROTATION_GRACE_MINUTES = 60
+
+
+def rotate(
+    *,
+    tenant_id: str,
+    pat_id: str,
+    grace_minutes: int | None = None,
+) -> tuple[PAT, str] | None:
+    """Rotate a PAT in place. Returns (record, new_plaintext_secret) or None.
+
+    The token id, name, roles, scopes, rpm, expiry, and last-used
+    timestamp all carry over. A fresh secret is generated and shown
+    once. The previous secret keeps authenticating for ``grace_minutes``
+    so existing deployments can be updated without a downtime window.
+    Set ``grace_minutes`` to 0 to revoke the old secret immediately
+    ("emergency rotate"). The grace is clamped to the operator-defined
+    ceiling via ``pat_rotation_max_grace_minutes`` so a workspace owner
+    cannot extend it indefinitely.
+    """
+    current = _reduce().get(pat_id)
+    if current is None or current.deleted or current.tenant_id != tenant_id:
+        return None
+    s = get_settings()
+    cap = max(0, int(getattr(s, "pat_rotation_max_grace_minutes", _DEFAULT_ROTATION_GRACE_MINUTES) or 0))
+    if grace_minutes is None:
+        grace = _DEFAULT_ROTATION_GRACE_MINUTES
+    else:
+        grace = max(0, int(grace_minutes))
+    if cap > 0:
+        grace = min(grace, cap)
+    now = time.time()
+    new_secret = new_secret_token()
+    grace_expires = (now + grace * 60.0) if grace > 0 else 0.0
+    rec = {
+        "id": current.id,
+        "tenant_id": current.tenant_id,
+        "name": current.name,
+        "roles": sorted(current.roles),
+        "rpm": current.rpm,
+        "created_at": current.created_at,
+        "last_used_at": current.last_used_at,
+        "secret_hash": hash_secret(new_secret),
+        "secret_hint": new_secret[-4:],
+        "deleted": False,
+        "expires_at": current.expires_at,
+        "scopes": sorted(current.scopes),
+        "prior_secret_hash": current.secret_hash if grace > 0 else "",
+        "prior_secret_hint": current.secret_hint if grace > 0 else "",
+        "prior_secret_expires_at": grace_expires,
+        "rotated_at": now,
+    }
+    _append(rec)
+    return _from_record(rec), new_secret
+
+
+# Alias kept so the symbol `new_secret` (already used externally) is
+# preserved while `rotate` uses an explicit name.
+new_secret_token = new_secret
 
 
 def revoke(*, tenant_id: str, pat_id: str) -> bool:
@@ -279,6 +369,9 @@ def revoke(*, tenant_id: str, pat_id: str) -> bool:
         "deleted": True,
         "expires_at": current.expires_at,
         "scopes": sorted(current.scopes),
+        "prior_secret_hash": "",
+        "prior_secret_hint": "",
+        "prior_secret_expires_at": 0.0,
         "revoked_at": time.time(),
     }
     _append(rec)
@@ -328,6 +421,9 @@ def touch_last_used(pat_id: str) -> None:
         "deleted": False,
         "expires_at": current.expires_at,
         "scopes": sorted(current.scopes),
+        "prior_secret_hash": current.prior_secret_hash,
+        "prior_secret_hint": current.prior_secret_hint,
+        "prior_secret_expires_at": current.prior_secret_expires_at,
     }
     _append(rec)
 
@@ -345,4 +441,7 @@ def public_view(p: PAT) -> dict[str, Any]:
         "expired": p.is_expired(),
         "scopes": sorted(p.scopes),
         "effective_scopes": sorted(p.effective_scopes()),
+        "prior_secret_hint": p.prior_secret_hint,
+        "prior_secret_expires_at": p.prior_secret_expires_at,
+        "rotation_active": p.prior_secret_active(),
     }

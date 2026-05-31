@@ -328,3 +328,76 @@ def test_pat_ttl_clamped_to_max(monkeypatch, tmp_path):
         ttl2 = r.json()["expires_at"] - _time.time()
         assert 6 * 86400 < ttl2 < 8 * 86400, ttl2
 
+
+
+def test_pat_rotation_grace_window(monkeypatch, tmp_path):
+    """Rotating a PAT returns a new secret, old secret keeps working
+    until the grace window closes, and 0-grace rotation revokes the
+    old secret immediately.
+    """
+    with _client(monkeypatch, tmp_path) as c:
+        # Mint a PAT to rotate.
+        r = c.post("/keys", json={"name": "to-rotate"},
+                   headers={"X-API-Key": "opskey"})
+        assert r.status_code == 200, r.text
+        old = r.json()
+        old_secret = old["secret"]
+        pat_id = old["id"]
+
+        # Old secret authenticates.
+        assert c.get("/me", headers={"X-API-Key": old_secret}).status_code == 200
+
+        # Rotate with default grace.
+        r = c.post(
+            f"/keys/{pat_id}/rotate",
+            json={"grace_minutes": 30},
+            headers={"X-API-Key": "opskey"},
+        )
+        assert r.status_code == 200, r.text
+        rotated = r.json()
+        new_secret = rotated["secret"]
+        assert new_secret != old_secret
+        assert new_secret.startswith("pat_")
+        # Same id, same name, same roles.
+        assert rotated["id"] == pat_id
+        assert rotated["name"] == "to-rotate"
+        assert rotated["rotation_active"] is True
+        assert rotated["prior_secret_hint"] == old_secret[-4:]
+
+        # Both secrets work during the grace window.
+        assert c.get("/me", headers={"X-API-Key": new_secret}).status_code == 200
+        assert c.get("/me", headers={"X-API-Key": old_secret}).status_code == 200
+
+        # List view echoes the rotation state and the new hint.
+        r = c.get("/keys", headers={"X-API-Key": "opskey"})
+        rows = r.json()
+        assert len(rows) == 1
+        assert rows[0]["secret_hint"] == new_secret[-4:]
+        assert rows[0]["rotation_active"] is True
+
+        # Rotating again with grace=0 must invalidate the previous
+        # secret immediately (emergency rotate after suspected leak).
+        r = c.post(
+            f"/keys/{pat_id}/rotate",
+            json={"grace_minutes": 0},
+            headers={"X-API-Key": "opskey"},
+        )
+        assert r.status_code == 200, r.text
+        emergency = r.json()
+        emergency_secret = emergency["secret"]
+        assert emergency["rotation_active"] is False
+
+        # The just-rotated-from secret (new_secret) is dead.
+        assert c.get("/me", headers={"X-API-Key": new_secret}).status_code == 401
+        # The original secret is definitely dead.
+        assert c.get("/me", headers={"X-API-Key": old_secret}).status_code == 401
+        # Only the emergency secret authenticates.
+        assert c.get("/me", headers={"X-API-Key": emergency_secret}).status_code == 200
+
+        # Rotating a non-existent id 404s.
+        r = c.post(
+            "/keys/nonexistent/rotate",
+            json={"grace_minutes": 5},
+            headers={"X-API-Key": "opskey"},
+        )
+        assert r.status_code == 404
