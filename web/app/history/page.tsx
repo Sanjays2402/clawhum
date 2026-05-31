@@ -18,6 +18,8 @@ import {
   CheckSquare,
   Square,
   Stack,
+  Star,
+  SortAscending,
 } from "@phosphor-icons/react/dist/ssr";
 import { useApiKey } from "@/lib/apiKey";
 import { historyToShareInput } from "@/lib/share";
@@ -48,6 +50,7 @@ interface HistoryItem {
   duration_sec: number | null;
   name: string | null;
   tags: string[];
+  starred: boolean;
 }
 
 interface HistoryList {
@@ -58,6 +61,15 @@ interface HistoryList {
 }
 
 const PAGE = 25;
+
+type SortKey = "recent" | "oldest" | "name" | "results" | "top_score";
+const SORT_LABELS: Record<SortKey, string> = {
+  recent: "newest first",
+  oldest: "oldest first",
+  name: "name a / z",
+  results: "most matches",
+  top_score: "best score",
+};
 
 function fmtTs(epochSec: number): string {
   if (!epochSec) return "";
@@ -78,6 +90,8 @@ export default function HistoryPage() {
   const [apiKey] = useApiKey();
   const [q, setQ] = useState("");
   const [tag, setTag] = useState("");
+  const [sort, setSort] = useState<SortKey>("recent");
+  const [starredOnly, setStarredOnly] = useState(false);
   const [offset, setOffset] = useState(0);
   const [data, setData] = useState<HistoryList | null>(null);
   const [loading, setLoading] = useState(false);
@@ -104,6 +118,8 @@ export default function HistoryPage() {
       u.searchParams.set("offset", String(offset));
       if (q.trim()) u.searchParams.set("q", q.trim());
       if (tag.trim()) u.searchParams.set("tag", tag.trim().toLowerCase());
+      if (sort !== "recent") u.searchParams.set("sort", sort);
+      if (starredOnly) u.searchParams.set("starred", "true");
       const r = await fetch(u.pathname + u.search);
       if (r.status === 401) {
         setErr("missing api key. set one in settings to enable cloud history.");
@@ -122,7 +138,7 @@ export default function HistoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [q, tag, offset]);
+  }, [q, tag, offset, sort, starredOnly]);
 
   // Debounced refetch on filter change
   useEffect(() => {
@@ -131,7 +147,7 @@ export default function HistoryPage() {
   }, [fetchHistory]);
 
   // Reset paging on filter change
-  useEffect(() => { setOffset(0); }, [q, tag]);
+  useEffect(() => { setOffset(0); }, [q, tag, sort, starredOnly]);
 
   // Drop stale selections when the visible list changes
   useEffect(() => {
@@ -285,7 +301,7 @@ export default function HistoryPage() {
           >
             <ArrowsClockwise size={12} weight="duotone" /> refresh
           </button>
-          <ExportAllMenu q={q} tag={tag} total={total} />
+          <ExportAllMenu q={q} tag={tag} starredOnly={starredOnly} total={total} />
         </div>
       </div>
 
@@ -310,6 +326,28 @@ export default function HistoryPage() {
             <option key={t} value={t}>{t}</option>
           ))}
         </select>
+        <div className="flex items-center gap-1">
+          <SortAscending size={12} weight="duotone" className="text-[var(--color-dim)]" />
+          <select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortKey)}
+            aria-label="sort history"
+            className="bg-[var(--color-bg)] border border-[var(--color-line)] font-mono text-[11px] uppercase tracking-widest px-2 py-1"
+          >
+            {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
+              <option key={k} value={k}>{SORT_LABELS[k]}</option>
+            ))}
+          </select>
+        </div>
+        <button
+          type="button"
+          onClick={() => setStarredOnly((v) => !v)}
+          aria-pressed={starredOnly}
+          title={starredOnly ? "showing starred only" : "show only starred"}
+          className={`font-mono text-[10px] uppercase tracking-widest px-2 py-1 border flex items-center gap-1 ${starredOnly ? "border-[var(--color-phosphor)] text-[var(--color-phosphor)] bg-[rgba(29,185,84,0.06)]" : "border-[var(--color-line)] text-[var(--color-muted)] hover:bg-[var(--color-panel)]"}`}
+        >
+          <Star size={12} weight={starredOnly ? "fill" : "duotone"} /> starred
+        </button>
         <span className="font-mono text-[10px] text-[var(--color-dim)] uppercase tracking-widest tabular-nums">
           {loading ? "loading..." : `${total} entries`}
         </span>
@@ -481,6 +519,15 @@ export default function HistoryPage() {
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button
+                    title={it.starred ? "unstar" : "star"}
+                    aria-label={it.starred ? "unstar entry" : "star entry"}
+                    aria-pressed={it.starred}
+                    onClick={() => patch(it.id, { starred: !it.starred })}
+                    className={`p-1.5 border border-[var(--color-line)] hover:bg-[var(--color-panel)] ${it.starred ? "text-[var(--color-phosphor)]" : "text-[var(--color-muted)]"}`}
+                  >
+                    <Star size={13} weight={it.starred ? "fill" : "duotone"} />
+                  </button>
+                  <button
                     title="rename"
                     onClick={() => { setRenaming(it.id); setRenameDraft(it.name || ""); }}
                     className="p-1.5 border border-[var(--color-line)] hover:bg-[var(--color-panel)] text-[var(--color-muted)]"
@@ -539,7 +586,7 @@ export default function HistoryPage() {
   );
 }
 
-function ExportAllMenu({ q, tag, total }: { q: string; tag: string; total: number }) {
+function ExportAllMenu({ q, tag, starredOnly, total }: { q: string; tag: string; starredOnly: boolean; total: number }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<"csv" | "json" | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -553,6 +600,7 @@ function ExportAllMenu({ q, tag, total }: { q: string; tag: string; total: numbe
       u.searchParams.set("format", format);
       if (q.trim()) u.searchParams.set("q", q.trim());
       if (tag.trim()) u.searchParams.set("tag", tag.trim().toLowerCase());
+      if (starredOnly) u.searchParams.set("starred", "true");
       const r = await fetch(u.pathname + u.search);
       if (!r.ok) {
         if (r.status === 401) throw new Error("set an api key in settings first");

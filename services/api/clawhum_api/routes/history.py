@@ -130,6 +130,7 @@ class HistoryCreateBody(BaseModel):
 class HistoryPatchBody(BaseModel):
     name: str | None = Field(default=None, max_length=_MAX_NAME)
     tags: list[str] | None = None
+    starred: bool | None = None
 
 
 class HistoryItem(BaseModel):
@@ -144,6 +145,7 @@ class HistoryItem(BaseModel):
     duration_sec: float | None = None
     name: str | None = None
     tags: list[str] = Field(default_factory=list)
+    starred: bool = False
 
 
 class HistoryListResponse(BaseModel):
@@ -170,6 +172,7 @@ def _to_item(rec: dict[str, Any]) -> HistoryItem:
         duration_sec=rec.get("duration_sec"),
         name=rec.get("name"),
         tags=list(rec.get("tags") or []),
+        starred=bool(rec.get("starred") or False),
     )
 
 
@@ -201,6 +204,7 @@ async def create_history(body: HistoryCreateBody, request: Request) -> HistoryCr
         "duration_sec": body.duration_sec,
         "name": (body.name or "").strip() or None,
         "tags": _normalize_tags(body.tags),
+        "starred": False,
     }
     _append(rec)
     return HistoryCreateResponse(id=hid)
@@ -217,11 +221,15 @@ async def list_history(
     tag: str = Query(default="", max_length=_MAX_TAG_LEN),
     limit: int = Query(default=25, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
+    sort: str = Query(default="recent", pattern="^(recent|oldest|name|results|top_score)$"),
+    starred: bool = Query(default=False),
 ) -> HistoryListResponse:
     tenant_id = getattr(request.state, "tenant_id", "anonymous")
     rows = list(_collapse(tenant_id).values())
     needle = q.strip().lower()
     tag_needle = tag.strip().lower()
+    if starred:
+        rows = [r for r in rows if bool(r.get("starred"))]
     if needle:
         def hit(r: dict[str, Any]) -> bool:
             if needle in (r.get("name") or "").lower():
@@ -237,7 +245,26 @@ async def list_history(
         rows = [r for r in rows if hit(r)]
     if tag_needle:
         rows = [r for r in rows if tag_needle in (r.get("tags") or [])]
-    rows.sort(key=lambda r: float(r.get("created_at") or 0.0), reverse=True)
+
+    def _top_score(r: dict[str, Any]) -> float:
+        results = r.get("results") or []
+        if not results:
+            return 0.0
+        try:
+            return float(max((float(x.get("score") or 0.0)) for x in results))
+        except (TypeError, ValueError):
+            return 0.0
+
+    if sort == "oldest":
+        rows.sort(key=lambda r: float(r.get("created_at") or 0.0))
+    elif sort == "name":
+        rows.sort(key=lambda r: ((r.get("name") or r.get("filename") or "").lower(), -float(r.get("created_at") or 0.0)))
+    elif sort == "results":
+        rows.sort(key=lambda r: (int(r.get("count") or 0), float(r.get("created_at") or 0.0)), reverse=True)
+    elif sort == "top_score":
+        rows.sort(key=lambda r: (_top_score(r), float(r.get("created_at") or 0.0)), reverse=True)
+    else:  # recent
+        rows.sort(key=lambda r: float(r.get("created_at") or 0.0), reverse=True)
     total = len(rows)
     page = rows[offset : offset + limit]
     return HistoryListResponse(
@@ -254,6 +281,7 @@ async def export_history(
     format: str = Query(default="csv", pattern="^(csv|json)$"),
     q: str = Query(default="", max_length=120),
     tag: str = Query(default="", max_length=_MAX_TAG_LEN),
+    starred: bool = Query(default=False),
 ) -> Response:
     """Download the caller's full history matching the given filters.
 
@@ -279,6 +307,8 @@ async def export_history(
         rows = [r for r in rows if hit(r)]
     if tag_needle:
         rows = [r for r in rows if tag_needle in (r.get("tags") or [])]
+    if starred:
+        rows = [r for r in rows if bool(r.get("starred"))]
     rows.sort(key=lambda r: float(r.get("created_at") or 0.0), reverse=True)
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -388,6 +418,8 @@ async def patch_history(hid: str, body: HistoryPatchBody, request: Request) -> H
         updated["name"] = body.name.strip() or None
     if body.tags is not None:
         updated["tags"] = _normalize_tags(body.tags)
+    if body.starred is not None:
+        updated["starred"] = bool(body.starred)
     updated["updated_at"] = time.time()
     _append(updated)
     return _to_item(updated)

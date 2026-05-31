@@ -94,6 +94,23 @@ curl http://127.0.0.1:7451/usage -H 'X-API-Key: dev'
 
 Events are recorded by middleware on every 2xx response to a billable route and persisted to `data/usage.jsonl` (override with `CLAWHUM_USAGE_PATH`). Tenant scoping means each API key only sees its own counters.
 
+## Try it (star + sort cloud history)
+
+Every saved hum on `http://127.0.0.1:7452/history` now has a star toggle and the toolbar gains a sort dropdown plus a starred-only filter. Star anything you want to come back to and pin the page to `?starred=true` to keep the noise down. Sort by newest, oldest, name, most matches, or best score. Filters compose with search, tag, pagination, and export, so `export` always downloads exactly what you see. State persists per record on the server so it follows you across devices.
+
+```bash
+# list only starred runs, sorted by best top score
+curl 'http://127.0.0.1:7451/history?starred=true&sort=top_score' -H 'X-API-Key: dev'
+
+# star a saved run
+curl -X PATCH http://127.0.0.1:7451/history/<id> \
+  -H 'X-API-Key: dev' -H 'Content-Type: application/json' \
+  -d '{"starred":true}'
+
+# export starred only to csv
+curl 'http://127.0.0.1:7451/history/export?format=csv&starred=true' -H 'X-API-Key: dev' -o starred.csv
+```
+
 ## Try it (cloud history)
 
 ClawHum now syncs every match to your account so history survives device switches and browser-storage wipes. Open `http://127.0.0.1:7452/history` after setting an API key in `/settings` and you'll see every run, searchable by query name, filename, artist, or title, with rename, tag, and delete inline. The `/matches` page keeps the local-only log for offline use.

@@ -139,3 +139,68 @@ def test_history_export_csv_and_json(monkeypatch, tmp_path):
         # tenant isolation: other tenant sees nothing
         other = c.get("/history/export?format=json", headers={"X-API-Key": "othersecret"}).json()
         assert other["count"] == 0
+
+
+def test_history_starred_and_sort(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as c:
+        h = {"X-API-Key": "changeme"}
+
+        def mk(name, count, results):
+            return {
+                "query_id": f"q-{name}",
+                "elapsed_ms": 10,
+                "count": count,
+                "results": results,
+                "filename": f"{name}.wav",
+                "duration_sec": 5.0,
+                "name": name,
+                "tags": [],
+            }
+
+        a = c.post("/history", json=mk("alpha", 1, [
+            {"track_id": "t1", "title": "A", "artist": "X", "score": 0.50},
+        ]), headers=h).json()["id"]
+        b = c.post("/history", json=mk("bravo", 3, [
+            {"track_id": "t2", "title": "B", "artist": "Y", "score": 0.99},
+            {"track_id": "t3", "title": "B2", "artist": "Y", "score": 0.80},
+            {"track_id": "t4", "title": "B3", "artist": "Y", "score": 0.70},
+        ]), headers=h).json()["id"]
+        d = c.post("/history", json=mk("charlie", 2, [
+            {"track_id": "t5", "title": "C", "artist": "Z", "score": 0.30},
+            {"track_id": "t6", "title": "C2", "artist": "Z", "score": 0.20},
+        ]), headers=h).json()["id"]
+
+        # default response includes starred=False
+        items = c.get("/history", headers=h).json()["items"]
+        assert all(it["starred"] is False for it in items)
+
+        # star via PATCH
+        pr = c.patch(f"/history/{b}", json={"starred": True}, headers=h)
+        assert pr.status_code == 200, pr.text
+        assert pr.json()["starred"] is True
+
+        # starred filter
+        sr = c.get("/history?starred=true", headers=h).json()
+        assert sr["total"] == 1
+        assert sr["items"][0]["id"] == b
+        assert sr["items"][0]["starred"] is True
+
+        # sort=results (count desc): bravo(3), charlie(2), alpha(1)
+        rs = c.get("/history?sort=results", headers=h).json()
+        assert [it["id"] for it in rs["items"]] == [b, d, a]
+
+        # sort=name asc: alpha, bravo, charlie
+        ns = c.get("/history?sort=name", headers=h).json()
+        assert [it["name"] for it in ns["items"]] == ["alpha", "bravo", "charlie"]
+
+        # sort=top_score desc: bravo(0.99), alpha(0.50), charlie(0.30)
+        ts = c.get("/history?sort=top_score", headers=h).json()
+        assert [it["id"] for it in ts["items"]] == [b, a, d]
+
+        # invalid sort rejected
+        assert c.get("/history?sort=bogus", headers=h).status_code == 422
+
+        # unstar
+        up = c.patch(f"/history/{b}", json={"starred": False}, headers=h)
+        assert up.json()["starred"] is False
+        assert c.get("/history?starred=true", headers=h).json()["total"] == 0
