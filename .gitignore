@@ -41,3 +41,4 @@ data/seat_limits.jsonl
 data/invite_domains.jsonl
 data/mfa_lockout.jsonl
 data/pat_ip_history.jsonl
+data/mfa_session_epoch.json
