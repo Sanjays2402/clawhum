@@ -35,3 +35,5 @@ models/
 .vscode/
 data/usage.jsonl
 data/webhook_allowlist.jsonl
+data/sessions.jsonl
+data/session_policy.jsonl

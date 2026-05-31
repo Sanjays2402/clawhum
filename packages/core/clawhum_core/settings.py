@@ -95,6 +95,8 @@ class Settings(BaseSettings):
         ),
     )
     ip_allowlist_path: Path = Path("./data/ip_allowlist.jsonl")
+    sessions_path: Path = Path("./data/sessions.jsonl")
+    session_policy_path: Path = Path("./data/session_policy.jsonl")
     ip_allowlist_enabled: bool = Field(
         default=True,
         description=(

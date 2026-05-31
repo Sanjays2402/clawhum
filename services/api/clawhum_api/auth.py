@@ -7,7 +7,7 @@ from fastapi import Header, HTTPException, Request, status
 from clawhum_core.settings import get_settings
 
 from .api_keys import ANON_TENANT_ID, DEV_TENANT_ID, ROLES, SCOPES, scopes_allowed_for_roles, get_registry
-from . import ip_allowlist, pat_store
+from . import ip_allowlist, pat_store, sessions as session_store
 
 
 async def require_api_key(
@@ -45,6 +45,7 @@ async def require_api_key(
                 except Exception:
                     pass
                 _enforce_ip_allowlist(request)
+                _record_and_enforce_session(request, actor=f"pat:{pat.name}", actor_kind="pat")
                 return x_api_key
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid api key")
     request.state.api_key_name = key.name
@@ -52,6 +53,7 @@ async def require_api_key(
     request.state.api_key_scopes = scopes_allowed_for_roles(key.roles)
     request.state.tenant_id = key.tenant_id or ANON_TENANT_ID
     _enforce_ip_allowlist(request)
+    _record_and_enforce_session(request, actor=key.name, actor_kind="key")
     return x_api_key
 
 
@@ -143,6 +145,61 @@ def require_admin_with_mfa():
         return await mfa_dep(request, x_api_key=x_api_key, x_mfa_code=x_mfa_code)
 
     return _dep
+
+
+def _record_and_enforce_session(request: Request, *, actor: str, actor_kind: str) -> None:
+    """Touch the per-actor session row and reject if policy expired it.
+
+    Two failure modes are surfaced distinctly so SDKs can react:
+    an explicit revoke returns 401 with a ``session revoked`` detail,
+    and a policy timeout returns 401 with a ``session expired``
+    detail plus a ``Session-Expired-Reason`` header naming the bound
+    that fired. Both states require the caller to obtain a fresh
+    credential (or have an owner clear the revocation), mirroring
+    how every enterprise IdP behaves when a session cap fires.
+    """
+    tenant_id = getattr(request.state, "tenant_id", "") or ""
+    if not tenant_id:
+        return
+    headers = {k.decode().lower(): v.decode() for k, v in request.headers.raw}
+    client_host = request.client.host if request.client else ""
+    ip = ip_allowlist.client_ip_from_request(headers, client_host) or client_host or ""
+    user_agent = headers.get("user-agent", "")
+    try:
+        sess = session_store.touch(
+            tenant_id=tenant_id,
+            actor=actor,
+            actor_kind=actor_kind,
+            ip=ip,
+            user_agent=user_agent,
+        )
+    except Exception:
+        # Session tracking failures must never lock a tenant out of
+        # their own data; the audit log captures the auth event
+        # independently.
+        return
+    request.state.session_id = sess.id
+    if sess.revoked:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="session revoked",
+            headers={"WWW-Authenticate": "Session"},
+        )
+    policy = session_store.get_policy(tenant_id)
+    expired, reason = session_store.is_expired(sess, policy)
+    if expired:
+        # Revoke the row so subsequent requests do not have to
+        # recompute the same decision and so the UI surfaces the
+        # expiry to the owner.
+        session_store.revoke(tenant_id, sess.id, reason=f"policy:{reason}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="session expired",
+            headers={
+                "WWW-Authenticate": "Session",
+                "Session-Expired-Reason": reason,
+            },
+        )
 
 
 def _enforce_ip_allowlist(request: Request) -> None:

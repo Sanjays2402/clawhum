@@ -265,6 +265,14 @@ def create(
     secret = new_secret()
     now = time.time()
     expires_at = resolve_expiry(requested_days=expires_in_days, now=now)
+    # Enforce the workspace session policy cap on PAT lifetime. Import
+    # inline to avoid a circular dependency: sessions does not import
+    # pat_store, and we deliberately keep that direction one-way.
+    try:
+        from . import sessions as _sessions
+        expires_at = _sessions.cap_pat_expiry(tenant_id, expires_at, now=now)
+    except Exception:
+        pass
     rec = {
         "id": _new_id(),
         "tenant_id": tenant_id,

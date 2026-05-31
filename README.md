@@ -4,6 +4,33 @@ Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local
 
 ![landing](docs/screenshots/landing.png)
 
+## Active sessions and force logout
+
+Every authenticated request creates an active session keyed by the tuple `(workspace, actor, IP, user-agent)`. Admins can list them at [`/settings/sessions`](http://127.0.0.1:7452/settings/sessions), revoke a single session, force log out every session for an actor (incident response for a suspected leaked key), or pin a workspace `idle_timeout_minutes`, `absolute_max_minutes`, and `max_pat_lifetime_minutes`. The auth layer enforces those caps on every request and clamps newly minted PAT lifetimes to the workspace cap so a careless operator cannot mint a token that outlives the contract window. Sessions are tenant-scoped at the query layer; the cross-tenant isolation and force-logout behaviour are covered by `tests/integration/test_sessions.py`. Mutating routes require the `admin` role plus a fresh `X-MFA-Code` once MFA is enrolled, and every policy change flows through the audit log.
+
+### Try it (sessions)
+
+```bash
+# Start the API with at least one workspace key.
+CLAWHUM_API_KEYS='ws_alpha:alpha-admin:9999:admin:alpha' uv run clawhum-api
+
+# In another shell, hit any authenticated route so a session is created.
+curl -s -H "X-API-Key: alpha-admin" http://127.0.0.1:7451/me >/dev/null
+
+# List active sessions for the workspace.
+curl -s -H "X-API-Key: alpha-admin" http://127.0.0.1:7451/sessions | jq '.items'
+
+# Pin a 60-minute PAT lifetime cap for the whole workspace.
+curl -s -X PUT -H "X-API-Key: alpha-admin" -H 'Content-Type: application/json' \
+  -d '{"idle_timeout_minutes":0,"absolute_max_minutes":0,"max_pat_lifetime_minutes":60}' \
+  http://127.0.0.1:7451/sessions/policy | jq
+
+# Force log out every session for the suspected actor.
+curl -s -X POST -H "X-API-Key: alpha-admin" -H 'Content-Type: application/json' \
+  -d '{"actor":"alpha","reason":"suspected leak"}' \
+  http://127.0.0.1:7451/sessions/revoke-all | jq
+```
+
 ## What it does
 
 Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile`/`librosa`, and runs it through a DSP pre-processing chain (butterworth biquad band-pass, pre-emphasis at 0.97, optional VAD trim). The cleaned signal is segmented into 6 s windows and embedded with CLAP (`laion/clap-htsat-unfused`) when ML extras are installed, or with a deterministic MFCC + chroma + spectral-contrast hash embedder as fallback. Embeddings are searched against a FAISS HNSW index (or a NumPy brute-force index on Apple Silicon where `faiss-cpu` is unavailable) and reranked by tempo proximity. Results stream back as scored track candidates with previews and artwork. A Prometheus `/metrics` endpoint and structured logs expose request volume, match counts, and index size.
