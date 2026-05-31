@@ -35,6 +35,10 @@ const nextConfig = {
       { source: "/api/keys/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/keys/:id` },
       { source: "/api/ip-allowlist", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/ip-allowlist` },
       { source: "/api/ip-allowlist/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/ip-allowlist/:id` },
+      { source: "/api/mfa", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/mfa` },
+      { source: "/api/mfa/status", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/mfa/status` },
+      { source: "/api/mfa/enroll", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/mfa/enroll` },
+      { source: "/api/mfa/verify", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/mfa/verify` },
       { source: "/api/v1/privacy/export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/export` },
       { source: "/api/v1/privacy/me", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/me` },
       // Stable v1 public API: forward everything under /api/v1/* to the

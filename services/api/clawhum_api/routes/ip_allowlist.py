@@ -11,7 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from ..auth import require_roles
+from ..auth import require_mfa, require_roles
 from ..tenant import current_tenant
 from .. import ip_allowlist
 
@@ -64,7 +64,7 @@ async def list_rules(request: Request, tenant_id: str = Depends(current_tenant))
     "",
     response_model=RuleOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_roles("admin"))],
+    dependencies=[Depends(require_roles("admin")), Depends(require_mfa())],
 )
 async def create_rule(body: RuleCreate, tenant_id: str = Depends(current_tenant)) -> RuleOut:
     try:
@@ -76,7 +76,7 @@ async def create_rule(body: RuleCreate, tenant_id: str = Depends(current_tenant)
 
 @router.delete(
     "/{rule_id}",
-    dependencies=[Depends(require_roles("admin"))],
+    dependencies=[Depends(require_roles("admin")), Depends(require_mfa())],
 )
 async def delete_rule(rule_id: str, request: Request, tenant_id: str = Depends(current_tenant)):
     from ..dry_run import is_dry_run, preview

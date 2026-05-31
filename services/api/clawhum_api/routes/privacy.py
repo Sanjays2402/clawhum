@@ -22,7 +22,7 @@ from clawhum_library.feedback import read_feedback
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse
 
-from ..auth import require_api_key, require_roles
+from ..auth import require_api_key, require_mfa, require_roles
 from ..privacy import actor_id_for, collect_events, redact_actor, redact_tenant_feedback
 from ..tenant import current_tenant_id, scope_rows
 
@@ -65,7 +65,7 @@ async def export_my_data(
     }
 
 
-@router.delete("/me", dependencies=[Depends(require_roles("admin"))])
+@router.delete("/me", dependencies=[Depends(require_roles("admin")), Depends(require_mfa())])
 async def delete_my_data(
     request: Request,
     x_api_key: str = Header(default=""),

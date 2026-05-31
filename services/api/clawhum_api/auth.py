@@ -80,6 +80,30 @@ def require_roles(*roles: str):
     return _dep
 
 
+def require_admin_with_mfa():
+    """Compose ``require_roles('admin')`` with ``require_mfa()``.
+
+    Use this on destructive admin endpoints (revoking sibling keys,
+    deleting IP allowlist rules, hard-deleting workspace data,
+    rotating webhooks). The role check returns 403 to non-admins;
+    the MFA check returns 401 with WWW-Authenticate: MFA when the
+    caller has enrolled but did not supply X-MFA-Code, so clients can
+    render the step-up prompt without guessing why the call failed.
+    """
+    role_dep = require_roles("admin")
+    mfa_dep = require_mfa()
+
+    async def _dep(
+        request: Request,
+        x_api_key: str = Header(default=""),
+        x_mfa_code: str = Header(default=""),
+    ) -> str:
+        await role_dep(request, x_api_key=x_api_key)
+        return await mfa_dep(request, x_api_key=x_api_key, x_mfa_code=x_mfa_code)
+
+    return _dep
+
+
 def _enforce_ip_allowlist(request: Request) -> None:
     """Reject the request when the caller's IP is outside the tenant rules.
 
@@ -111,6 +135,54 @@ def _normalise(roles: Iterable[str]) -> frozenset[str]:
     if unknown:
         raise ValueError(f"unknown role(s): {sorted(unknown)}")
     return out
+
+
+def require_mfa():
+    """Build a dependency that step-up authenticates the caller for
+    destructive admin actions when MFA has been enrolled for them.
+
+    Behaviour:
+      * Authenticates the request first (reuses require_api_key so the
+        usual 401 / IP allowlist rules apply).
+      * If the global toggle ``mfa_required_for_admin`` is off, passes.
+      * If the actor has not enrolled MFA, passes (adoption is per-actor
+        and the dependency must not lock anyone out before they enrol).
+      * If the actor has enrolled, requires a valid ``X-MFA-Code`` (TOTP
+        or one-shot recovery code). Missing code returns 401 with
+        ``WWW-Authenticate: MFA`` so a client can render a step-up prompt.
+        Bad code returns 403 so brute force attempts are distinguishable
+        in the audit log.
+    """
+
+    async def _dep(
+        request: Request,
+        x_api_key: str = Header(default=""),
+        x_mfa_code: str = Header(default=""),
+    ) -> str:
+        from . import mfa  # deferred to avoid circular import at package load
+        await require_api_key(request, x_api_key=x_api_key)
+        settings = get_settings()
+        if not settings.mfa_required_for_admin:
+            return x_api_key or "dev"
+        actor_id = mfa.actor_id_for(x_api_key)
+        if not mfa.is_required(actor_id):
+            request.state.mfa_used = False
+            return x_api_key or "dev"
+        if not x_mfa_code:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="mfa code required",
+                headers={"WWW-Authenticate": "MFA"},
+            )
+        if not mfa.verify(actor_id, x_mfa_code):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="invalid mfa code",
+            )
+        request.state.mfa_used = True
+        return x_api_key or "dev"
+
+    return _dep
 
 
 def require_mfa():

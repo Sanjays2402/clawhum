@@ -32,6 +32,8 @@ from .routes import activity as activity_routes
 from .routes import collections as collections_routes
 from .routes import keys as keys_routes
 from .routes import ip_allowlist as ip_allowlist_routes
+from .routes import mfa as mfa_routes
+from .routes import mfa as mfa_routes
 from .state import AppState
 from .tenant import TenantScopeMiddleware
 from .usage import UsageRecorderMiddleware
@@ -118,6 +120,8 @@ def create_app() -> FastAPI:
     app.include_router(collections_routes.router)
     app.include_router(keys_routes.router)
     app.include_router(ip_allowlist_routes.router)
+    app.include_router(mfa_routes.router)
+    app.include_router(mfa_routes.router)
     # Stable, version-pinned public API surface. The same routers are
     # mounted again under /v1 so integrators can target a URL we will not
     # break, while existing unversioned routes stay alive for the web UI.
@@ -132,6 +136,8 @@ def create_app() -> FastAPI:
     app.include_router(webhooks_routes.router, prefix="/v1")
     app.include_router(keys_routes.router, prefix="/v1")
     app.include_router(ip_allowlist_routes.router, prefix="/v1")
+    app.include_router(mfa_routes.router, prefix="/v1")
+    app.include_router(mfa_routes.router, prefix="/v1")
     app.include_router(library_routes.router, prefix="/v1")
     app.include_router(metrics_router)
     register_app_collector(app)

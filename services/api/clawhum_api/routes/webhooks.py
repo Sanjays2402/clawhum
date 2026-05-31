@@ -33,7 +33,7 @@ from clawhum_core.settings import get_settings
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, HttpUrl
 
-from ..auth import require_api_key, require_roles
+from ..auth import require_api_key, require_mfa, require_roles
 from ..tenant import current_tenant
 from .. import webhook_safety
 
@@ -245,7 +245,7 @@ async def list_webhooks(
 
 @router.delete(
     "/webhooks/{hook_id}",
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(require_mfa())],
 )
 async def delete_webhook(
     hook_id: str,
@@ -622,7 +622,7 @@ async def get_destination_allowlist(
 @router.put(
     "/webhooks/destination-allowlist",
     response_model=AllowlistResponse,
-    dependencies=[Depends(require_roles("admin"))],
+    dependencies=[Depends(require_roles("admin")), Depends(require_mfa())],
 )
 async def put_destination_allowlist(
     body: AllowlistBody,

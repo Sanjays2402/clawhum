@@ -35,6 +35,17 @@ class Settings(BaseSettings):
     usage_path: Path = Path("./data/usage.jsonl")
     webhooks_path: Path = Path("./data/webhooks.jsonl")
     pat_path: Path = Path("./data/personal_access_tokens.jsonl")
+    mfa_path: Path = Path("./data/mfa.jsonl")
+    mfa_required_for_admin: bool = Field(
+        default=True,
+        description=(
+            "When true, an admin actor that has verified MFA must present "
+            "a fresh code in X-MFA-Code for destructive endpoints (key "
+            "revoke, data delete, IP allowlist mutate, webhook delete). "
+            "Actors who have never enrolled are not blocked, so adoption "
+            "is opt-in per actor while enforcement is global."
+        ),
+    )
     pat_max_ttl_days: int = Field(
         default=365,
         description=(

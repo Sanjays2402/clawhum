@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from .. import pat_store
 from ..api_keys import ROLES
-from ..auth import require_roles
+from ..auth import require_mfa, require_roles
 from ..tenant import current_tenant_id
 from clawhum_core.settings import get_settings
 
@@ -130,7 +130,7 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
 
 @router.delete(
     "/keys/{key_id}",
-    dependencies=[Depends(require_roles("writer"))],
+    dependencies=[Depends(require_roles("writer")), Depends(require_mfa())],
 )
 async def revoke_key(key_id: str, request: Request) -> dict[str, Any]:
     tenant = current_tenant_id(request)

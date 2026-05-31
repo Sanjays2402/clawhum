@@ -32,6 +32,28 @@ curl -X DELETE http://127.0.0.1:7451/v1/keys/abc123 \
 
 The web UI lives at `/settings/security` once `pnpm dev` is running.
 
+## Step-up MFA for admin actions
+
+Destructive admin endpoints (revoke API key, delete user data, mutate the IP allowlist, delete a webhook) accept an optional `X-MFA-Code` header. Any actor (API key or PAT) can enroll a TOTP authenticator from the settings UI; once verified, the gate engages for that actor and the same endpoints reject calls without a fresh six-digit code with `401 WWW-Authenticate: MFA`. A bad code returns `403`. Recovery codes are single-use and shown exactly once at verification time.
+
+The gate is per-actor by design: an actor that has never enrolled is not blocked, so existing CI keys keep working until you opt them in. Disabling MFA requires a current TOTP or recovery code, so a stolen API key alone cannot turn the second factor off. Set `CLAWHUM_MFA_REQUIRED_FOR_ADMIN=false` to disable enforcement globally (not recommended for production).
+
+```bash
+# Enroll a fresh secret. Returns secret + otpauth URI; show in your authenticator.
+curl -X POST http://127.0.0.1:7451/mfa/enroll -H "X-API-Key: $CLAWHUM_KEY"
+
+# Verify the first code your authenticator shows. Returns 10 recovery codes ONCE.
+curl -X POST http://127.0.0.1:7451/mfa/verify \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "Content-Type: application/json" \
+  -d '{"code":"123456"}'
+
+# After enrollment, destructive admin calls must include X-MFA-Code:
+curl -X DELETE http://127.0.0.1:7451/v1/keys/abc123 \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "X-MFA-Code: 654321"
+```
+
+The web UI lives at `/settings/security` once `pnpm dev` is running.
+
 ## Webhook destination policy (SSRF protection)
 
 Outbound webhook deliveries are validated against a workspace destination policy at both registration time and immediately before every delivery attempt. Hosts that resolve to loopback, link local (including the cloud metadata range `169.254.169.254`), multicast, or RFC1918 addresses are refused; cloud metadata hosts stay denied even if a workspace tries to allowlist them. The recheck on every delivery defeats DNS rebinding where a previously valid host starts pointing at an internal IP after registration.
