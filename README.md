@@ -56,6 +56,34 @@ curl -s -H "x-api-key: alpha-admin" http://127.0.0.1:7451/me | jq
 curl -s -H "x-api-key: alpha-admin" 'http://127.0.0.1:7451/audit?limit=6' | jq '.items'
 ```
 
+## Workspace data residency
+
+EU and APAC enterprise contracts require a hard guarantee that customer data never leaves a named region. Each workspace can pin itself to `us`, `eu`, `apac`, or `unset`. `GET /residency` returns the active pin plus the region this node is deployed in (`CLAWHUM_REGION`) and the master enforcement switch (`CLAWHUM_RESIDENCY_ENFORCEMENT`). `PUT /residency` upserts the pin. Reads require the `admin` role; writes also require a fresh `X-MFA-Code` once the actor has enrolled TOTP. Every pin change flows through the audit log with a before/after diff. The `ResidencyMiddleware` rejects mutating methods (POST/PUT/PATCH/DELETE) with HTTP 451 when the workspace region does not match the node region, naming both regions in the body so the client can route to the correct endpoint. Read traffic (GET/HEAD/OPTIONS) is always allowed cross region so dashboards and audit log viewers keep working from anywhere. Every response carries `X-Data-Region` (the node's region) and, when the workspace has a pin, `X-Workspace-Region`. Cross-tenant isolation is covered by `tests/integration/test_residency.py`, which proves a pinned EU workspace cannot mutate against a US node, that a sibling tenant with no pin is unaffected, and that the global enforcement switch fails open. The workspace UI lives at `http://127.0.0.1:7452/settings/residency`.
+
+### Try it (data residency)
+
+```bash
+# Start a US node with at least one admin key.
+CLAWHUM_REGION=us \
+CLAWHUM_API_KEYS='europa:eu-admin:0:admin|writer:europa' \
+  uv run --extra api clawhum-api
+
+# Pin the workspace to EU and turn enforcement on (admin + MFA).
+curl -s -X PUT http://127.0.0.1:7451/residency \
+  -H 'x-api-key: eu-admin' \
+  -H 'x-mfa-code: 000000' \
+  -H 'content-type: application/json' \
+  -d '{"region":"eu","enforce":true}' | jq
+
+# Reads still work cross region.
+curl -i http://127.0.0.1:7451/me -H 'x-api-key: eu-admin' | head -20
+
+# Mutating calls are rejected with 451 from a US node.
+curl -i -X POST http://127.0.0.1:7451/feedback \
+  -H 'x-api-key: eu-admin' -H 'content-type: application/json' \
+  -d '{"track_id":"t1","rating":5}' | head -20
+```
+
 ## Workspace quota plan
 
 Per-key rate limits cap individual credentials. Enterprise contracts also need a ceiling on aggregate traffic: a workspace can mint many keys and silently outgrow its plan unless the server enforces a tenant wide cap. `GET /quotas` returns the active plan plus a catalog of presets (`free`, `team`, `business`, `enterprise`, `custom`) and `PUT /quotas` upserts it. Each plan defines an `rpm_ceiling` and a `daily_quota` (both `0` mean unlimited so existing tenants are unaffected). The rate-limit middleware checks both ceilings on every request alongside the per-key bucket; the tightest binding limit is advertised back via standard headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, `X-RateLimit-Scope` (`key`, `workspace_minute`, `workspace_day`), `X-RateLimit-Plan`, `X-RateLimit-Limit-Day`, `X-RateLimit-Remaining-Day`, plus `Retry-After` on 429. Reads require the `admin` role; writes also require a fresh `X-MFA-Code` once the actor has enrolled TOTP. Every plan change flows through the audit log with a before/after diff. Cross-tenant isolation is covered by `tests/integration/test_workspace_quota.py`, which proves the ceiling fires even when each individual key in the workspace is well under its own RPM, and that a sibling tenant is unaffected when one tenant is throttled. The workspace UI lives at `http://127.0.0.1:7452/settings/quotas`.

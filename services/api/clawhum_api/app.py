@@ -14,33 +14,35 @@ from .audit import AuditLogMiddleware
 from .metrics import PrometheusMiddleware, register_app_collector
 from .metrics import router as metrics_router
 from .middleware import RequestIDMiddleware, SecurityHeadersMiddleware, SimpleRateLimit
+from .residency import ResidencyMiddleware
+from .routes import activity as activity_routes
+from .routes import audit as audit_routes
 from .routes import batch as batch_routes
+from .routes import collections as collections_routes
 from .routes import feedback as feedback_routes
 from .routes import health as health_routes
+from .routes import history as history_routes
+from .routes import history_views as history_views_routes
+from .routes import ip_allowlist as ip_allowlist_routes
+from .routes import keys as keys_routes
 from .routes import library as library_routes
 from .routes import match as match_routes
 from .routes import me as me_routes
+from .routes import members as members_routes
+from .routes import mfa as mfa_routes
 from .routes import pitch as pitch_routes
 from .routes import privacy as privacy_routes
-from .routes import history as history_routes
-from .routes import history_views as history_views_routes
-from .routes import share as share_routes
-from .routes import spotify as spotify_routes
-from .routes import usage as usage_routes
-from .routes import webhooks as webhooks_routes
-from .routes import activity as activity_routes
-from .routes import collections as collections_routes
-from .routes import keys as keys_routes
-from .routes import ip_allowlist as ip_allowlist_routes
-from .routes import mfa as mfa_routes
-from .routes import members as members_routes
-from .routes import sso as sso_routes
-from .routes import retention as retention_routes
-from .routes import audit as audit_routes
 from .routes import quotas as quotas_routes
+from .routes import residency as residency_routes
+from .routes import retention as retention_routes
 from .routes import scim as scim_routes
 from .routes import scim_admin as scim_admin_routes
 from .routes import sessions as sessions_routes
+from .routes import share as share_routes
+from .routes import spotify as spotify_routes
+from .routes import sso as sso_routes
+from .routes import usage as usage_routes
+from .routes import webhooks as webhooks_routes
 from .state import AppState
 from .tenant import TenantScopeMiddleware
 from .usage import UsageRecorderMiddleware
@@ -62,6 +64,8 @@ async def _lifespan(app: FastAPI):
     _sso_store.reset_cache()
     from . import quota_store as _quota_store
     _quota_store.reset_cache()
+    from . import residency_store as _residency_store
+    _residency_store.reset_cache()
     app.state.clawhum = AppState.boot(prefer_clap=False)  # default to fallback at startup; reindex can flip
     log.info("clawhum_boot", version=__version__,
              tracks=len(app.state.clawhum.tracks),
@@ -81,6 +85,14 @@ def create_app() -> FastAPI:
     app.add_middleware(UsageRecorderMiddleware)
     app.add_middleware(TenantScopeMiddleware)
     app.add_middleware(SimpleRateLimit, max_per_minute=settings.rate_limit_per_minute)
+    # Residency runs outside the rate limiter so a 451 response is not
+    # also counted against the workspace quota; it sits inside RequestID
+    # so structured logs still carry the request id for the rejection.
+    app.add_middleware(
+        ResidencyMiddleware,
+        node_region=settings.region,
+        enforcement=settings.residency_enforcement,
+    )
     # Prometheus middleware sits outside rate limiting so 429 responses
     # are still counted, but inside RequestID so the matched route is
     # resolved by the time we record the sample.
@@ -94,7 +106,7 @@ def create_app() -> FastAPI:
         allow_methods=settings.cors_methods_list(),
         allow_headers=settings.cors_headers_list(),
         allow_credentials=cors_allow_credentials,
-        expose_headers=["X-Request-ID", "traceparent", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-RateLimit-Scope", "X-RateLimit-Plan", "X-RateLimit-Limit-Day", "X-RateLimit-Remaining-Day", "Retry-After"],
+        expose_headers=["X-Request-ID", "traceparent", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-RateLimit-Scope", "X-RateLimit-Plan", "X-RateLimit-Limit-Day", "X-RateLimit-Remaining-Day", "X-Data-Region", "X-Workspace-Region", "Retry-After"],
         max_age=600,
     )
     # Security headers run outermost so they apply to every response,
@@ -137,6 +149,7 @@ def create_app() -> FastAPI:
     app.include_router(retention_routes.router)
     app.include_router(audit_routes.router)
     app.include_router(quotas_routes.router)
+    app.include_router(residency_routes.router)
     app.include_router(scim_routes.router)
     app.include_router(scim_admin_routes.router)
     app.include_router(sessions_routes.router)
@@ -160,6 +173,7 @@ def create_app() -> FastAPI:
     app.include_router(retention_routes.router, prefix="/v1")
     app.include_router(audit_routes.router, prefix="/v1")
     app.include_router(quotas_routes.router, prefix="/v1")
+    app.include_router(residency_routes.router, prefix="/v1")
     app.include_router(library_routes.router, prefix="/v1")
     app.include_router(scim_routes.router, prefix="/v1")
     app.include_router(scim_admin_routes.router, prefix="/v1")

@@ -37,6 +37,26 @@ class Settings(BaseSettings):
     pat_path: Path = Path("./data/personal_access_tokens.jsonl")
     mfa_path: Path = Path("./data/mfa.jsonl")
     quota_path: Path = Path("./data/quotas.jsonl")
+    residency_path: Path = Path("./data/residency.jsonl")
+    region: str = Field(
+        default="unset",
+        description=(
+            "Region this API node is deployed in. One of: us, eu, apac, "
+            "unset. When set to a real region, mutating requests are "
+            "rejected with 451 if the workspace is pinned to a different "
+            "region and enforcement is on. 'unset' disables the check "
+            "globally so single region installs are unaffected."
+        ),
+    )
+    residency_enforcement: bool = Field(
+        default=True,
+        description=(
+            "Master switch for the residency middleware. When false the "
+            "node still advertises X-Data-Region on responses but never "
+            "blocks. Per tenant 'enforce' must also be true for a 451 "
+            "to fire, so adoption stays opt in per workspace."
+        ),
+    )
     mfa_required_for_admin: bool = Field(
         default=True,
         description=(
