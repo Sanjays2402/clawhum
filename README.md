@@ -10,9 +10,20 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
-## Try it (developers, v1 API)
+## Try it (collections of saved matches)
 
-`http://127.0.0.1:7452/developers` is the integrator landing page: every public endpoint, copy-paste curl/python/JS pre-filled with your stored API key, and a live `try /v1/me` button that calls the backend through the same proxy a real client would use. The same FastAPI routers (match, batch, share, history, usage, me, webhooks, library stats) are now mounted twice, once at their original path for the in-app UI and once under `/v1` as the stable public surface we promise not to break. The web app forwards `/api/v1/*` straight through to the backend `/v1/*`.
+`http://127.0.0.1:7452/collections` lets you bundle saved history rows into a named, shareable set, like a tiny playlist of your top humming guesses. Pick rows from a checkbox list of your latest 50 saved matches, give the collection a title and optional note, and one click creates a public URL at `/c/<id>` that anyone can open in incognito without an API key. The owner-only list view supports copy-link, open in a new tab, and delete. Storage is tenant-scoped JSONL (same pattern as `/share` and `/webhooks`), public reads are unauthenticated, writes require your API key, and the route is also mounted on `/v1/collections` as part of the stable public surface.
+
+```bash
+# create a collection from two history rows
+curl -s -X POST -H "X-API-Key: $CLAWHUM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  http://127.0.0.1:7451/v1/collections \
+  -d '{"title":"top humming guesses","note":"weekend picks","items":[{"label":"first try","results":[{"track_id":"t1","title":"Take On Me","artist":"a-ha","score":0.91,"segment_index":0}],"query_id":"q1","elapsed_ms":42}]}'
+# the response.url_path is your public link: /c/<id>
+```
+
+## Try it (developers, v1 API): every public endpoint, copy-paste curl/python/JS pre-filled with your stored API key, and a live `try /v1/me` button that calls the backend through the same proxy a real client would use. The same FastAPI routers (match, batch, share, history, usage, me, webhooks, library stats) are now mounted twice, once at their original path for the in-app UI and once under `/v1` as the stable public surface we promise not to break. The web app forwards `/api/v1/*` straight through to the backend `/v1/*`.
 
 ```bash
 # version-pinned match endpoint, same shape as /match

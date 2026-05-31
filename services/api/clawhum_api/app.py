@@ -28,6 +28,7 @@ from .routes import spotify as spotify_routes
 from .routes import usage as usage_routes
 from .routes import webhooks as webhooks_routes
 from .routes import activity as activity_routes
+from .routes import collections as collections_routes
 from .state import AppState
 from .tenant import TenantScopeMiddleware
 from .usage import UsageRecorderMiddleware
@@ -108,12 +109,14 @@ def create_app() -> FastAPI:
     app.include_router(usage_routes.router)
     app.include_router(webhooks_routes.router)
     app.include_router(activity_routes.router)
+    app.include_router(collections_routes.router)
     # Stable, version-pinned public API surface. The same routers are
     # mounted again under /v1 so integrators can target a URL we will not
     # break, while existing unversioned routes stay alive for the web UI.
     app.include_router(match_routes.router, prefix="/v1")
     app.include_router(batch_routes.router, prefix="/v1")
     app.include_router(share_routes.router, prefix="/v1")
+    app.include_router(collections_routes.router, prefix="/v1")
     app.include_router(history_routes.router, prefix="/v1")
     app.include_router(me_routes.router, prefix="/v1")
     app.include_router(usage_routes.router, prefix="/v1")

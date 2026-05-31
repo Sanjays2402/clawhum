@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     library_path: Path = Path("./data/audio")
     feedback_path: Path = Path("./data/feedback.jsonl")
     shares_path: Path = Path("./data/shares.jsonl")
+    collections_path: Path = Path("./data/collections.jsonl")
     history_path: Path = Path("./data/history.jsonl")
     usage_path: Path = Path("./data/usage.jsonl")
     webhooks_path: Path = Path("./data/webhooks.jsonl")

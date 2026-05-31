@@ -21,6 +21,7 @@ const TABS: { href: string; label: string; hint: string }[] = [
   { href: "/settings", label: "settings", hint: "api key + usage" },
   { href: "/webhooks", label: "webhooks", hint: "outbound events" },
   { href: "/shares", label: "shares", hint: "public links" },
+  { href: "/collections", label: "collections", hint: "grouped result sets" },
   { href: "/developers", label: "developers", hint: "v1 api + curl" },
 ];
 
