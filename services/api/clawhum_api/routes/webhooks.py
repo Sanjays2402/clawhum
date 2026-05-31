@@ -366,6 +366,89 @@ async def list_webhooks(
     return WebhookListResponse(webhooks=items)
 
 
+class EgressIpsResponse(BaseModel):
+    """Source addresses this deployment dispatches webhooks from.
+
+    Returned by ``GET /v1/webhooks/egress-ips`` so an enterprise
+    customer's network team can pin a firewall allowlist instead of
+    asking support for the list. ``pinned`` is false when the operator
+    has not configured ``CLAWHUM_WEBHOOK_EGRESS_IPS``; in that case
+    SecOps should treat the egress as dynamic (e.g. behind a NAT or
+    serverless platform) and either ask the operator to pin it or
+    allow the receiver to live behind a public address.
+    """
+
+    pinned: bool
+    addresses: list[str]
+    updated_at: str
+    note: str
+
+
+def _parse_egress_list(raw: str) -> list[str]:
+    """Validate and normalise CLAWHUM_WEBHOOK_EGRESS_IPS.
+
+    Accepts comma or whitespace separated IPv4/IPv6 addresses and CIDRs.
+    Invalid entries are dropped silently rather than 500ing the endpoint,
+    so a typo in ops config does not take the disclosure offline; the
+    valid subset is still useful and the operator sees the discrepancy
+    against what they configured.
+    """
+    import ipaddress
+    out: list[str] = []
+    seen: set[str] = set()
+    for chunk in (raw or "").replace(",", " ").split():
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            if "/" in chunk:
+                net = ipaddress.ip_network(chunk, strict=False)
+                norm = str(net)
+            else:
+                addr = ipaddress.ip_address(chunk)
+                norm = str(addr)
+        except ValueError:
+            continue
+        if norm in seen:
+            continue
+        seen.add(norm)
+        out.append(norm)
+    return out
+
+
+@router.get(
+    "/webhooks/egress-ips",
+    response_model=EgressIpsResponse,
+    dependencies=[Depends(require_api_key)],
+)
+async def webhook_egress_ips() -> EgressIpsResponse:
+    """Disclose the outbound source IPs this deployment uses for webhooks.
+
+    Auth required (any valid API key or PAT) so the list is not handed
+    to anonymous scanners, but no role gate: every member of every
+    tenant needs to be able to share it with their own network team.
+    """
+    settings = get_settings()
+    addrs = _parse_egress_list(settings.webhook_egress_ips)
+    pinned = bool(addrs)
+    note = (
+        "Add these source addresses to your firewall allowlist for the"
+        " destination URLs you register with Clawhum webhooks."
+        if pinned
+        else (
+            "This deployment has not pinned its egress addresses. Ask the"
+            " operator to set CLAWHUM_WEBHOOK_EGRESS_IPS, or accept webhook"
+            " delivery from a dynamic source range."
+        )
+    )
+    return EgressIpsResponse(
+        pinned=pinned,
+        addresses=addrs,
+        updated_at=settings.webhook_egress_updated_at or "",
+        note=note,
+    )
+
+
 @router.delete(
     "/webhooks/{hook_id}",
     dependencies=[Depends(require_api_key), Depends(require_mfa())],

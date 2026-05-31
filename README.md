@@ -2,7 +2,41 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Force PAT rotation (max-age policy)
+
+Workspace admins can set `max_pat_age_minutes` in the session policy to require every personal access token to be rotated at least every N minutes. Any PAT whose `created_at` exceeds that age is rejected at auth with `HTTP 401 pat_aged_out`, even when its own `expires_at` would still permit it. Rotating the token (`POST /keys/{id}/rotate`) refreshes `created_at` so the new secret satisfies the policy. The `/settings/keys` console badges aging tokens (`rotate soon`, `aged out`) and the rule lives in `tests/integration/test_sessions.py::test_max_pat_age_policy_rejects_aged_tokens`. Same control SOC2 / ISO 27001 auditors expect for credential rotation.
+
+### Try it (force PAT rotation)
+
+```bash
+# Require every PAT to be rotated at least once per 90 days.
+curl -X PUT http://127.0.0.1:8000/sessions/policy \
+  -H "X-API-Key: sk_admin" -H "Content-Type: application/json" \
+  -d '{"idle_timeout_minutes":0,"absolute_max_minutes":0,"max_pat_lifetime_minutes":0,"max_pat_age_minutes":129600}'
+
+# Aged PATs return 401 with detail starting with "pat_aged_out".
+curl -i http://127.0.0.1:8000/me -H "X-API-Key: pat_<aged_secret>"
+```
+
 ![landing](docs/screenshots/landing.png)
+
+## Webhook egress IP disclosure
+
+Enterprise procurement teams will not turn on outbound webhooks until their network group has pinned the source addresses in a corporate firewall. A new `GET /v1/webhooks/egress-ips` endpoint and a [`/settings/webhook-egress`](http://127.0.0.1:7452/settings/webhook-egress) page disclose exactly which IPv4/IPv6 addresses or CIDRs this deployment dispatches webhook deliveries from, along with an `updated_at` timestamp so SecOps can detect drift between their allowlist and what the deployment now claims to send. Operators pin the list by setting `CLAWHUM_WEBHOOK_EGRESS_IPS` (comma separated; typos are dropped rather than 500ing the endpoint) and `CLAWHUM_WEBHOOK_EGRESS_UPDATED_AT`. When the list is empty the response explicitly reports `pinned=false` with a note that the egress is dynamic, so the contract is unambiguous. Auth is required so anonymous scanners cannot harvest the list, but no role gate, because every member of every workspace needs to be able to share it with their own network team. Contract pinned by `tests/integration/test_webhook_egress_ips.py`.
+
+### Try it (egress IPs)
+
+```bash
+# View the disclosed source addresses for outbound webhook deliveries.
+curl -s -H "X-API-Key: $CLAWHUM_API_KEY" \
+  http://127.0.0.1:7451/v1/webhooks/egress-ips | jq
+# {
+#   "pinned": true,
+#   "addresses": ["203.0.113.10", "198.51.100.0/24"],
+#   "updated_at": "2026-05-30T18:00:00Z",
+#   "note": "Add these source addresses to your firewall allowlist..."
+# }
+```
 
 ## Data retention policy UI
 

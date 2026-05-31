@@ -540,6 +540,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Webhook egress IPs (firewall allowlist disclosure) */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">webhook egress IPs</span>
+            <a
+              href="/settings/webhook-egress"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              view
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            source addresses this deployment uses when it dispatches webhooks to your receiver. share with your network team to pin a firewall allowlist instead of opening a support ticket.
+          </p>
+        </section>
+
         {/* Onboarding controls */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

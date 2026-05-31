@@ -176,6 +176,27 @@ class Settings(BaseSettings):
         ),
     )
     webhook_allowlist_path: Path = Path("./data/webhook_allowlist.jsonl")
+    webhook_egress_ips: str = Field(
+        default="",
+        description=(
+            "Comma separated source IPv4/IPv6 addresses or CIDRs from"
+            " which this deployment dispatches outbound webhooks. Surfaced"
+            " read only via GET /v1/webhooks/egress-ips so enterprise"
+            " customers can pin them in their corporate firewall without"
+            " filing a support ticket. Empty means the deployment has not"
+            " pinned its egress, e.g. it runs behind a dynamic NAT, and"
+            " the endpoint will say so explicitly."
+        ),
+    )
+    webhook_egress_updated_at: str = Field(
+        default="",
+        description=(
+            "ISO 8601 timestamp of the last operator change to"
+            " webhook_egress_ips. Returned alongside the list so SecOps"
+            " can detect drift between what they allowlisted and what"
+            " the deployment now claims to send from."
+        ),
+    )
     webhook_block_private_ips: bool = Field(
         default=True,
         description=(
