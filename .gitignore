@@ -42,3 +42,5 @@ data/invite_domains.jsonl
 data/mfa_lockout.jsonl
 data/pat_ip_history.jsonl
 data/mfa_session_epoch.json
+data/collections.jsonl
+data/workspace_closures.jsonl

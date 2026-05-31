@@ -7,6 +7,7 @@ from fastapi import Header, HTTPException, Request, status
 from clawhum_core.settings import get_settings
 
 from .api_keys import ANON_TENANT_ID, DEV_TENANT_ID, ROLES, SCOPES, scopes_allowed_for_roles, get_registry
+from . import closure as workspace_closure
 from . import ip_allowlist, pat_store, sessions as session_store, support_access
 
 
@@ -27,6 +28,7 @@ async def require_api_key(
         request.state.api_key_scopes = SCOPES
         request.state.tenant_id = DEV_TENANT_ID
         _enforce_ip_allowlist(request)
+        _enforce_workspace_closure(request)
         _enforce_support_actor(request)
         return "dev"
     key = registry.lookup(x_api_key)
@@ -117,6 +119,7 @@ async def require_api_key(
                     pass
                 _enforce_ip_allowlist(request)
                 _record_and_enforce_session(request, actor=f"pat:{pat.name}", actor_kind="pat")
+                _enforce_workspace_closure(request)
                 _enforce_support_actor(request)
                 return x_api_key
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid api key")
@@ -126,6 +129,7 @@ async def require_api_key(
     request.state.tenant_id = key.tenant_id or ANON_TENANT_ID
     _enforce_ip_allowlist(request)
     _record_and_enforce_session(request, actor=key.name, actor_kind="key")
+    _enforce_workspace_closure(request)
     _enforce_support_actor(request)
     return x_api_key
 
@@ -294,6 +298,42 @@ def _enforce_pat_ip_allowlist(request: Request, pat: pat_store.PAT) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"ip {client_ip} not in pat allowlist",
         )
+
+
+def _enforce_workspace_closure(request: Request) -> None:
+    """Reject mutating requests while the workspace is scheduled for
+    closure (HTTP 423), and reject all non-export requests once the
+    workspace has fully closed (HTTP 410).
+
+    Runs after tenant resolution so the decision is per-workspace.
+    Closure routes themselves stay reachable so an admin can always
+    cancel a scheduled closure, and the audit / privacy / me / mfa
+    surfaces stay reachable so the customer can finish exporting
+    data and rotate credentials right up to the finalize timestamp.
+    """
+    tenant_id = getattr(request.state, "tenant_id", "") or ""
+    if not tenant_id or tenant_id == ANON_TENANT_ID:
+        return
+    decision = workspace_closure.evaluate(
+        tenant_id=tenant_id,
+        method=request.method,
+        path=request.url.path or "",
+    )
+    if decision is None:
+        return
+    status_code, detail, body = decision
+    headers = {}
+    finalize_at = body.get("finalize_at")
+    if finalize_at is not None:
+        headers["X-Workspace-Finalize-At"] = str(finalize_at)
+    state = body.get("state") or ""
+    if state:
+        headers["X-Workspace-State"] = state
+    raise HTTPException(
+        status_code=status_code,
+        detail=detail,
+        headers=headers,
+    )
 
 
 def _enforce_support_actor(request: Request) -> None:

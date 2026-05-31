@@ -2,6 +2,33 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace closure / wind-down lifecycle
+
+GDPR Article 17 (right to erasure), CCPA §1798.105, and almost every enterprise MSA require a clearly defined account-closure pathway with a grace window for data extraction. Workspace admins can now schedule a closure with a bounded grace period (1 minute to 30 days, default 7 days) via `POST /workspace/closure`. While the closure is `scheduled`, the auth middleware rejects every mutating request to that workspace with `HTTP 423 Locked` and a structured `workspace_closing` detail plus `X-Workspace-State` and `X-Workspace-Finalize-At` headers so SDKs can route the customer to a "cancel or export now" runbook. Reads keep working so the customer can pull data out. Once the finalize timestamp elapses, the workspace transitions to `closed` and every non-export route returns `HTTP 410 Gone`; the closure status, audit log, privacy / export, MFA, and `/me` routes stay reachable so the customer can finish wind-down. The closure log is append-only JSONL (same pattern as legal_hold and SSO) so the timeline survives for auditors. Cancellation by another admin (with MFA step-up) immediately restores write access. Cross-tenant isolation: scheduling closure on tenant A has zero effect on tenant B. Pinned by `tests/integration/test_workspace_closure.py`.
+
+### Try it (workspace closure)
+
+```bash
+# schedule a closure with a 24h grace window (admin + MFA)
+curl -sS -X POST http://127.0.0.1:7451/workspace/closure \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"reason":"contract terminated","grace_seconds":86400}'
+
+# during the grace window, mutations are rejected
+curl -sS -i -X POST http://127.0.0.1:7451/collections \
+  -H 'X-API-Key: sk_admin' -d '{"title":"too late"}'
+# HTTP/1.1 423 Locked
+# X-Workspace-State: scheduled
+# X-Workspace-Finalize-At: 1780356440.0
+
+# cancel the closure (admin + MFA) to resume writes
+curl -sS -X POST http://127.0.0.1:7451/workspace/closure/<id>/cancel \
+  -H 'X-API-Key: sk_admin'
+
+# inspect the append-only closure timeline
+curl -sS http://127.0.0.1:7451/workspace/closure/history -H 'X-API-Key: sk_admin'
+```
+
 ## Per-workspace vendor support access grants
 
 Enterprise procurement keeps asking the same question: "when your support staff need to look at our data to debug an incident, how is that access authorised, scoped, time-boxed, and recorded?" Each workspace can now answer it from [`/settings/support-access`](http://127.0.0.1:7452/settings/support-access). A workspace owner grants a named clawhum support actor (identified by email) either `read` or `write` access for a bounded window (hard cap 7 days) with a stated reason that lands in the audit log. Inbound requests that carry `X-Support-Actor: <email>` are checked against the workspace's active grants at the auth layer: with no active grant the request is rejected HTTP 403 before any route runs, and the same support email cannot ride a grant from tenant A into tenant B. With an active grant, every mutating action is recorded in the tamper-evident audit chain with `support_actor` and `support_grant_id` fields stamped automatically by the audit middleware, giving the customer a defensible forensic trail for SOC2 CC6.1 and ISO 27001 A.9.2.3 reviews. Read grants restrict the support actor to safe HTTP methods; revocation takes effect on the next request. Mutations require the admin role plus a fresh MFA step-up. Cross-tenant isolation, RBAC, scope enforcement, revocation, and TTL cap are pinned by `tests/integration/test_support_access.py`.

@@ -25,6 +25,7 @@ from .routes import embed_origins as embed_origins_routes
 from .routes import security_contacts as security_contacts_routes
 from .routes import support_access as support_access_routes
 from .routes import legal_hold as legal_hold_routes
+from .routes import closure as closure_routes
 from .routes import feedback as feedback_routes
 from .routes import health as health_routes
 from .routes import history as history_routes
@@ -74,6 +75,8 @@ async def _lifespan(app: FastAPI):
     _security_contacts.reset_cache()
     from . import support_access as _support_access
     _support_access.reset_cache()
+    from . import closure as _workspace_closure
+    _workspace_closure.reset_cache()
     from . import scope_policy as _scope_policy
     _scope_policy.reset_cache()
     from . import sso_store as _sso_store
@@ -188,6 +191,7 @@ def create_app() -> FastAPI:
     app.include_router(security_contacts_routes.router)
     app.include_router(support_access_routes.router)
     app.include_router(legal_hold_routes.router)
+    app.include_router(closure_routes.router)
     # Stable, version-pinned public API surface. The same routers are
     # mounted again under /v1 so integrators can target a URL we will not
     # break, while existing unversioned routes stay alive for the web UI.
@@ -222,6 +226,7 @@ def create_app() -> FastAPI:
     app.include_router(security_contacts_routes.router, prefix="/v1")
     app.include_router(support_access_routes.router, prefix="/v1")
     app.include_router(legal_hold_routes.router, prefix="/v1")
+    app.include_router(closure_routes.router, prefix="/v1")
     app.include_router(metrics_router)
     register_app_collector(app)
     return app
