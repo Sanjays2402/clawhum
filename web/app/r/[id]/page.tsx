@@ -68,7 +68,7 @@ export async function generateMetadata(
     title,
     description: desc,
     openGraph: { title, description: desc, type: "article" },
-    twitter: { card: "summary", title, description: desc },
+    twitter: { card: "summary_large_image", title, description: desc },
   };
 }
 

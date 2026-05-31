@@ -158,6 +158,8 @@ curl http://127.0.0.1:7451/share/a1b2c3d4e5f6
 
 Open `http://127.0.0.1:7452/r/<id>` to see the rendered page with ranked candidates, latency, and OG metadata for link previews. Records are appended to `CLAWHUM_SHARES_PATH` (defaults to `./data/shares.jsonl`).
 
+Every share URL also serves a real 1200x630 social preview card at `http://127.0.0.1:7452/r/<id>/opengraph-image`, generated on demand with `next/og`. Paste a `/r/<id>` link into Slack, iMessage, Twitter, or Discord and it renders the top match, artist, score, latency, and three runner-up candidates. The card is read straight off the shared payload, so it stays in sync with whatever was shared and never serves stale data.
+
 ## Features
 
 - `POST /match` audio upload with configurable `top_k` and `threshold`, API-key gated.
