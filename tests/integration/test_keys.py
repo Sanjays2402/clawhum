@@ -123,6 +123,118 @@ def test_pat_tenant_isolation(monkeypatch, tmp_path):
         assert len(r.json()) == 1
 
 
+def test_pat_revoke_all_preserves_caller_pat(monkeypatch, tmp_path):
+    """POST /keys/revoke-all kills sibling PATs and preserves the caller's.
+
+    Mints three PATs for acme, signs in with one of them, calls
+    revoke-all, and asserts: the other two stop authenticating, the
+    caller's own PAT still works, and a globex PAT (different tenant)
+    is untouched. This exercises the incident-response control plus
+    cross-tenant isolation in one shot.
+    """
+    monkeypatch.setenv("CLAWHUM_INDEX_PATH", str(tmp_path / "ix.npz"))
+    monkeypatch.setenv("CLAWHUM_METADATA_PATH", str(tmp_path / "meta.jsonl"))
+    monkeypatch.setenv("CLAWHUM_PAT_PATH", str(tmp_path / "pats.jsonl"))
+    monkeypatch.setenv(
+        "CLAWHUM_API_KEYS",
+        "acme:acmekey:10000:writer:acme,globex:globexkey:10000:writer:globex",
+    )
+    monkeypatch.setenv("CLAWHUM_RATE_LIMIT_PER_MINUTE", "10000")
+    from clawhum_core.settings import get_settings
+
+    get_settings.cache_clear()
+    from clawhum_api.api_keys import reset_registry_cache
+
+    reset_registry_cache()
+    from clawhum_api.app import create_app
+
+    with TestClient(create_app()) as c:
+        # Mint three PATs for acme via the seed key.
+        secrets: list[tuple[str, str]] = []
+        for name in ("alpha", "bravo", "charlie"):
+            r = c.post("/keys", json={"name": name}, headers={"X-API-Key": "acmekey"})
+            assert r.status_code == 200, r.text
+            secrets.append((r.json()["id"], r.json()["secret"]))
+
+        # Mint one PAT for globex; it must survive untouched.
+        r = c.post("/keys", json={"name": "glx"}, headers={"X-API-Key": "globexkey"})
+        assert r.status_code == 200
+        glx_secret = r.json()["secret"]
+
+        # Sign in as the second acme PAT and revoke-all.
+        caller_id, caller_secret = secrets[1]
+        r = c.post(
+            "/keys/revoke-all",
+            json={"include_self": False},
+            headers={"X-API-Key": caller_secret},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["ok"] is True
+        assert body["preserved"] == caller_id
+        revoked_ids = set(body["revoked"])
+        assert revoked_ids == {secrets[0][0], secrets[2][0]}
+
+        # The two siblings can no longer authenticate.
+        for _id, sec in (secrets[0], secrets[2]):
+            assert c.get("/me", headers={"X-API-Key": sec}).status_code == 401
+
+        # Caller's own PAT still works.
+        assert c.get("/me", headers={"X-API-Key": caller_secret}).status_code == 200
+
+        # Cross-tenant isolation: globex PAT untouched.
+        assert c.get("/me", headers={"X-API-Key": glx_secret}).status_code == 200
+
+        # Globex still sees its one PAT.
+        r = c.get("/keys", headers={"X-API-Key": "globexkey"})
+        assert r.status_code == 200
+        assert len(r.json()) == 1
+
+        # Idempotent: a second revoke-all from the caller revokes nothing new.
+        r = c.post(
+            "/keys/revoke-all",
+            json={"include_self": False},
+            headers={"X-API-Key": caller_secret},
+        )
+        assert r.status_code == 200
+        assert r.json()["revoked"] == []
+
+        # include_self=true wipes the caller too.
+        r = c.post(
+            "/keys/revoke-all",
+            json={"include_self": True},
+            headers={"X-API-Key": caller_secret},
+        )
+        assert r.status_code == 200
+        assert r.json()["revoked"] == [caller_id]
+        assert c.get("/me", headers={"X-API-Key": caller_secret}).status_code == 401
+
+
+def test_pat_revoke_all_requires_writer_role(monkeypatch, tmp_path):
+    """Reader-only keys cannot wipe credentials. Reject with 403."""
+    monkeypatch.setenv("CLAWHUM_INDEX_PATH", str(tmp_path / "ix.npz"))
+    monkeypatch.setenv("CLAWHUM_METADATA_PATH", str(tmp_path / "meta.jsonl"))
+    monkeypatch.setenv("CLAWHUM_PAT_PATH", str(tmp_path / "pats.jsonl"))
+    monkeypatch.setenv("CLAWHUM_API_KEYS", "acme:rokey:10000:reader:acme")
+    monkeypatch.setenv("CLAWHUM_RATE_LIMIT_PER_MINUTE", "10000")
+    from clawhum_core.settings import get_settings
+
+    get_settings.cache_clear()
+    from clawhum_api.api_keys import reset_registry_cache
+
+    reset_registry_cache()
+    from clawhum_api.app import create_app
+
+    with TestClient(create_app()) as c:
+        assert c.get("/me", headers={"X-API-Key": "rokey"}).status_code == 200
+        r = c.post(
+            "/keys/revoke-all",
+            json={"include_self": False},
+            headers={"X-API-Key": "rokey"},
+        )
+        assert r.status_code == 403, r.text
+
+
 def test_pat_expiry_blocks_authentication(monkeypatch, tmp_path):
     """Expired PATs must not authenticate even though they are not revoked.
 
@@ -215,3 +327,4 @@ def test_pat_ttl_clamped_to_max(monkeypatch, tmp_path):
         assert r.status_code == 200
         ttl2 = r.json()["expires_at"] - _time.time()
         assert 6 * 86400 < ttl2 < 8 * 86400, ttl2
+

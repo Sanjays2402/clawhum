@@ -128,6 +128,61 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
     return view
 
 
+class RevokeAllBody(BaseModel):
+    include_self: bool = Field(
+        default=False,
+        description=(
+            "When the caller authenticated with a personal access token, "
+            "that token is preserved by default so the operator is not "
+            "signed out mid-incident. Set true to revoke it too."
+        ),
+    )
+
+
+class RevokeAllResponse(BaseModel):
+    ok: bool
+    revoked: list[str]
+    preserved: str | None = None
+
+
+@router.post(
+    "/keys/revoke-all",
+    response_model=RevokeAllResponse,
+    dependencies=[Depends(require_roles("writer")), Depends(require_mfa())],
+)
+async def revoke_all_keys(
+    body: RevokeAllBody,
+    request: Request,
+) -> dict[str, Any]:
+    """Incident-response: invalidate every PAT in the workspace.
+
+    Returns the ids that were revoked. By default the caller's own PAT
+    (if any) is preserved so a single operator can recover from a
+    suspected credential compromise without locking themselves out;
+    pass ``include_self: true`` to revoke it too.
+    """
+    from ..dry_run import is_dry_run, preview
+    tenant = current_tenant_id(request)
+    self_pat_id: str | None = getattr(request.state, "pat_id", None)
+    except_id = None if body.include_self else self_pat_id
+    live = pat_store.live_for_tenant(tenant)
+    targets = [p.id for p in live if except_id is None or p.id != except_id]
+    if is_dry_run(request):
+        return preview(
+            "api_key_bulk",
+            "all",
+            tenant_id=tenant,
+            count=len(targets),
+            target_ids=targets,
+            preserved=except_id,
+        )
+    revoked = pat_store.revoke_all_for_tenant(
+        tenant_id=tenant,
+        except_pat_id=except_id,
+    )
+    return {"ok": True, "revoked": revoked, "preserved": except_id}
+
+
 @router.delete(
     "/keys/{key_id}",
     dependencies=[Depends(require_roles("writer")), Depends(require_mfa())],

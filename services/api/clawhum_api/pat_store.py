@@ -263,6 +263,31 @@ def revoke(*, tenant_id: str, pat_id: str) -> bool:
     return True
 
 
+def revoke_all_for_tenant(
+    *,
+    tenant_id: str,
+    except_pat_id: str | None = None,
+) -> list[str]:
+    """Tombstone every live PAT owned by ``tenant_id``.
+
+    Optionally preserves a single ``except_pat_id`` so the caller can
+    invalidate every credential except the one they are currently
+    holding (the typical incident-response shape: "sign me out
+    everywhere else"). Returns the list of ids that were revoked, in
+    the order they were processed, so the caller can echo a count in
+    the API response and the audit log can list the targets.
+
+    Idempotent: calling twice yields an empty list the second time.
+    """
+    out: list[str] = []
+    for pat in live_for_tenant(tenant_id):
+        if except_pat_id and pat.id == except_pat_id:
+            continue
+        if revoke(tenant_id=tenant_id, pat_id=pat.id):
+            out.append(pat.id)
+    return out
+
+
 def touch_last_used(pat_id: str) -> None:
     """Append a no-op record that bumps last_used_at. Best-effort."""
     current = _reduce().get(pat_id)

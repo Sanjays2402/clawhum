@@ -104,6 +104,12 @@ export default function KeysPage() {
   const [justCreated, setJustCreated] = useState<CreatedKey | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [revokeAllOpen, setRevokeAllOpen] = useState(false);
+  const [revokingAll, setRevokingAll] = useState(false);
+  const [revokeAllError, setRevokeAllError] = useState<string | null>(null);
+  const [revokeAllResult, setRevokeAllResult] = useState<
+    { revoked: number; preserved: boolean } | null
+  >(null);
   const [copied, setCopied] = useState<"secret" | "curl" | null>(null);
   const [origin, setOrigin] = useState("http://127.0.0.1:7452");
 
@@ -201,6 +207,38 @@ export default function KeysPage() {
       }
     } finally {
       setRevoking(null);
+    }
+  }
+
+  async function revokeAll() {
+    if (revokingAll) return;
+    setRevokingAll(true);
+    setRevokeAllError(null);
+    try {
+      const r = await fetch("/api/keys/revoke-all", {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ include_self: false }),
+      });
+      if (!r.ok) {
+        const msg = await r.text().catch(() => r.statusText);
+        setRevokeAllError(msg || `failed with ${r.status}`);
+        return;
+      }
+      const body = (await r.json()) as {
+        revoked: string[];
+        preserved: string | null;
+      };
+      setRevokeAllResult({
+        revoked: body.revoked.length,
+        preserved: Boolean(body.preserved),
+      });
+      setRevokeAllOpen(false);
+      await refresh();
+    } catch (e: any) {
+      setRevokeAllError(e?.message || String(e));
+    } finally {
+      setRevokingAll(false);
     }
   }
 
@@ -344,7 +382,75 @@ export default function KeysPage() {
 
       {/* Token list */}
       <section className="space-y-3">
-        <h2 className="text-sm font-medium">Your tokens</h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-medium">Your tokens</h2>
+          {state.kind === "ready" && state.rows.length > 0 && (
+            <button
+              onClick={() => {
+                setRevokeAllOpen(true);
+                setRevokeAllError(null);
+              }}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded border border-red-500/50 text-red-500 text-[11px] font-mono uppercase tracking-wider hover:bg-red-500/10"
+              aria-label="Revoke all other tokens"
+            >
+              <Warning size={12} weight="bold" /> revoke all
+            </button>
+          )}
+        </div>
+
+        {revokeAllResult && (
+          <div
+            role="status"
+            className="rounded-lg border border-[var(--color-line)] bg-[var(--color-panel)] p-3 text-xs flex items-center gap-2"
+          >
+            <ShieldCheck size={14} weight="duotone" />
+            Revoked {revokeAllResult.revoked} token
+            {revokeAllResult.revoked === 1 ? "" : "s"}.{" "}
+            {revokeAllResult.preserved
+              ? "Your current token was preserved so you stay signed in."
+              : "No tokens were preserved."}
+          </div>
+        )}
+
+        {revokeAllOpen && (
+          <div
+            role="alertdialog"
+            aria-labelledby="revoke-all-title"
+            className="rounded-lg border border-red-500/50 bg-red-500/5 p-4 space-y-3"
+          >
+            <div id="revoke-all-title" className="flex items-center gap-2 text-sm font-medium">
+              <Warning size={16} weight="duotone" /> Revoke every token in this workspace?
+            </div>
+            <p className="text-xs text-[var(--color-muted)]">
+              Use this if a token has leaked. Every personal access token in
+              this workspace will stop working immediately. The token you are
+              currently signed in with is preserved so you can mint fresh
+              credentials. This action is audited and requires MFA when
+              enabled.
+            </p>
+            {revokeAllError && (
+              <p className="text-xs text-red-500 flex items-center gap-1">
+                <Warning size={12} weight="bold" /> {revokeAllError}
+              </p>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={revokeAll}
+                disabled={revokingAll}
+                className="px-3 py-1.5 rounded bg-red-500 text-white text-xs font-medium hover:opacity-90 disabled:opacity-50"
+              >
+                {revokingAll ? "revoking..." : "yes, revoke them all"}
+              </button>
+              <button
+                onClick={() => setRevokeAllOpen(false)}
+                disabled={revokingAll}
+                className="px-3 py-1.5 rounded border border-[var(--color-line)] text-xs"
+              >
+                cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {state.kind === "loading" && (
           <div className="space-y-2" aria-busy="true">

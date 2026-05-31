@@ -10,6 +10,27 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Bulk personal-access-token revocation
+
+When a personal access token leaks, you do not want to revoke 47 tokens one by one. `POST /keys/revoke-all` tombstones every PAT in the calling workspace in a single call, with cross-tenant isolation guaranteed by the store layer. By default the token that authenticated the request is preserved so the operator running incident response stays signed in; pass `{"include_self": true}` to revoke that one too. The endpoint requires the `writer` role and a fresh `X-MFA-Code` once the actor has enrolled TOTP. `?dry_run=true` returns the ids that would be revoked without writing. Every call flows through the global audit log, so reviewers can later see who pulled the plug, when, from which IP, and how many credentials were invalidated. The `/settings/keys` page exposes the same control behind a confirm dialog.
+
+### Try it (revoke all PATs)
+
+```bash
+# Preview without writing. Returns the ids that would be revoked.
+curl -X POST 'http://127.0.0.1:7451/v1/keys/revoke-all?dry_run=true' \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "X-MFA-Code: 123456" \
+  -H "Content-Type: application/json" -d '{"include_self":false}'
+
+# Pull the plug for real. Caller's own PAT is preserved by default.
+curl -X POST http://127.0.0.1:7451/v1/keys/revoke-all \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "X-MFA-Code: 123456" \
+  -H "Content-Type: application/json" -d '{"include_self":false}'
+```
+
+UI: open http://127.0.0.1:7452/settings/keys and click `revoke all`.
+
+
 ## Workspace data retention policy
 
 Every workspace admin can cap how long ClawHum keeps history, feedback, audit log, and webhook delivery records, then enforce that cap on demand. Days values are per category; `0` means keep forever, so existing customers see no behaviour change until they opt in. With a TTL set, expired rows are filtered out of reads immediately (the `/history` endpoint hides them even before a sweep runs) and a `POST /retention/enforce` rewrites each JSONL store atomically, deleting only rows that belong to the calling tenant. `?dry_run=true` reports the row counts that would be removed without touching disk. Reads and writes require the `admin` role; writes also require a fresh `X-MFA-Code` once the actor has enrolled TOTP. Cross-tenant isolation is enforced both at the storage scope (every row carries `tenant_id`) and at the sweep, which double checks each row before deleting.
