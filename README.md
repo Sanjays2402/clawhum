@@ -575,6 +575,27 @@ curl -X POST http://127.0.0.1:7452/api/webhooks/<hook_id>/resume \
 
 Both endpoints are idempotent: calling `pause` on an already-paused hook (or `resume` on a live one) returns the current state without writing a new record. The webhook list now exposes `paused_at` and `resumed_at` alongside `active` so the admin UI can show a clear suspended badge.
 
+## Webhook circuit breaker (auto disable on consecutive failures)
+
+ClawHum is a hum-to-track search service with enterprise-grade webhook hygiene. A permanently broken receiver no longer keeps burning retry budget on every match: after `CLAWHUM_WEBHOOK_AUTO_DISABLE_THRESHOLD` consecutive failed deliveries (default 10), the dispatcher flips the endpoint to `active=false`, stamps `auto_disabled_at` plus a human readable `auto_disabled_reason`, and records the event in the tamper evident audit log as `webhook.auto_disabled`. A single successful delivery, or an admin `POST /webhooks/{id}/resume`, resets the streak and clears the auto disable so a fresh budget applies. The webhook list returns a live `consecutive_failures` count so the `/webhooks` UI can warn operators before the breaker trips. Tenant scoped end to end: a failure storm on workspace A never disables workspace B's endpoint. Set the threshold to `0` to opt out and rely on manual pause only.
+
+### Try it (auto disable a broken webhook)
+
+```bash
+# Inspect the live failure streak and breaker state.
+curl http://127.0.0.1:7452/api/webhooks \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+# => {"webhooks":[{"id":"...","active":false,"auto_disabled_at":1780255800.17,
+#                   "auto_disabled_reason":"10 consecutive delivery failures (threshold 10)",
+#                   "consecutive_failures":10, ...}]}
+
+# Re-enable once the receiver is healthy. Counter resets to zero.
+curl -X POST http://127.0.0.1:7452/api/webhooks/<hook_id>/resume \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+```
+
+The UI at `/webhooks` shows a red `auto disabled` badge with the reason and an amber warning when a live endpoint is more than three consecutive failures from tripping.
+
 ## Try it (sandbox dry-run for destructive calls)
 
 Every `DELETE` endpoint now accepts `?dry_run=true` (or the header `X-Dry-Run: 1`). The server runs the full auth, tenant scoping, and RBAC stack, then returns a structured preview of what would be removed without mutating storage. Audit log entries record `dry_run: true` so reviewers can tell previews apart from real mutations. A workspace UI lives at `/settings/sandbox` for interactive previews.

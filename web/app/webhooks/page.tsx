@@ -31,6 +31,9 @@ interface WebhookItem {
   rotated_at?: number | null;
   paused_at?: number | null;
   resumed_at?: number | null;
+  auto_disabled_at?: number | null;
+  auto_disabled_reason?: string | null;
+  consecutive_failures?: number;
 }
 
 interface RotateResponse {
@@ -426,10 +429,23 @@ export default function WebhooksPage() {
                     <div className="mt-1 font-mono text-[10px] text-[var(--color-dim)] uppercase tracking-widest">
                       id {w.id} · created {fmtTs(w.created_at * 1000)} · events {w.events.join(",")} · secret {w.secret_hint}
                     </div>
-                    {!w.active && (
+                    {!w.active && w.auto_disabled_at && (
+                      <div className="mt-1 font-mono text-[10px] text-[var(--color-rose,#f87171)] uppercase tracking-widest inline-flex items-center gap-1">
+                        <Warning size={10} weight="duotone" />
+                        auto disabled at {fmtTs(w.auto_disabled_at * 1000)}
+                        {w.auto_disabled_reason ? ` (${w.auto_disabled_reason})` : ""}. resume to retry.
+                      </div>
+                    )}
+                    {!w.active && !w.auto_disabled_at && (
                       <div className="mt-1 font-mono text-[10px] text-[var(--color-amber)] uppercase tracking-widest inline-flex items-center gap-1">
                         <Pause size={10} weight="duotone" />
                         paused{w.paused_at ? ` at ${fmtTs(w.paused_at * 1000)}` : ""}. deliveries suspended.
+                      </div>
+                    )}
+                    {w.active && (w.consecutive_failures ?? 0) >= 3 && (
+                      <div className="mt-1 font-mono text-[10px] text-[var(--color-amber)] uppercase tracking-widest inline-flex items-center gap-1">
+                        <Warning size={10} weight="duotone" />
+                        {w.consecutive_failures} consecutive failures. nearing auto disable.
                       </div>
                     )}
                     {w.previous_secret_hint && w.previous_secret_expires_at && (
