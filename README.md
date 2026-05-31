@@ -1138,6 +1138,37 @@ curl -H "x-api-key: $KEY" https://clawhum.example.com/v1/privacy/export > my-dat
 curl -X DELETE -H "x-api-key: $KEY" https://clawhum.example.com/v1/privacy/me
 ```
 
+#### Workspace export (admin)
+
+`GET /v1/privacy/workspace-export` returns a tenant-scoped ZIP bundle
+covering every store the workspace has data in: history, history views,
+feedback, collections, shares, usage, webhooks (endpoints, deliveries,
+allowlist), members, retention policy, SSO config, IP allowlist, quotas,
+personal access tokens, and the filtered audit log. The bundle ships
+with a `manifest.json` containing per-category row counts, the app
+version, and a `sha256` over the serialised payloads for tamper
+evidence. Secret fields (`client_secret`, `endpoint_secret`,
+`totp_secret`, `token`, `password`) are replaced with the literal
+string `redacted` so row shape and counts stay intact. Every category
+goes through `scope_rows` before serialising, so one tenant can never
+see another's data in the bundle (covered by
+`tests/integration/test_workspace_export.py`).
+
+The endpoint requires the `admin` role. Pass `?format=json` (or
+`Accept: application/json`) for a manifest-only summary suitable for
+procurement dry runs. The UI surfaces this as the "workspace export"
+panel under `/settings`.
+
+```bash
+# Full bundle
+curl -H "x-api-key: $ADMIN_KEY" \
+  http://127.0.0.1:7452/api/v1/privacy/workspace-export -o workspace.zip
+
+# Dry-run summary (no download)
+curl -H "x-api-key: $ADMIN_KEY" \
+  "http://127.0.0.1:7452/api/v1/privacy/workspace-export?format=json" | jq
+```
+
 ### Error tracking (Sentry)
 
 ClawHum ships with optional Sentry integration. The official `sentry-sdk`

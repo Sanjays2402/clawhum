@@ -17,6 +17,7 @@ import {
   Trash,
   ArrowsClockwise,
   Check,
+  Archive,
 } from "@phosphor-icons/react/dist/ssr";
 import { getApiKey } from "@/lib/apiKey";
 import {
@@ -28,6 +29,19 @@ import {
   type EraseResult,
   type ExportSummary,
 } from "@/lib/privacy";
+
+type WorkspaceExportState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | {
+      kind: "ok";
+      filename: string;
+      sizeBytes: number;
+      totalRows: number;
+      sha256: string;
+      at: number;
+    }
+  | { kind: "error"; message: string };
 
 type ExportState =
   | { kind: "idle" }
@@ -67,6 +81,7 @@ function fmtBytes(n: number): string {
 }
 
 export default function PrivacySection() {
+  const [workspaceState, setWorkspaceState] = useState<WorkspaceExportState>({ kind: "idle" });
   const [exportState, setExportState] = useState<ExportState>({ kind: "idle" });
   const [eraseState, setEraseState] = useState<EraseState>({ kind: "idle" });
   const [confirmText, setConfirmText] = useState("");
@@ -76,6 +91,48 @@ export default function PrivacySection() {
   useEffect(() => {
     if (eraseState.kind !== "confirming") setConfirmText("");
   }, [eraseState.kind]);
+
+  const runWorkspaceExport = useCallback(async () => {
+    setWorkspaceState({ kind: "loading" });
+    try {
+      const r = await fetch("/api/v1/privacy/workspace-export", {
+        method: "GET",
+        headers: { Accept: "application/zip", ...authHeaders() },
+        cache: "no-store",
+      });
+      if (!r.ok) {
+        const text = await r.text().catch(() => "");
+        const hint = r.status === 403
+          ? "admin role required for workspace export"
+          : `workspace export failed (${r.status})`;
+        setWorkspaceState({ kind: "error", message: text ? `${hint}: ${text.slice(0, 120)}` : hint });
+        return;
+      }
+      const blob = await r.blob();
+      const sizeBytes = blob.size;
+      const totalRows = Number(r.headers.get("x-clawhum-export-rows") || "0");
+      const sha256 = r.headers.get("x-clawhum-export-sha256") || "";
+      const disposition = r.headers.get("content-disposition") || "";
+      const match = /filename="?([^";]+)"?/i.exec(disposition);
+      const filename = match?.[1] || `clawhum-workspace-${Date.now()}.zip`;
+      if (typeof window !== "undefined") {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+      setWorkspaceState({ kind: "ok", filename, sizeBytes, totalRows, sha256, at: Date.now() });
+    } catch (e) {
+      setWorkspaceState({
+        kind: "error",
+        message: e instanceof Error ? e.message : "network error",
+      });
+    }
+  }, []);
 
   const runExport = useCallback(async () => {
     setExportState({ kind: "loading" });
@@ -199,6 +256,56 @@ export default function PrivacySection() {
         {exportState.kind === "idle" && (
           <div className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
             returns a portable json file you can hand to any tool or store offline.
+          </div>
+        )}
+      </div>
+
+      {/* Workspace export (admin) */}
+      <div className="border border-[var(--color-line)] rounded-[2px] p-3 space-y-2">
+        <div className="flex items-center gap-2">
+          <Archive size={12} weight="duotone" className="text-[var(--color-phosphor)]" />
+          <span className="font-mono text-[11px] uppercase tracking-widest text-[var(--color-text)]">
+            workspace export
+          </span>
+          <span className="font-mono text-[10px] text-[var(--color-dim)]">admin only</span>
+          <button
+            type="button"
+            onClick={runWorkspaceExport}
+            disabled={workspaceState.kind === "loading"}
+            className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)] disabled:opacity-50 inline-flex items-center gap-1.5"
+            aria-label="download workspace export zip"
+          >
+            {workspaceState.kind === "loading" ? (
+              <>
+                <ArrowsClockwise size={11} weight="duotone" className="animate-spin" />
+                bundling
+              </>
+            ) : (
+              <>
+                <Download size={11} weight="duotone" />
+                download zip
+              </>
+            )}
+          </button>
+        </div>
+        {workspaceState.kind === "idle" && (
+          <div className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            tenant-scoped zip bundle: history, feedback, audit, webhooks, members, retention, sso, ip allowlist, quotas, pats. secrets are redacted. ships with a manifest and sha256.
+          </div>
+        )}
+        {workspaceState.kind === "ok" && (
+          <div className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed space-y-0.5">
+            <div>
+              saved <span className="text-[var(--color-text)]">{workspaceState.filename}</span> ({fmtBytes(workspaceState.sizeBytes)}, {workspaceState.totalRows} rows)
+            </div>
+            {workspaceState.sha256 && (
+              <div>sha256 <span className="text-[var(--color-text)]">{workspaceState.sha256.slice(0, 16)}…</span></div>
+            )}
+          </div>
+        )}
+        {workspaceState.kind === "error" && (
+          <div className="font-mono text-[10px] text-red-400 leading-relaxed">
+            {workspaceState.message}
           </div>
         )}
       </div>

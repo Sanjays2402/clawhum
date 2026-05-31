@@ -50,6 +50,7 @@ const nextConfig = {
       { source: "/api/audit/export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/audit/export` },
       { source: "/api/quotas", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/quotas` },
       { source: "/api/v1/privacy/export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/export` },
+      { source: "/api/v1/privacy/workspace-export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/workspace-export` },
       { source: "/api/v1/privacy/me", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/me` },
       // Stable v1 public API: forward everything under /api/v1/* to the
       // backend /v1/* surface. Integrators target this prefix from curl,

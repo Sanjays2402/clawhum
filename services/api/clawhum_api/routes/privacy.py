@@ -20,11 +20,12 @@ from typing import Any
 from clawhum_core.settings import get_settings
 from clawhum_library.feedback import read_feedback
 from fastapi import APIRouter, Depends, Header, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from ..auth import require_api_key, require_mfa, require_roles
 from ..privacy import actor_id_for, collect_events, redact_actor, redact_tenant_feedback
 from ..tenant import current_tenant_id, scope_rows
+from ..workspace_export import build_export, export_filename
 
 router = APIRouter(prefix="/v1/privacy", tags=["privacy"], dependencies=[Depends(require_api_key)])
 
@@ -63,6 +64,46 @@ async def export_my_data(
             " surfaced to the 'default' tenant.",
         ],
     }
+
+
+@router.get(
+    "/workspace-export",
+    dependencies=[Depends(require_roles("admin"))],
+)
+async def workspace_export(request: Request) -> Any:
+    """Workspace-wide GDPR/SOC2 data portability bundle.
+
+    Admin-only. Streams a ZIP containing every tenant-scoped store
+    (history, feedback, audit, webhooks, members, retention, SSO,
+    IP allowlist, quotas, PATs) plus a manifest with row counts and
+    a sha256 over the payloads. Secrets are redacted.
+
+    Set ``Accept: application/json`` (or ``?format=json``) for a
+    machine-readable summary without downloading the ZIP, useful for
+    dry-runs and procurement review checklists.
+    """
+    tenant_id = current_tenant_id(request)
+    blob, manifest = build_export(tenant_id)
+    fmt = (request.query_params.get("format") or "").lower()
+    accept = request.headers.get("accept", "")
+    if fmt == "json" or ("application/json" in accept and "application/zip" not in accept):
+        return JSONResponse({
+            "manifest": manifest.to_dict(),
+            "size_bytes": len(blob),
+            "filename": export_filename(tenant_id, manifest.generated_at),
+        })
+    filename = export_filename(tenant_id, manifest.generated_at)
+    return Response(
+        content=blob,
+        media_type="application/zip",
+        headers={
+            "content-disposition": f'attachment; filename="{filename}"',
+            "x-clawhum-export-rows": str(manifest.total_rows),
+            "x-clawhum-export-sha256": manifest.sha256,
+            "x-clawhum-export-tenant": tenant_id,
+            "cache-control": "no-store",
+        },
+    )
 
 
 @router.delete("/me", dependencies=[Depends(require_roles("admin")), Depends(require_mfa())])
