@@ -63,6 +63,18 @@ class Settings(BaseSettings):
     webhook_deliveries_path: Path = Path("./data/webhook_deliveries.jsonl")
     webhook_timeout_sec: float = 5.0
     webhook_max_attempts: int = 3
+    webhook_allowlist_path: Path = Path("./data/webhook_allowlist.jsonl")
+    webhook_block_private_ips: bool = Field(
+        default=True,
+        description=(
+            "When true, outbound webhook destinations that resolve to"
+            " loopback, link local, multicast, or RFC1918 ranges are"
+            " rejected at registration and re-checked before each"
+            " delivery to defeat DNS rebinding. Workspace owners can"
+            " allowlist specific host suffixes to relax this for on prem"
+            " receivers; cloud metadata endpoints stay denied either way."
+        ),
+    )
     audit_log_path: Path = Path("./data/audit.jsonl")
     audit_enabled: bool = True
     # Size-based rotation for the audit JSONL file. When the active file

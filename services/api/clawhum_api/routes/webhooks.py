@@ -33,8 +33,9 @@ from clawhum_core.settings import get_settings
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, HttpUrl
 
-from ..auth import require_api_key
+from ..auth import require_api_key, require_roles
 from ..tenant import current_tenant
+from .. import webhook_safety
 
 router = APIRouter(tags=["webhooks"])
 log = get_logger("clawhum.webhooks")
@@ -200,6 +201,12 @@ async def create_webhook(
     existing = _live_hooks(tenant_id)
     if len(existing) >= 20:
         raise HTTPException(400, "webhook limit reached (max 20 per tenant)")
+    # SSRF policy: refuse to register destinations that point at internal
+    # ranges or cloud metadata endpoints. Re-checked at delivery time too.
+    try:
+        webhook_safety.validate_destination(str(body.url), tenant_id)
+    except webhook_safety.WebhookDestinationError as e:
+        raise HTTPException(400, str(e))
     hook_id = _new_id()
     secret = _new_secret()
     now = time.time()
@@ -466,6 +473,39 @@ async def _deliver_one(
         base_headers["X-Clawhum-Signature-Hint"] = hook.get("secret_hint", "")
 
     first_id: str | None = None
+    tenant_id = hook.get("tenant_id", "")
+    # Re-check SSRF policy on every delivery so a DNS rebind or a newly
+    # tightened tenant allowlist actually takes effect. A block here is
+    # recorded as a delivery failure (status=0) without an HTTP request
+    # ever leaving the process, and we do not retry: the URL is wrong by
+    # policy, not by transient transport failure.
+    try:
+        webhook_safety.validate_destination(hook["url"], tenant_id)
+    except webhook_safety.WebhookDestinationError as policy_err:
+        delivery_id = _new_id()
+        rec: dict[str, Any] = {
+            "id": delivery_id,
+            "tenant_id": tenant_id,
+            "webhook_id": hook["id"],
+            "event": event,
+            "attempt": 1,
+            "status": 0,
+            "ok": False,
+            "elapsed_ms": 0,
+            "error": f"blocked by destination policy: {policy_err}",
+            "created_at": time.time(),
+            "policy_blocked": True,
+        }
+        if redelivery_of:
+            rec["redelivery_of"] = redelivery_of
+        if store_payload:
+            rec["payload"] = payload
+        _append_delivery(rec)
+        log.warning(
+            "webhook_destination_blocked",
+            webhook_id=hook["id"], tenant_id=tenant_id, reason=str(policy_err),
+        )
+        return delivery_id
     async with httpx.AsyncClient() as client:
         for attempt in range(1, s.webhook_max_attempts + 1):
             t0 = time.perf_counter()
@@ -535,3 +575,67 @@ async def dispatch_event(tenant_id: str, event: str, payload: dict[str, Any]) ->
 # code never populates this; the secret is shown once at create time and
 # the receiver is expected to store it on their side.
 _PLAINTEXT_OVERRIDES: dict[str, str] = {}
+
+
+# -----------------------------------------------------------------------------
+# Destination allowlist (per workspace, admin only)
+# -----------------------------------------------------------------------------
+
+
+class AllowlistBody(BaseModel):
+    hosts: list[str] = Field(default_factory=list, max_length=64)
+
+
+class AllowlistResponse(BaseModel):
+    tenant_id: str
+    hosts: list[str]
+    block_private_ips: bool
+    note: str
+
+
+def _allowlist_response(tenant_id: str) -> AllowlistResponse:
+    return AllowlistResponse(
+        tenant_id=tenant_id,
+        hosts=webhook_safety.get_tenant_allowlist(tenant_id),
+        block_private_ips=get_settings().webhook_block_private_ips,
+        note=(
+            "Outbound webhook destinations that resolve to internal,"
+            " loopback, or cloud metadata addresses are blocked by"
+            " default. Add a host suffix here to deliver to receivers on"
+            " a private network you control. Cloud metadata endpoints"
+            " stay denied regardless of this list."
+        ),
+    )
+
+
+@router.get(
+    "/webhooks/destination-allowlist",
+    response_model=AllowlistResponse,
+    dependencies=[Depends(require_api_key)],
+)
+async def get_destination_allowlist(
+    tenant_id: str = Depends(current_tenant),
+) -> AllowlistResponse:
+    return _allowlist_response(tenant_id)
+
+
+@router.put(
+    "/webhooks/destination-allowlist",
+    response_model=AllowlistResponse,
+    dependencies=[Depends(require_roles("admin"))],
+)
+async def put_destination_allowlist(
+    body: AllowlistBody,
+    request: Request,
+    tenant_id: str = Depends(current_tenant),
+) -> AllowlistResponse:
+    from ..dry_run import is_dry_run, preview
+    if is_dry_run(request):
+        return preview(
+            "webhook_destination_allowlist",
+            tenant_id,
+            tenant_id=tenant_id,
+            hosts=body.hosts,
+        )
+    webhook_safety.set_tenant_allowlist(tenant_id, list(body.hosts))
+    return _allowlist_response(tenant_id)

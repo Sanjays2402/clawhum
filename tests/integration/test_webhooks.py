@@ -21,6 +21,11 @@ def _client(monkeypatch, tmp_path, *, open_auth: bool = False):
     else:
         monkeypatch.setenv("CLAWHUM_API_KEYS", "main:changeme:10000:writer")
     monkeypatch.setenv("CLAWHUM_RATE_LIMIT_PER_MINUTE", "10000")
+    # Existing tests deliver to a local httpserver fixture on loopback;
+    # disable the production default SSRF block so loopback URLs work.
+    # The dedicated tests/integration/test_webhook_ssrf.py suite
+    # re-enables and exercises the block end to end.
+    monkeypatch.setenv("CLAWHUM_WEBHOOK_BLOCK_PRIVATE_IPS", "false")
     from clawhum_core.settings import get_settings
 
     get_settings.cache_clear()
@@ -120,6 +125,7 @@ async def test_dispatch_writes_delivery_log_on_failure(monkeypatch, tmp_path):
         "CLAWHUM_WEBHOOK_DELIVERIES_PATH", str(tmp_path / "webhook_deliveries.jsonl")
     )
     monkeypatch.setenv("CLAWHUM_WEBHOOK_MAX_ATTEMPTS", "1")
+    monkeypatch.setenv("CLAWHUM_WEBHOOK_BLOCK_PRIVATE_IPS", "false")
     monkeypatch.setenv("CLAWHUM_WEBHOOK_TIMEOUT_SEC", "1.0")
     from clawhum_core.settings import get_settings
 

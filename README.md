@@ -309,6 +309,18 @@ ClawHum now ships outbound webhooks. Register a URL at `http://127.0.0.1:7452/we
 
 Every registered endpoint now also gets a one-click **send test** button that fires a synthetic `webhook.test` payload to the URL immediately so you can verify reachability before a real event ever happens. Each row in the delivery log carries a **redeliver** action that replays the original payload (same event, same bytes) so you can recover from a downstream outage without humming the same melody again. Test pings are not replayable on purpose: the log marks them with `replayable: false` so the UI keeps the button honest.
 
+Outbound destinations are protected against SSRF by default. Any URL whose hostname resolves to loopback, link local, multicast, RFC1918, or other private ranges is rejected with a 400 at registration, and the same check is re-run immediately before every delivery attempt to defeat DNS rebinding (a blocked delivery is recorded in the log with `status: 0` and never leaves the process). Cloud metadata endpoints (`169.254.169.254`, `metadata.google.internal`) are on a global denylist that cannot be overridden. Workspace owners can add trusted host suffixes for on prem receivers via `PUT /webhooks/destination-allowlist` (admin role required). Set `CLAWHUM_WEBHOOK_BLOCK_PRIVATE_IPS=false` only for local development.
+
+```bash
+# inspect the workspace destination policy
+curl http://127.0.0.1:7451/webhooks/destination-allowlist -H 'X-API-Key: dev'
+
+# allow delivery to receivers under a trusted internal suffix (admin only)
+curl -X PUT http://127.0.0.1:7451/webhooks/destination-allowlist \
+  -H 'X-API-Key: dev' -H 'Content-Type: application/json' \
+  -d '{"hosts":["acme.internal"]}'
+```
+
 ```bash
 # register an endpoint
 curl -X POST http://127.0.0.1:7451/webhooks \
