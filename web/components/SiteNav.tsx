@@ -12,6 +12,7 @@ const TABS: { href: string; label: string; hint: string }[] = [
   { href: "/metrics", label: "metrics", hint: "prometheus" },
   { href: "/library", label: "index", hint: "reindex / stats" },
   { href: "/settings", label: "settings", hint: "api key + usage" },
+  { href: "/webhooks", label: "webhooks", hint: "outbound events" },
 ];
 
 export default function SiteNav() {

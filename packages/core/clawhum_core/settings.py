@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     library_path: Path = Path("./data/audio")
     feedback_path: Path = Path("./data/feedback.jsonl")
     shares_path: Path = Path("./data/shares.jsonl")
+    webhooks_path: Path = Path("./data/webhooks.jsonl")
+    webhook_deliveries_path: Path = Path("./data/webhook_deliveries.jsonl")
+    webhook_timeout_sec: float = 5.0
+    webhook_max_attempts: int = 3
     audit_log_path: Path = Path("./data/audit.jsonl")
     audit_enabled: bool = True
     # Size-based rotation for the audit JSONL file. When the active file

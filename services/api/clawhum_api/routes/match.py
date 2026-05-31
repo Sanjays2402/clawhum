@@ -9,6 +9,8 @@ from clawhum_match.matcher import Matcher
 from clawhum_audio.io import load_audio
 from ..auth import require_api_key
 from ..schemas import MatchResponse, MatchResult
+from ..tenant import current_tenant_id
+from . import webhooks as webhooks_routes
 
 router = APIRouter(tags=["match"])
 
@@ -42,7 +44,7 @@ async def match(
     )
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
 
-    return MatchResponse(
+    response = MatchResponse(
         query_id=str(uuid.uuid4()),
         elapsed_ms=elapsed_ms,
         count=len(matches),
@@ -53,3 +55,15 @@ async def match(
             source=m.track.source, tempo_bpm=m.track.tempo_bpm,
         ) for m in matches],
     )
+    # Best-effort outbound notification to user-registered webhooks. We never
+    # block the response on receivers; deliveries fan out as background tasks.
+    try:
+        tenant_id = current_tenant_id(request)
+        await webhooks_routes.dispatch_event(
+            tenant_id,
+            webhooks_routes.EVENT_MATCH_COMPLETED,
+            response.model_dump(),
+        )
+    except Exception:
+        pass
+    return response

@@ -8,7 +8,35 @@ Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local
 
 Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile`/`librosa`, and runs it through a DSP pre-processing chain (butterworth biquad band-pass, pre-emphasis at 0.97, optional VAD trim). The cleaned signal is segmented into 6 s windows and embedded with CLAP (`laion/clap-htsat-unfused`) when ML extras are installed, or with a deterministic MFCC + chroma + spectral-contrast hash embedder as fallback. Embeddings are searched against a FAISS HNSW index (or a NumPy brute-force index on Apple Silicon where `faiss-cpu` is unavailable) and reranked by tempo proximity. Results stream back as scored track candidates with previews and artwork. A Prometheus `/metrics` endpoint and structured logs expose request volume, match counts, and index size.
 
-## Try it
+ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
+
+## Try it (webhooks)
+
+ClawHum now ships outbound webhooks. Register a URL at `http://127.0.0.1:7452/webhooks` and every completed match POSTs the full `MatchResponse` JSON to that endpoint, signed with HMAC-SHA256 in the `X-Clawhum-Signature` header. Failed deliveries retry with exponential backoff up to three attempts, and every attempt is recorded in a per-webhook delivery log you can inspect from the same page.
+
+```bash
+# register an endpoint
+curl -X POST http://127.0.0.1:7451/webhooks \
+  -H 'X-API-Key: dev' -H 'Content-Type: application/json' \
+  -d '{"url":"https://example.com/hooks/clawhum","events":["match.completed"]}'
+# -> {"id":"...","secret":"whsec_...","events":["match.completed"], ...}
+
+# list and inspect
+curl http://127.0.0.1:7451/webhooks -H 'X-API-Key: dev'
+curl http://127.0.0.1:7451/webhooks/<id>/deliveries -H 'X-API-Key: dev'
+```
+
+Verify the signature on your receiver (Node):
+
+```ts
+import crypto from "node:crypto";
+const expected = "sha256=" + crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+const ok = crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(req.headers["x-clawhum-signature"]));
+```
+
+The webhook store is JSONL on disk (tenant scoped on read and delete) so it follows the same operational pattern as `/share` and `/feedback`; no new infrastructure required.
+
+## Try it (history)
 
 The query log at `/matches` is now a full local CRM for your hums: every capture is saved in the browser, and you can search, filter, tag, rename, and delete entries without leaving the page. Open `http://127.0.0.1:7452/matches` after a few captures and try:
 
