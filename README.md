@@ -19,6 +19,16 @@ curl -s -H "X-API-Key: $CLAWHUM_API_KEY" \
   'http://127.0.0.1:7451/activity?limit=20' | jq '.items[] | {kind, title, ok, created_at}'
 ```
 
+## Try it (bulk select on history)
+
+`http://127.0.0.1:7452/history` now supports multi-select with a sticky action bar. Click the square on any row, or hit the header checkbox to flip every entry on the current page. Selecting at least one row reveals two bulk actions: `tag` opens an inline input that merges a comma-separated list onto every selected row (lowercased, deduped, sorted), and `delete` fans out parallel `DELETE /api/history/{id}` calls with a confirm guard and a failure counter. Selections survive pagination and tag-filter changes for rows that stay visible, and are pruned automatically when a row drops out of view. Pure selection helpers live in `web/lib/bulkSelect.ts` with unit tests in `web/tests/bulkSelect.test.ts`.
+
+```bash
+# the bulk delete UI calls the same per-id endpoint
+curl -s -X DELETE -H "X-API-Key: $CLAWHUM_API_KEY" \
+  http://127.0.0.1:7451/history/hst_abc123
+```
+
 ## Try it (share from history)
 
 Every row on `http://127.0.0.1:7452/history` now has an inline share button. Clicking it creates a public link by calling `POST /share` with the row's existing match payload, copies `https://<host>/r/<id>` to the clipboard, and toasts the URL with an `open` action so you can verify it in a new tab. The row's display name is sent through as the share note so the public page has context. The shared link is the same `/r/<id>` route that already renders an OpenGraph image, so dropping it into Slack or iMessage previews the top match without any extra round trip. Pure adapters live in `web/lib/share.ts` with unit tests in `web/tests/share.test.ts`.

@@ -15,6 +15,9 @@ import {
   DownloadSimple,
   FileCsv,
   FileCode,
+  CheckSquare,
+  Square,
+  Stack,
 } from "@phosphor-icons/react/dist/ssr";
 import { useApiKey } from "@/lib/apiKey";
 import { historyToShareInput } from "@/lib/share";
@@ -86,6 +89,12 @@ export default function HistoryPage() {
   const [tagging, setTagging] = useState<string | null>(null);
   const [tagDraft, setTagDraft] = useState("");
 
+  // Bulk-select state
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState<"delete" | "tag" | null>(null);
+  const [bulkTagDraft, setBulkTagDraft] = useState("");
+  const [showBulkTag, setShowBulkTag] = useState(false);
+
   const fetchHistory = useCallback(async () => {
     setLoading(true);
     setErr(null);
@@ -123,6 +132,104 @@ export default function HistoryPage() {
 
   // Reset paging on filter change
   useEffect(() => { setOffset(0); }, [q, tag]);
+
+  // Drop stale selections when the visible list changes
+  useEffect(() => {
+    if (!data) return;
+    const visible = new Set(data.items.map((i) => i.id));
+    setSelected((prev) => {
+      const next = new Set<string>();
+      for (const id of prev) if (visible.has(id)) next.add(id);
+      return next.size === prev.size ? prev : next;
+    });
+  }, [data]);
+
+  const visibleIds = useMemo(() => data?.items.map((i) => i.id) ?? [], [data]);
+  const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+  const someSelected = selected.size > 0 && !allSelected;
+
+  function toggleOne(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function toggleAll() {
+    setSelected((prev) => {
+      if (visibleIds.every((id) => prev.has(id))) {
+        const next = new Set(prev);
+        for (const id of visibleIds) next.delete(id);
+        return next;
+      }
+      const next = new Set(prev);
+      for (const id of visibleIds) next.add(id);
+      return next;
+    });
+  }
+  function clearSelection() { setSelected(new Set()); }
+
+  async function bulkDelete() {
+    if (selected.size === 0) return;
+    if (!confirm(`delete ${selected.size} ${selected.size === 1 ? "entry" : "entries"}? this cannot be undone.`)) return;
+    setBulkBusy("delete");
+    try {
+      const ids = Array.from(selected);
+      // Cap parallelism so we don't hammer the backend.
+      const limit = 6;
+      let i = 0;
+      let failed = 0;
+      async function worker() {
+        while (i < ids.length) {
+          const id = ids[i++];
+          try {
+            const r = await fetch(`/api/history/${encodeURIComponent(id)}`, { method: "DELETE" });
+            if (!r.ok) failed++;
+          } catch { failed++; }
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(limit, ids.length) }, worker));
+      clearSelection();
+      await fetchHistory();
+      if (failed > 0) setErr(`bulk delete: ${failed} of ${ids.length} failed`);
+    } finally {
+      setBulkBusy(null);
+    }
+  }
+
+  async function bulkAddTags() {
+    if (selected.size === 0) return;
+    const tags = bulkTagDraft.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+    if (tags.length === 0) return;
+    setBulkBusy("tag");
+    try {
+      const items = data?.items.filter((it) => selected.has(it.id)) ?? [];
+      const limit = 6;
+      let i = 0;
+      let failed = 0;
+      async function worker() {
+        while (i < items.length) {
+          const it = items[i++];
+          const merged = Array.from(new Set([...(it.tags || []), ...tags]));
+          try {
+            const r = await fetch(`/api/history/${encodeURIComponent(it.id)}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ tags: merged }),
+            });
+            if (!r.ok) failed++;
+          } catch { failed++; }
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+      setBulkTagDraft("");
+      setShowBulkTag(false);
+      await fetchHistory();
+      if (failed > 0) setErr(`bulk tag: ${failed} of ${items.length} failed`);
+    } finally {
+      setBulkBusy(null);
+    }
+  }
 
   async function patch(id: string, body: Record<string, unknown>) {
     const r = await fetch(`/api/history/${encodeURIComponent(id)}`, {
@@ -230,11 +337,91 @@ export default function HistoryPage() {
       )}
 
       {data && data.items.length > 0 && (
+        <>
+        {/* Bulk action bar */}
+        <div className="panel rounded-[2px] p-2 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleAll}
+            aria-label={allSelected ? "deselect all on page" : "select all on page"}
+            title={allSelected ? "deselect all on page" : "select all on page"}
+            className="p-1 text-[var(--color-muted)] hover:text-[var(--color-text)]"
+          >
+            {allSelected ? <CheckSquare size={16} weight="duotone" /> : someSelected ? <Stack size={16} weight="duotone" /> : <Square size={16} weight="duotone" />}
+          </button>
+          <span className="font-mono text-[10px] uppercase tracking-widest text-[var(--color-dim)] tabular-nums">
+            {selected.size === 0 ? "none selected" : `${selected.size} selected`}
+          </span>
+          {selected.size > 0 && (
+            <>
+              <button
+                onClick={clearSelection}
+                className="font-mono text-[10px] uppercase tracking-widest px-2 py-1 border border-[var(--color-line)] hover:bg-[var(--color-panel)] text-[var(--color-muted)]"
+              >
+                clear
+              </button>
+              <button
+                onClick={() => setShowBulkTag((v) => !v)}
+                disabled={bulkBusy !== null}
+                className="font-mono text-[10px] uppercase tracking-widest px-2 py-1 border border-[var(--color-line)] hover:bg-[var(--color-panel)] flex items-center gap-1 disabled:opacity-40"
+              >
+                <Tag size={12} weight="duotone" /> tag
+              </button>
+              <button
+                onClick={() => void bulkDelete()}
+                disabled={bulkBusy !== null}
+                className="font-mono text-[10px] uppercase tracking-widest px-2 py-1 border border-[var(--color-amber)] text-[var(--color-amber)] hover:bg-[rgba(245,158,11,0.06)] flex items-center gap-1 disabled:opacity-40"
+              >
+                <Trash size={12} weight="duotone" /> {bulkBusy === "delete" ? "deleting..." : "delete"}
+              </button>
+            </>
+          )}
+          {showBulkTag && selected.size > 0 && (
+            <div className="flex items-center gap-1 w-full md:w-auto">
+              <input
+                autoFocus
+                value={bulkTagDraft}
+                onChange={(e) => setBulkTagDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void bulkAddTags();
+                  if (e.key === "Escape") { setShowBulkTag(false); setBulkTagDraft(""); }
+                }}
+                placeholder="tags, comma separated"
+                className="bg-[var(--color-bg)] border border-[var(--color-line)] font-mono text-[11px] px-2 py-1 flex-1 min-w-[160px]"
+              />
+              <button
+                onClick={() => void bulkAddTags()}
+                disabled={bulkBusy !== null || bulkTagDraft.trim() === ""}
+                className="p-1 text-[var(--color-phosphor)] disabled:opacity-40"
+                aria-label="apply tags"
+              >
+                <Check size={14} />
+              </button>
+              <button
+                onClick={() => { setShowBulkTag(false); setBulkTagDraft(""); }}
+                className="p-1 text-[var(--color-dim)]"
+                aria-label="cancel"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
+        </div>
         <div className="panel rounded-[2px] divide-y divide-[var(--color-line)]">
           {data.items.map((it) => {
             const top = it.results[0];
+            const isSel = selected.has(it.id);
             return (
-              <div key={it.id} className="p-3 flex flex-col md:flex-row md:items-center gap-3">
+              <div key={it.id} className={`p-3 flex flex-col md:flex-row md:items-center gap-3 ${isSel ? "bg-[rgba(29,185,84,0.04)]" : ""}`}>
+                <button
+                  type="button"
+                  onClick={() => toggleOne(it.id)}
+                  aria-label={isSel ? "deselect entry" : "select entry"}
+                  aria-pressed={isSel}
+                  className="p-1 text-[var(--color-muted)] hover:text-[var(--color-text)] shrink-0 self-start md:self-center"
+                >
+                  {isSel ? <CheckSquare size={16} weight="duotone" className="text-[var(--color-phosphor)]" /> : <Square size={16} weight="duotone" />}
+                </button>
                 <div className="flex-1 min-w-0">
                   {renaming === it.id ? (
                     <div className="flex items-center gap-1">
@@ -323,6 +510,7 @@ export default function HistoryPage() {
             );
           })}
         </div>
+        </>
       )}
 
       {/* Pagination */}
