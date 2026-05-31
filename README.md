@@ -286,6 +286,30 @@ curl -X PUT http://127.0.0.1:7452/api/v1/webhooks/destination-allowlist \
 
 A blocked delivery shows up in the webhook delivery log with `status=0`, `policy_blocked=true`, and a human-readable reason in `error`. Set `CLAWHUM_WEBHOOK_BLOCK_PRIVATE_IPS=false` only for local development; in production the default (`true`) closes a class of SSRF attacks that buyers' security reviews flag.
 
+## Webhook signing-secret rotation with overlap window
+
+ClawHum is a hum-to-track search service with workspace-scoped enterprise controls. Webhook signing secrets can now be rotated in place without dropping deliveries. Calling `POST /webhooks/{id}/rotate-secret` mints a fresh `whsec_...` secret, returns it exactly once, and keeps the previous secret valid for an operator-chosen overlap window (default 24h, capped at 7 days). During the window outbound deliveries carry both `X-Clawhum-Signature` and `X-Clawhum-Signature-Previous` so the receiver can deploy the new key on its own schedule. Setting `grace_seconds: 0` invalidates the old secret immediately, which is the right choice for incident response. Rotation requires the `admin` role and, when the actor has enrolled TOTP, a fresh `X-MFA-Code`. Every rotation is recorded in the workspace audit log and is strictly tenant-scoped: a key from another workspace gets `404` rather than a disclosure of the webhook's existence.
+
+Manage rotations from the workspace UI at `/webhooks`, or from the API:
+
+### Try it (rotate a webhook secret)
+
+```bash
+# Rotate with a 1 hour overlap window. Returns the new secret ONCE.
+curl -X POST http://127.0.0.1:7452/api/webhooks/<hook_id>/rotate-secret \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"grace_seconds": 3600}'
+
+# Invalidate the old secret immediately (incident response).
+curl -X POST http://127.0.0.1:7452/api/webhooks/<hook_id>/rotate-secret \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"grace_seconds": 0}'
+```
+
+The webhook list (`GET /webhooks`) exposes `secret_hint`, `previous_secret_hint`, `previous_secret_expires_at`, and `rotated_at` so operators can see at a glance which endpoints are mid-rotation and when the overlap window closes.
+
 ## Try it (sandbox dry-run for destructive calls)
 
 Every `DELETE` endpoint now accepts `?dry_run=true` (or the header `X-Dry-Run: 1`). The server runs the full auth, tenant scoping, and RBAC stack, then returns a structured preview of what would be removed without mutating storage. Audit log entries record `dry_run: true` so reviewers can tell previews apart from real mutations. A workspace UI lives at `/settings/sandbox` for interactive previews.
