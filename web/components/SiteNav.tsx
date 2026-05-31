@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 const TABS: { href: string; label: string; hint: string }[] = [
   { href: "/", label: "capture", hint: "record + match" },
+  { href: "/demo", label: "demo", hint: "try a sample" },
   { href: "/matches", label: "matches", hint: "query log" },
   { href: "/catalog", label: "catalog", hint: "fingerprinted tracks" },
   { href: "/metrics", label: "metrics", hint: "prometheus" },

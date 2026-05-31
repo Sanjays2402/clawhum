@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "note": "Synthetic hummed renditions of public-domain melodies, 16 kHz mono WAV. Generated from sine + 2 harmonics with vibrato. Useful for testing the /match pipeline without recording.",
+  "samples": [
+    {
+      "id": "twinkle",
+      "title": "Twinkle Twinkle Little Star",
+      "composer": "trad. (public domain)",
+      "key": "C major",
+      "bpm": 96,
+      "duration_sec": 5.6,
+      "file": "/samples/twinkle.wav"
+    },
+    {
+      "id": "ode_to_joy",
+      "title": "Ode to Joy",
+      "composer": "Beethoven (public domain)",
+      "key": "D major",
+      "bpm": 100,
+      "duration_sec": 6.4,
+      "file": "/samples/ode_to_joy.wav"
+    },
+    {
+      "id": "frere_jacques",
+      "title": "Frere Jacques",
+      "composer": "trad. (public domain)",
+      "key": "C major",
+      "bpm": 110,
+      "duration_sec": 5.6,
+      "file": "/samples/frere_jacques.wav"
+    }
+  ]
+}

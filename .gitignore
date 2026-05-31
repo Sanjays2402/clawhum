@@ -29,5 +29,7 @@ models/
 *.flac
 *.m4a
 !tests/fixtures/*.wav
+!web/public/samples/*.wav
+*.tsbuildinfo
 .idea/
 .vscode/

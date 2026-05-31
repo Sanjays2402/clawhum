@@ -21,6 +21,11 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 - Feedback endpoint (`POST /feedback`) for thumbs-up/down on results.
 - Spotify OAuth flow (`/login`, `/callback`).
 - Next.js 15 web UI with mic capture, results list, and recharts visualisations.
+- `/demo` route with three public-domain hum samples (Twinkle, Ode to Joy, Frere Jacques) that POST to the real `/match` endpoint and render top-k results with latency and score bars. Visit `http://127.0.0.1:7452/demo` and click *match*; or hit the API directly:
+  ```
+  curl -F audio=@web/public/samples/twinkle.wav -F top_k=10 -F threshold=0.0 \
+       -H 'x-api-key: dev' http://127.0.0.1:7451/match
+  ```
 - 8 locale files under `web/i18n/` (de, en, es, fr, it, ja, ko, pt).
 - OpenTelemetry FastAPI instrumentation, OTLP exporter when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 
