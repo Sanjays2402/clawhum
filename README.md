@@ -2,6 +2,29 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-PAT trusted device approval
+
+A leaked PAT secret should not be enough on its own. Each personal access token can now flip on strict device approval: the auth layer computes a stable device fingerprint from the resolved client IP prefix (/24 for IPv4, /48 for IPv6) plus a coarse User-Agent family (chrome, curl, python-requests, and so on), and rejects any request whose fingerprint is not on the approved list with `HTTP 403` plus an `X-Device-Fingerprint` response header so the workspace owner can approve it out of band. Unknown devices are auto-recorded as `pending` and surfaced on `/settings/keys` so admins see exactly who has tried to use the token, from which IP, with which UA family, and how often. Turning strict mode on does NOT auto-trust the device that was already in use, so a leaked-and-already-in-use token cannot silently approve the attacker. Toggling the bit and approving or forgetting a device require step-up MFA and are written to the audit chain via the existing mutation middleware. The approval list is strictly per (tenant_id, pat_id, fingerprint); cross workspace probes return 404 not 403 so token ids cannot be enumerated. Revoking the PAT tears down its device list. Pinned by `tests/integration/test_pat_trusted_devices.py` which proves the 403 gate, fingerprint scoping, and cross tenant isolation end to end.
+
+### Try it (trusted devices)
+
+UI: open [`/settings/keys`](http://127.0.0.1:7452/settings/keys) and click `devices` on any token to toggle strict mode and review pending or approved fingerprints. API:
+
+```bash
+# turn strict mode on (admin + fresh MFA)
+curl -X PUT http://127.0.0.1:7452/keys/$PAT_ID/device-approval \
+  -H "X-API-Key: $ADMIN_KEY" -H "content-type: application/json" \
+  -d '{"required": true}'
+
+# next call from an unknown device gets 403 + X-Device-Fingerprint
+curl -i http://127.0.0.1:7452/me -H "X-API-Key: $PAT_SECRET"
+
+# approve that fingerprint
+curl -X POST http://127.0.0.1:7452/keys/$PAT_ID/devices/$FP/approve \
+  -H "X-API-Key: $ADMIN_KEY" -H "content-type: application/json" \
+  -d '{"label": "ci runner"}'
+```
+
 ## Per-workspace monthly budget cap
 
 Rate limits bound the rate. Budgets bound the month. Finance and procurement teams will not sign a contract without a hard ceiling on billable consumption, so every workspace now has a configurable `monthly_cap` over a rolling 30 day window covering aggregate chargeable requests across every API key and PAT. While `used` stays under the cap, every response carries `X-Budget-Limit`, `X-Budget-Used`, `X-Budget-Remaining`, and `X-Budget-Status` (`ok` | `warning` | `exhausted`) so well behaved clients back off before they hit the wall. Past the cap, chargeable requests return `HTTP 402 Payment Required` with a structured `{code: "budget_exhausted", monthly_cap, used, window_sec}` body so SDKs surface the right upsell. Reads, health, metrics, and the budget admin route itself keep working so an over-budget admin can still raise the cap. A `hard_stop: false` mode supports audit-only rollout: requests still succeed but headers flag the overage so dashboards alert without breaking integrations. Mutations require the admin role plus a fresh MFA step-up and are written to the tamper-evident audit chain with before / after state. The budget is strictly per-workspace; pinned by `tests/integration/test_budget.py` which proves cross-tenant isolation and the 402 enforcement boundary.

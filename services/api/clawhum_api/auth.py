@@ -86,6 +86,15 @@ async def require_api_key(
                 # is still enforced separately below; both gates must
                 # pass for the request to proceed.
                 _enforce_pat_ip_allowlist(request, pat)
+                # Per-PAT trusted-device strict mode. When the owner
+                # has flipped this on, only approved device
+                # fingerprints may use the token; everything else is
+                # rejected with 403 and the unknown device is
+                # recorded so the owner can approve it from
+                # /settings/keys. We enforce BEFORE touching
+                # last_used so a denied request does not look like a
+                # successful use of the token.
+                _enforce_pat_trusted_device(request, pat)
                 # Best-effort, fire and forget. Failures must never block auth.
                 try:
                     headers = list(request.headers.items())
@@ -277,6 +286,64 @@ def _record_and_enforce_session(request: Request, *, actor: str, actor_kind: str
                 "Session-Expired-Reason": reason,
             },
         )
+
+
+def _enforce_pat_trusted_device(request: Request, pat: pat_store.PAT) -> None:
+    """Reject when strict device approval is on and the device is unknown.
+
+    Computes a stable fingerprint from the resolved client IP (already
+    XFF-aware) and a coarse User-Agent family, then looks it up in
+    the per-PAT trusted-device list. Approved devices have their
+    last_seen / count refreshed and the request proceeds. Unknown or
+    pending devices are recorded as pending and the request is
+    rejected 403 with a deterministic detail plus an
+    ``X-Device-Fingerprint`` header so SDKs can show the owner the
+    exact fingerprint to approve.
+    """
+    if not pat.require_device_approval:
+        return
+    from . import pat_trusted_devices
+    headers = {k.decode().lower(): v.decode() for k, v in request.headers.raw}
+    client_host = request.client.host if request.client else ""
+    ip = (
+        ip_allowlist.client_ip_from_request(headers, client_host)
+        or client_host
+        or ""
+    )
+    ua = headers.get("user-agent", "")
+    fp = pat_trusted_devices.compute_fingerprint(ip, ua)
+    request.state.device_fingerprint = fp
+    if pat_trusted_devices.is_approved(pat.tenant_id, pat.id, fp):
+        try:
+            pat_trusted_devices.touch_approved(
+                tenant_id=pat.tenant_id,
+                pat_id=pat.id,
+                fingerprint=fp,
+                ip=ip,
+                user_agent=ua,
+            )
+        except Exception:
+            pass
+        return
+    try:
+        pat_trusted_devices.record_pending(
+            tenant_id=pat.tenant_id,
+            pat_id=pat.id,
+            fingerprint=fp,
+            ip=ip,
+            user_agent=ua,
+        )
+    except Exception:
+        pass
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            f"device {fp} not approved for this token; "
+            "the workspace owner must approve it from "
+            "/settings/keys before this device can be used"
+        ),
+        headers={"X-Device-Fingerprint": fp},
+    )
 
 
 def _enforce_pat_ip_allowlist(request: Request, pat: pat_store.PAT) -> None:

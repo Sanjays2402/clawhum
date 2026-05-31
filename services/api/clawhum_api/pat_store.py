@@ -103,6 +103,14 @@ class PAT:
     # per-credential narrowing layered on top of the workspace-wide
     # ip_allowlist; both must pass.
     ip_cidrs: frozenset[str] = frozenset()
+    # Per-PAT trusted-device strict mode. When True, the auth layer
+    # rejects any request whose computed device fingerprint is not
+    # on the approved list for this PAT; the unknown device is
+    # recorded as ``pending`` so the workspace owner can review it
+    # from /settings/keys. When False (default) the PAT is usable
+    # from any device. See pat_trusted_devices.py for fingerprint
+    # computation and storage details.
+    require_device_approval: bool = False
 
     def prior_secret_active(self, now: float | None = None) -> bool:
         if not self.prior_secret_hash or self.prior_secret_expires_at <= 0:
@@ -171,6 +179,7 @@ def _from_record(rec: dict[str, Any]) -> PAT:
         prior_secret_hint=str(rec.get("prior_secret_hint", "") or ""),
         prior_secret_expires_at=float(rec.get("prior_secret_expires_at", 0.0) or 0.0),
         ip_cidrs=normalise_cidrs(rec.get("ip_cidrs") or []),
+        require_device_approval=bool(rec.get("require_device_approval", False)),
     )
 
 
@@ -340,6 +349,7 @@ def create(
         "prior_secret_hint": "",
         "prior_secret_expires_at": 0.0,
         "ip_cidrs": sorted(safe_cidrs),
+        "require_device_approval": False,
     }
     _append(rec)
     return _from_record(rec), secret
@@ -407,6 +417,7 @@ def rotate(
         "prior_secret_hint": current.secret_hint if grace > 0 else "",
         "prior_secret_expires_at": grace_expires,
         "ip_cidrs": sorted(current.ip_cidrs),
+        "require_device_approval": current.require_device_approval,
         "rotated_at": now,
     }
     _append(rec)
@@ -442,6 +453,7 @@ def revoke(*, tenant_id: str, pat_id: str) -> bool:
         "prior_secret_hint": "",
         "prior_secret_expires_at": 0.0,
         "ip_cidrs": sorted(current.ip_cidrs),
+        "require_device_approval": current.require_device_approval,
         "revoked_at": time.time(),
     }
     _append(rec)
@@ -526,6 +538,7 @@ def touch_last_used(
         "prior_secret_hint": current.prior_secret_hint,
         "prior_secret_expires_at": current.prior_secret_expires_at,
         "ip_cidrs": sorted(current.ip_cidrs),
+        "require_device_approval": current.require_device_approval,
     }
     _append(rec)
 
@@ -569,6 +582,7 @@ def public_view(p: PAT) -> dict[str, Any]:
         "prior_secret_expires_at": p.prior_secret_expires_at,
         "rotation_active": p.prior_secret_active(),
         "ip_cidrs": sorted(p.ip_cidrs),
+        "require_device_approval": p.require_device_approval,
         "max_age_minutes": (
             _policy.max_pat_age_minutes if _policy is not None else 0
         ),
@@ -666,7 +680,48 @@ def set_ip_cidrs(
         "prior_secret_hint": current.prior_secret_hint,
         "prior_secret_expires_at": current.prior_secret_expires_at,
         "ip_cidrs": sorted(safe),
+        "require_device_approval": current.require_device_approval,
         "ip_updated_at": time.time(),
+    }
+    _append(rec)
+    return _from_record(rec)
+
+
+def set_require_device_approval(
+    *, tenant_id: str, pat_id: str, required: bool
+) -> PAT | None:
+    """Toggle the per-PAT trusted-device strict mode.
+
+    Returns the updated PAT or None when the id is unknown or owned
+    by another tenant. No-op when the bit is already in the requested
+    state so the audit log does not record useless churn.
+    """
+    current = _reduce().get(pat_id)
+    if current is None or current.deleted or current.tenant_id != tenant_id:
+        return None
+    if bool(current.require_device_approval) == bool(required):
+        return current
+    rec = {
+        "id": current.id,
+        "tenant_id": current.tenant_id,
+        "name": current.name,
+        "roles": sorted(current.roles),
+        "rpm": current.rpm,
+        "created_at": current.created_at,
+        "last_used_at": current.last_used_at,
+        "secret_hash": current.secret_hash,
+        "secret_hint": current.secret_hint,
+        "last_used_ip": current.last_used_ip,
+        "last_used_ua": current.last_used_ua,
+        "deleted": False,
+        "expires_at": current.expires_at,
+        "scopes": sorted(current.scopes),
+        "prior_secret_hash": current.prior_secret_hash,
+        "prior_secret_hint": current.prior_secret_hint,
+        "prior_secret_expires_at": current.prior_secret_expires_at,
+        "ip_cidrs": sorted(current.ip_cidrs),
+        "require_device_approval": bool(required),
+        "device_policy_updated_at": time.time(),
     }
     _append(rec)
     return _from_record(rec)

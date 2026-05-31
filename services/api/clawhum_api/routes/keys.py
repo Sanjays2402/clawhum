@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from .. import pat_store
 from .. import pat_ip_history
+from .. import pat_trusted_devices
 from ..api_keys import ROLES, SCOPES, normalise_scopes, scopes_allowed_for_roles
 from ..auth import require_mfa, require_roles, require_scopes
 from ..tenant import current_tenant_id
@@ -82,6 +83,7 @@ class KeyView(BaseModel):
     prior_secret_expires_at: float = 0.0
     rotation_active: bool = False
     ip_cidrs: list[str] = Field(default_factory=list)
+    require_device_approval: bool = False
     # Force-rotation policy state (populated from active workspace
     # SessionPolicy on read). 0 / None mean the policy is unset.
     max_age_minutes: int = 0
@@ -275,6 +277,13 @@ async def revoke_key(key_id: str, request: Request) -> dict[str, Any]:
     ok = pat_store.revoke(tenant_id=tenant, pat_id=key_id)
     if not ok:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="key not found")
+    # Tear down the per-PAT device approval list too so a future
+    # token reusing the same id (extremely unlikely with random ids,
+    # but cheap to be defensive about) does not inherit stale trust.
+    try:
+        pat_trusted_devices.revoke_all_for_pat(tenant_id=tenant, pat_id=key_id)
+    except Exception:
+        pass
     return {"ok": True, "id": key_id}
 
 
@@ -484,3 +493,272 @@ async def key_ip_history(key_id: str, request: Request) -> dict[str, Any]:
             for r in rows
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Trusted devices: per-PAT device fingerprint approval list.
+#
+# When ``require_device_approval`` is on for a PAT, the auth layer
+# rejects any request whose device fingerprint (resolved client IP
+# prefix + coarse User-Agent family) is not on the approved list.
+# Unknown devices are auto-recorded as ``pending`` and surfaced here
+# so the workspace owner can approve or revoke them. This is a real
+# enterprise control: even if a PAT secret leaks, the attacker still
+# has to use it from a device the owner has approved out of band.
+# ---------------------------------------------------------------------------
+
+
+class DeviceApprovalBody(BaseModel):
+    required: bool = Field(
+        description=(
+            "When true, only devices on this PAT's approved list may "
+            "use the token; unknown devices receive 403 and are added "
+            "to the pending queue. Turning this on does NOT auto-trust "
+            "any currently-in-use device, so an admin has to take an "
+            "explicit approve action before the next request can pass."
+        )
+    )
+
+
+class DeviceApprovalResponse(BaseModel):
+    ok: bool
+    id: str
+    require_device_approval: bool
+    has_approved_device: bool
+
+
+@router.put(
+    "/keys/{key_id}/device-approval",
+    response_model=DeviceApprovalResponse,
+    dependencies=[Depends(require_roles("writer")), Depends(require_mfa())],
+)
+async def set_key_device_approval(
+    key_id: str,
+    body: DeviceApprovalBody,
+    request: Request,
+) -> dict[str, Any]:
+    """Toggle per-PAT trusted-device strict mode.
+
+    Step-up MFA is required: tightening the bit can lock a CI box
+    out until the device is approved, and loosening it widens the
+    blast radius of a leaked secret. The mutation is captured by
+    the audit middleware automatically.
+    """
+    from ..dry_run import is_dry_run, preview
+    tenant = current_tenant_id(request)
+    existing = next(
+        (p for p in pat_store.live_for_tenant(tenant) if p.id == key_id), None
+    )
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    if is_dry_run(request):
+        return preview(
+            "api_key_device_approval",
+            key_id,
+            tenant_id=tenant,
+            name=existing.name,
+            previous=existing.require_device_approval,
+            requested=bool(body.required),
+        )
+    updated = pat_store.set_require_device_approval(
+        tenant_id=tenant, pat_id=key_id, required=bool(body.required)
+    )
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    return {
+        "ok": True,
+        "id": updated.id,
+        "require_device_approval": updated.require_device_approval,
+        "has_approved_device": pat_trusted_devices.has_approved_device(
+            tenant, updated.id
+        ),
+    }
+
+
+class DeviceView(BaseModel):
+    fingerprint: str
+    status: str
+    label: str = ""
+    first_seen: float
+    last_seen: float
+    count: int
+    last_ua: str = ""
+    last_ip: str = ""
+
+
+class DevicesResponse(BaseModel):
+    id: str
+    name: str
+    require_device_approval: bool
+    devices: list[DeviceView]
+
+
+@router.get(
+    "/keys/{key_id}/devices",
+    response_model=DevicesResponse,
+    dependencies=[Depends(require_roles("admin"))],
+)
+async def list_key_devices(key_id: str, request: Request) -> dict[str, Any]:
+    """List approved + pending devices for a PAT. Admin only.
+
+    Cross tenant lookups return 404 (not 403) so a probing attacker
+    cannot enumerate token ids across workspaces. Pending devices are
+    sorted before approved ones so the queue that needs action is
+    visible first.
+    """
+    tenant = current_tenant_id(request)
+    existing = next(
+        (p for p in pat_store.live_for_tenant(tenant) if p.id == key_id), None
+    )
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    rows = pat_trusted_devices.list_for_pat(tenant, key_id)
+    return {
+        "id": existing.id,
+        "name": existing.name,
+        "require_device_approval": existing.require_device_approval,
+        "devices": [
+            {
+                "fingerprint": d.fingerprint,
+                "status": d.status,
+                "label": d.label,
+                "first_seen": d.first_seen,
+                "last_seen": d.last_seen,
+                "count": d.count,
+                "last_ua": d.last_ua,
+                "last_ip": d.last_ip,
+            }
+            for d in rows
+        ],
+    }
+
+
+class ApproveDeviceBody(BaseModel):
+    label: str = Field(default="", max_length=80)
+
+
+class ApproveDeviceResponse(BaseModel):
+    ok: bool
+    id: str
+    device: DeviceView
+
+
+@router.post(
+    "/keys/{key_id}/devices/{fingerprint}/approve",
+    response_model=ApproveDeviceResponse,
+    dependencies=[Depends(require_roles("writer")), Depends(require_mfa())],
+)
+async def approve_key_device(
+    key_id: str,
+    fingerprint: str,
+    body: ApproveDeviceBody,
+    request: Request,
+) -> dict[str, Any]:
+    """Promote a pending device to approved.
+
+    Step-up MFA is required because approving a device widens what
+    can authenticate with this token. Approving an already-approved
+    device is a no-op that just refreshes the label.
+    """
+    from ..dry_run import is_dry_run, preview
+    tenant = current_tenant_id(request)
+    existing = next(
+        (p for p in pat_store.live_for_tenant(tenant) if p.id == key_id), None
+    )
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    device = pat_trusted_devices.get_device(tenant, key_id, fingerprint)
+    if device is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="device not found"
+        )
+    if is_dry_run(request):
+        return preview(
+            "api_key_device_approval_grant",
+            key_id,
+            tenant_id=tenant,
+            name=existing.name,
+            fingerprint=fingerprint,
+            previous_status=device.status,
+            label=body.label or device.label,
+        )
+    updated = pat_trusted_devices.approve(
+        tenant_id=tenant,
+        pat_id=key_id,
+        fingerprint=fingerprint,
+        label=body.label,
+    )
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="device not found"
+        )
+    return {
+        "ok": True,
+        "id": key_id,
+        "device": {
+            "fingerprint": updated.fingerprint,
+            "status": updated.status,
+            "label": updated.label,
+            "first_seen": updated.first_seen,
+            "last_seen": updated.last_seen,
+            "count": updated.count,
+            "last_ua": updated.last_ua,
+            "last_ip": updated.last_ip,
+        },
+    }
+
+
+@router.delete(
+    "/keys/{key_id}/devices/{fingerprint}",
+    dependencies=[Depends(require_roles("writer")), Depends(require_mfa())],
+)
+async def revoke_key_device(
+    key_id: str, fingerprint: str, request: Request
+) -> dict[str, Any]:
+    """Forget a device (approved or pending).
+
+    A revoked device will appear again as pending the next time the
+    token is used from the same network and User-Agent family. Use
+    this to clean up a pending sighting that came from a typo'd CI
+    job, or to remove an approved device that should no longer have
+    access (lost laptop, departed contractor).
+    """
+    from ..dry_run import is_dry_run, preview
+    tenant = current_tenant_id(request)
+    existing = next(
+        (p for p in pat_store.live_for_tenant(tenant) if p.id == key_id), None
+    )
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    device = pat_trusted_devices.get_device(tenant, key_id, fingerprint)
+    if device is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="device not found"
+        )
+    if is_dry_run(request):
+        return preview(
+            "api_key_device_revoke",
+            key_id,
+            tenant_id=tenant,
+            name=existing.name,
+            fingerprint=fingerprint,
+            previous_status=device.status,
+        )
+    ok = pat_trusted_devices.revoke(
+        tenant_id=tenant, pat_id=key_id, fingerprint=fingerprint
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="device not found"
+        )
+    return {"ok": True, "id": key_id, "fingerprint": fingerprint}

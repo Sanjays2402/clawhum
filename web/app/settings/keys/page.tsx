@@ -44,6 +44,7 @@ interface KeyRow {
   prior_secret_expires_at?: number;
   rotation_active?: boolean;
   ip_cidrs?: string[];
+  require_device_approval?: boolean;
   max_age_minutes?: number;
   age_seconds_remaining?: number | null;
   aged_out?: boolean;
@@ -70,6 +71,24 @@ interface IpHistoryView {
   distinct_ips: number;
   truncated: boolean;
   items: IpHistoryItem[];
+}
+
+interface DeviceItem {
+  fingerprint: string;
+  status: string;
+  label: string;
+  first_seen: number;
+  last_seen: number;
+  count: number;
+  last_ua: string;
+  last_ip: string;
+}
+
+interface DevicesView {
+  id: string;
+  name: string;
+  require_device_approval: boolean;
+  devices: DeviceItem[];
 }
 
 interface KeyPolicy {
@@ -154,6 +173,11 @@ export default function KeysPage() {
   const [historyLoading, setHistoryLoading] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyData, setHistoryData] = useState<IpHistoryView | null>(null);
+  const [devicesId, setDevicesId] = useState<string | null>(null);
+  const [devicesLoading, setDevicesLoading] = useState<string | null>(null);
+  const [devicesError, setDevicesError] = useState<string | null>(null);
+  const [devicesData, setDevicesData] = useState<DevicesView | null>(null);
+  const [deviceBusy, setDeviceBusy] = useState<string | null>(null);
   const [revokeAllResult, setRevokeAllResult] = useState<
     { revoked: number; preserved: boolean } | null
   >(null);
@@ -315,6 +339,125 @@ export default function KeysPage() {
       setIpError(e?.message || String(e));
     } finally {
       setIpSaving(null);
+    }
+  }
+
+  async function openDevices(id: string) {
+    if (devicesId === id) {
+      setDevicesId(null);
+      setDevicesData(null);
+      setDevicesError(null);
+      return;
+    }
+    setDevicesId(id);
+    setDevicesData(null);
+    setDevicesError(null);
+    setDevicesLoading(id);
+    try {
+      const r = await fetch(`/api/keys/${id}/devices`, {
+        headers: authHeaders(),
+        cache: "no-store",
+      });
+      if (!r.ok) {
+        const msg = await r.text().catch(() => "");
+        if (r.status === 403) {
+          setDevicesError("Admin role required to view trusted devices.");
+        } else if (r.status === 404) {
+          setDevicesError("Token not found in this workspace.");
+        } else {
+          setDevicesError(msg || `failed with ${r.status}`);
+        }
+        return;
+      }
+      setDevicesData((await r.json()) as DevicesView);
+    } catch (e: any) {
+      setDevicesError(e?.message || String(e));
+    } finally {
+      setDevicesLoading(null);
+    }
+  }
+
+  async function toggleDeviceApproval(id: string, required: boolean) {
+    setDeviceBusy(id);
+    setDevicesError(null);
+    try {
+      const r = await fetch(`/api/keys/${id}/device-approval`, {
+        method: "PUT",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ required }),
+      });
+      if (!r.ok) {
+        const msg = await r.text().catch(() => "");
+        setDevicesError(msg || `failed with ${r.status}`);
+        return;
+      }
+      await refresh();
+      if (devicesId === id) {
+        // re-load the panel so the toggle state mirrors the server
+        const rr = await fetch(`/api/keys/${id}/devices`, {
+          headers: authHeaders(),
+          cache: "no-store",
+        });
+        if (rr.ok) setDevicesData((await rr.json()) as DevicesView);
+      }
+    } catch (e: any) {
+      setDevicesError(e?.message || String(e));
+    } finally {
+      setDeviceBusy(null);
+    }
+  }
+
+  async function approveDevice(id: string, fingerprint: string) {
+    setDeviceBusy(`${id}:${fingerprint}`);
+    setDevicesError(null);
+    try {
+      const r = await fetch(
+        `/api/keys/${id}/devices/${fingerprint}/approve`,
+        {
+          method: "POST",
+          headers: { ...authHeaders(), "Content-Type": "application/json" },
+          body: JSON.stringify({ label: "" }),
+        },
+      );
+      if (!r.ok) {
+        const msg = await r.text().catch(() => "");
+        setDevicesError(msg || `failed with ${r.status}`);
+        return;
+      }
+      const rr = await fetch(`/api/keys/${id}/devices`, {
+        headers: authHeaders(),
+        cache: "no-store",
+      });
+      if (rr.ok) setDevicesData((await rr.json()) as DevicesView);
+    } catch (e: any) {
+      setDevicesError(e?.message || String(e));
+    } finally {
+      setDeviceBusy(null);
+    }
+  }
+
+  async function revokeDevice(id: string, fingerprint: string) {
+    setDeviceBusy(`${id}:${fingerprint}`);
+    setDevicesError(null);
+    try {
+      const r = await fetch(`/api/keys/${id}/devices/${fingerprint}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      if (!r.ok) {
+        const msg = await r.text().catch(() => "");
+        setDevicesError(msg || `failed with ${r.status}`);
+        return;
+      }
+      const rr = await fetch(`/api/keys/${id}/devices`, {
+        headers: authHeaders(),
+        cache: "no-store",
+      });
+      if (rr.ok) setDevicesData((await rr.json()) as DevicesView);
+    } catch (e: any) {
+      setDevicesError(e?.message || String(e));
+    } finally {
+      setDeviceBusy(null);
     }
   }
 
@@ -956,12 +1099,173 @@ export default function KeysPage() {
                       {historyLoading === row.id ? "loading..." : "ip history"}
                     </button>
                     <button
+                      onClick={() => openDevices(row.id)}
+                      className={`inline-flex items-center gap-1 px-3 py-1.5 rounded border text-xs hover:bg-[var(--color-bg)] ${
+                        devicesId === row.id
+                          ? "border-[var(--color-accent)] text-[var(--color-accent)]"
+                          : row.require_device_approval
+                            ? "border-[var(--color-accent)]"
+                            : "border-[var(--color-line)]"
+                      }`}
+                      aria-label={`Manage trusted devices for ${row.name}`}
+                      title="Per-token trusted device approval. When strict mode is on, only approved device fingerprints (network prefix + UA family) may use the token."
+                    >
+                      <ShieldCheck size={12} weight="duotone" />{" "}
+                      {devicesLoading === row.id
+                        ? "loading..."
+                        : row.require_device_approval
+                          ? "devices: strict"
+                          : "devices"}
+                    </button>
+                    <button
                       onClick={() => setConfirmId(row.id)}
                       className="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-[var(--color-line)] text-xs hover:bg-[var(--color-bg)]"
                       aria-label={`Revoke ${row.name}`}
                     >
                       <Trash size={12} weight="bold" /> revoke
                     </button>
+                  </div>
+                )}
+                {devicesId === row.id && (
+                  <div className="w-full mt-3 border border-[var(--color-line)] rounded p-3 bg-[var(--color-bg)]">
+                    <div className="flex items-center justify-between mb-2 gap-3 flex-wrap">
+                      <div className="text-xs font-mono uppercase tracking-wider text-[var(--color-muted)]">
+                        trusted devices
+                        {devicesData ? (
+                          <span className="ml-2 normal-case tracking-normal">
+                            {devicesData.devices.length} known
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="inline-flex items-center gap-2 text-[11px] text-[var(--color-muted)]">
+                          <input
+                            type="checkbox"
+                            checked={
+                              devicesData?.require_device_approval ??
+                              !!row.require_device_approval
+                            }
+                            disabled={deviceBusy === row.id}
+                            onChange={(e) =>
+                              toggleDeviceApproval(row.id, e.target.checked)
+                            }
+                            aria-label="Require device approval for this token"
+                          />
+                          strict mode
+                        </label>
+                        <button
+                          onClick={() => openDevices(row.id)}
+                          className="text-[11px] text-[var(--color-muted)] hover:text-[var(--color-fg)]"
+                        >
+                          close
+                        </button>
+                      </div>
+                    </div>
+                    {devicesError ? (
+                      <p className="text-[11px] text-red-500">{devicesError}</p>
+                    ) : null}
+                    {!devicesData && !devicesError ? (
+                      <p className="text-[11px] text-[var(--color-muted)]">
+                        loading...
+                      </p>
+                    ) : null}
+                    {devicesData && devicesData.devices.length === 0 ? (
+                      <p className="text-[11px] text-[var(--color-muted)]">
+                        No devices have tried to use this token yet. Strict
+                        mode rejects every caller until an admin approves a
+                        fingerprint after the first 403.
+                      </p>
+                    ) : null}
+                    {devicesData && devicesData.devices.length > 0 ? (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-[11px] font-mono">
+                          <thead className="text-[var(--color-muted)] uppercase tracking-wider">
+                            <tr className="text-left">
+                              <th className="py-1 pr-3">status</th>
+                              <th className="py-1 pr-3">fingerprint</th>
+                              <th className="py-1 pr-3">last ip</th>
+                              <th className="py-1 pr-3">user agent</th>
+                              <th className="py-1 pr-3">count</th>
+                              <th className="py-1 pr-3">last seen</th>
+                              <th className="py-1">actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {devicesData.devices.map((d) => {
+                              const busy =
+                                deviceBusy === `${row.id}:${d.fingerprint}`;
+                              return (
+                                <tr
+                                  key={d.fingerprint}
+                                  className="border-t border-[var(--color-line)] align-top"
+                                >
+                                  <td className="py-1 pr-3">
+                                    <span
+                                      className={
+                                        d.status === "approved"
+                                          ? "text-[var(--color-accent)]"
+                                          : "text-amber-500"
+                                      }
+                                    >
+                                      {d.status}
+                                    </span>
+                                  </td>
+                                  <td className="py-1 pr-3 break-all">
+                                    {d.fingerprint}
+                                    {d.label ? (
+                                      <span className="ml-1 text-[var(--color-muted)] normal-case">
+                                        ({d.label})
+                                      </span>
+                                    ) : null}
+                                  </td>
+                                  <td className="py-1 pr-3 break-all">
+                                    {d.last_ip || ""}
+                                  </td>
+                                  <td className="py-1 pr-3 break-all text-[var(--color-muted)]">
+                                    {d.last_ua || ""}
+                                  </td>
+                                  <td className="py-1 pr-3">{d.count}</td>
+                                  <td className="py-1 pr-3">
+                                    {timeAgo(d.last_seen)}
+                                  </td>
+                                  <td className="py-1 flex gap-1">
+                                    {d.status === "approved" ? null : (
+                                      <button
+                                        onClick={() =>
+                                          approveDevice(
+                                            row.id,
+                                            d.fingerprint,
+                                          )
+                                        }
+                                        disabled={busy}
+                                        className="px-2 py-0.5 rounded border border-[var(--color-line)] hover:bg-[var(--color-fg)]/5 disabled:opacity-50"
+                                      >
+                                        approve
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() =>
+                                        revokeDevice(row.id, d.fingerprint)
+                                      }
+                                      disabled={busy}
+                                      className="px-2 py-0.5 rounded border border-[var(--color-line)] hover:bg-[var(--color-fg)]/5 disabled:opacity-50"
+                                    >
+                                      forget
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : null}
+                    <p className="mt-2 text-[11px] text-[var(--color-muted)]">
+                      Fingerprint is sha256 of (ip /24 or /48 prefix, UA
+                      family). Strict mode rejects unknown devices with 403
+                      and the X-Device-Fingerprint header so the owner can
+                      approve it out of band.
+                    </p>
                   </div>
                 )}
                 {historyId === row.id && (
