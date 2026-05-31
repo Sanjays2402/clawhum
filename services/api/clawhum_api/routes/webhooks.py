@@ -46,6 +46,10 @@ _ID_LEN = 12
 
 # Events we support today. Easy to extend; clients filter at create time.
 EVENT_MATCH_COMPLETED = "match.completed"
+EVENT_WEBHOOK_TEST = "webhook.test"
+# Events the owner can subscribe to at create time. ``webhook.test`` is
+# always deliverable via the test endpoint regardless of subscription so
+# users can verify reachability before any real event fires.
 ALL_EVENTS = (EVENT_MATCH_COMPLETED,)
 
 
@@ -172,6 +176,8 @@ class DeliveryItem(BaseModel):
     elapsed_ms: int
     error: str | None = None
     created_at: float
+    redelivery_of: str | None = None
+    replayable: bool = False
 
 
 class DeliveryListResponse(BaseModel):
@@ -205,7 +211,7 @@ async def create_webhook(
         "created_at": now,
         "active": True,
         "secret_hash": _hash_secret(secret),
-        "secret_hint": f"{secret[:10]}…{secret[-4:]}",
+        "secret_hint": f"{secret[:10]}...{secret[-4:]}",
     }
     _append_hook(rec)
     return WebhookCreateResponse(
@@ -293,9 +299,103 @@ async def list_deliveries(
             elapsed_ms=int(rec.get("elapsed_ms", 0)),
             error=rec.get("error"),
             created_at=float(rec.get("created_at", 0.0)),
+            redelivery_of=rec.get("redelivery_of"),
+            replayable=bool(rec.get("payload") is not None),
         ))
     out.sort(key=lambda i: i.created_at, reverse=True)
     return DeliveryListResponse(deliveries=out[:max(1, min(limit, 500))])
+
+
+class TriggerResponse(BaseModel):
+    ok: bool
+    delivery_id: str
+    event: str
+
+
+@router.post(
+    "/webhooks/{hook_id}/test",
+    response_model=TriggerResponse,
+    dependencies=[Depends(require_api_key)],
+)
+async def test_webhook(
+    hook_id: str,
+    tenant_id: str = Depends(current_tenant),
+) -> TriggerResponse:
+    """Fire a synthetic ``webhook.test`` event to the registered URL.
+
+    Returns once the first delivery attempt has been recorded so the
+    caller can immediately refresh the delivery log and see the result.
+    Subsequent retries (on transport failure) happen in the same call.
+    """
+    if not hook_id.isalnum() or len(hook_id) > 32:
+        raise HTTPException(404, "not found")
+    owned = {r["id"]: r for r in _live_hooks(tenant_id)}
+    hook = owned.get(hook_id)
+    if hook is None:
+        raise HTTPException(404, "not found")
+    payload = {
+        "event": EVENT_WEBHOOK_TEST,
+        "webhook_id": hook_id,
+        "sent_at": time.time(),
+        "message": "clawhum webhook test ping",
+    }
+    delivery_id = await _deliver_one(
+        hook,
+        EVENT_WEBHOOK_TEST,
+        payload,
+        plain_secret=_PLAINTEXT_OVERRIDES.get(hook_id),
+        store_payload=False,
+    )
+    return TriggerResponse(ok=True, delivery_id=delivery_id, event=EVENT_WEBHOOK_TEST)
+
+
+@router.post(
+    "/webhooks/{hook_id}/deliveries/{delivery_id}/redeliver",
+    response_model=TriggerResponse,
+    dependencies=[Depends(require_api_key)],
+)
+async def redeliver(
+    hook_id: str,
+    delivery_id: str,
+    tenant_id: str = Depends(current_tenant),
+) -> TriggerResponse:
+    """Replay a past delivery's payload to the webhook URL.
+
+    Only deliveries whose original payload was persisted are replayable;
+    earlier records and test pings will return 422 so the UI can disable
+    the button instead of pretending.
+    """
+    if not hook_id.isalnum() or len(hook_id) > 32:
+        raise HTTPException(404, "not found")
+    if not delivery_id.isalnum() or len(delivery_id) > 32:
+        raise HTTPException(404, "not found")
+    owned = {r["id"]: r for r in _live_hooks(tenant_id)}
+    hook = owned.get(hook_id)
+    if hook is None:
+        raise HTTPException(404, "not found")
+    original: dict[str, Any] | None = None
+    for rec in _iter_jsonl(_deliveries_path()):
+        if rec.get("id") == delivery_id and rec.get("webhook_id") == hook_id \
+           and rec.get("tenant_id") == tenant_id:
+            original = rec
+            break
+    if original is None:
+        raise HTTPException(404, "delivery not found")
+    payload = original.get("payload")
+    if payload is None:
+        raise HTTPException(
+            422,
+            "this delivery has no stored payload and cannot be replayed",
+        )
+    event = original.get("event") or EVENT_MATCH_COMPLETED
+    new_id = await _deliver_one(
+        hook,
+        event,
+        payload,
+        plain_secret=_PLAINTEXT_OVERRIDES.get(hook_id),
+        redelivery_of=delivery_id,
+    )
+    return TriggerResponse(ok=True, delivery_id=new_id, event=event)
 
 
 # -----------------------------------------------------------------------------
@@ -329,12 +429,19 @@ async def _deliver_one(
     payload: dict[str, Any],
     *,
     plain_secret: str | None = None,
-) -> None:
+    redelivery_of: str | None = None,
+    store_payload: bool = True,
+) -> str:
     """Best-effort outbound delivery with retry + persistent log.
 
     ``plain_secret`` lets tests inject the secret directly; in production we
     never store it in the clear and skip signing in that case (the receiver
     only gets the hashed prefix as ``X-Clawhum-Signature-Hint``).
+
+    Returns the delivery id of the first (or only) attempt so callers like
+    the test-fire endpoint can hand it back to the user. The payload is
+    persisted on each attempt so the owner can later redeliver from the
+    UI; this is bounded by the JSONL log size like every other store.
     """
     s = get_settings()
     body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -345,11 +452,14 @@ async def _deliver_one(
         "X-Clawhum-Webhook-Id": hook["id"],
         "X-Clawhum-Delivery-Id": _new_id(),
     }
+    if redelivery_of:
+        base_headers["X-Clawhum-Redelivery-Of"] = redelivery_of
     if plain_secret:
         base_headers["X-Clawhum-Signature"] = sign_body(plain_secret, body)
     else:
         base_headers["X-Clawhum-Signature-Hint"] = hook.get("secret_hint", "")
 
+    first_id: str | None = None
     async with httpx.AsyncClient() as client:
         for attempt in range(1, s.webhook_max_attempts + 1):
             t0 = time.perf_counter()
@@ -358,8 +468,11 @@ async def _deliver_one(
             )
             elapsed_ms = int((time.perf_counter() - t0) * 1000)
             ok = 200 <= status < 300
-            _append_delivery({
-                "id": _new_id(),
+            delivery_id = _new_id()
+            if first_id is None:
+                first_id = delivery_id
+            rec: dict[str, Any] = {
+                "id": delivery_id,
                 "tenant_id": hook.get("tenant_id"),
                 "webhook_id": hook["id"],
                 "event": event,
@@ -369,16 +482,25 @@ async def _deliver_one(
                 "elapsed_ms": elapsed_ms,
                 "error": err,
                 "created_at": time.time(),
-            })
+            }
+            if redelivery_of:
+                rec["redelivery_of"] = redelivery_of
+            if store_payload:
+                # Keep the payload small; we already cap match payloads at
+                # the route level. Skip persistence for test events to keep
+                # the log honest about real deliveries.
+                rec["payload"] = payload
+            _append_delivery(rec)
             if ok:
                 log.info("webhook_delivered", webhook_id=hook["id"], attempt=attempt, status=status)
-                return
+                return first_id
             log.warning(
                 "webhook_delivery_failed",
                 webhook_id=hook["id"], attempt=attempt, status=status, error=err,
             )
             if attempt < s.webhook_max_attempts:
                 await asyncio.sleep(min(2 ** (attempt - 1), 8))
+    return first_id or _new_id()
 
 
 async def dispatch_event(tenant_id: str, event: str, payload: dict[str, Any]) -> int:

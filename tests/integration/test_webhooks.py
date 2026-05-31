@@ -157,3 +157,79 @@ async def test_dispatch_writes_delivery_log_on_failure(monkeypatch, tmp_path):
     assert rows[0]["webhook_id"] == "deadbeef0001"
     assert rows[0]["ok"] is False
     assert rows[0]["error"]
+
+
+def test_webhook_test_endpoint_fires_real_request(monkeypatch, tmp_path):
+    """The /test endpoint must perform a real HTTP POST and log the result."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    received: dict[str, object] = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0"))
+            received["body"] = self.rfile.read(length)
+            received["event"] = self.headers.get("X-Clawhum-Event")
+            received["hint"] = self.headers.get("X-Clawhum-Signature-Hint")
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, *_a, **_kw):  # silence
+            return
+
+    srv = HTTPServer(("127.0.0.1", 0), Handler)
+    port = srv.server_address[1]
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        with _client(monkeypatch, tmp_path) as c:
+            r = c.post(
+                "/webhooks",
+                json={"url": f"http://127.0.0.1:{port}/hook"},
+                headers={"X-API-Key": "changeme"},
+            )
+            assert r.status_code == 200, r.text
+            hook_id = r.json()["id"]
+
+            # Unauthenticated should be blocked.
+            assert c.post(f"/webhooks/{hook_id}/test").status_code == 401
+
+            r2 = c.post(
+                f"/webhooks/{hook_id}/test",
+                headers={"X-API-Key": "changeme"},
+            )
+            assert r2.status_code == 200, r2.text
+            body = r2.json()
+            assert body["ok"] is True
+            assert body["event"] == "webhook.test"
+            assert body["delivery_id"]
+
+            assert received.get("event") == "webhook.test"
+            assert b"clawhum webhook test ping" in (received.get("body") or b"")
+
+            # Delivery log shows the test attempt.
+            log = c.get(
+                f"/webhooks/{hook_id}/deliveries",
+                headers={"X-API-Key": "changeme"},
+            ).json()["deliveries"]
+            assert any(d["event"] == "webhook.test" and d["ok"] for d in log)
+
+            # Unknown hook id is 404.
+            r3 = c.post(
+                "/webhooks/zzzzzzzzzzzz/test",
+                headers={"X-API-Key": "changeme"},
+            )
+            assert r3.status_code == 404
+
+            # A test delivery has no stored payload so redeliver returns 422.
+            test_delivery = next(d for d in log if d["event"] == "webhook.test")
+            assert test_delivery["replayable"] is False
+            r4 = c.post(
+                f"/webhooks/{hook_id}/deliveries/{test_delivery['id']}/redeliver",
+                headers={"X-API-Key": "changeme"},
+            )
+            assert r4.status_code == 422
+    finally:
+        srv.shutdown()
+        srv.server_close()

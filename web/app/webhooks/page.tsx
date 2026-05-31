@@ -8,6 +8,8 @@ import {
   Copy,
   Check,
   ArrowClockwise,
+  ArrowsClockwise,
+  PaperPlaneTilt,
   CheckCircle,
   XCircle,
   ClockClockwise,
@@ -41,6 +43,8 @@ interface DeliveryItem {
   elapsed_ms: number;
   error: string | null;
   created_at: number;
+  redelivery_of?: string | null;
+  replayable?: boolean;
 }
 
 const ALL_EVENTS = ["match.completed"] as const;
@@ -62,6 +66,8 @@ export default function WebhooksPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<DeliveryItem[] | null>(null);
   const [delivErr, setDelivErr] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [actionMsg, setActionMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   const reload = useCallback(async () => {
     setLoadErr(null);
@@ -129,6 +135,50 @@ export default function WebhooksPage() {
     }
   }
 
+  async function sendTest(id: string) {
+    setActionBusy(`test:${id}`);
+    setActionMsg(null);
+    try {
+      const r = await fetch(`/api/webhooks/${id}/test`, { method: "POST" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const detail = typeof j?.detail === "string" ? j.detail : `http ${r.status}`;
+        throw new Error(detail);
+      }
+      setActionMsg({ kind: "ok", text: `test ping delivered (${j.delivery_id?.slice(0, 8) || "ok"})` });
+      if (selected !== id) setSelected(id);
+      await openDeliveries(id);
+    } catch (e: any) {
+      setActionMsg({ kind: "err", text: `test failed: ${e?.message || String(e)}` });
+    } finally {
+      setActionBusy(null);
+      setTimeout(() => setActionMsg(null), 4000);
+    }
+  }
+
+  async function redeliver(hookId: string, deliveryId: string) {
+    setActionBusy(`re:${deliveryId}`);
+    setActionMsg(null);
+    try {
+      const r = await fetch(
+        `/api/webhooks/${hookId}/deliveries/${deliveryId}/redeliver`,
+        { method: "POST" },
+      );
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const detail = typeof j?.detail === "string" ? j.detail : `http ${r.status}`;
+        throw new Error(detail);
+      }
+      setActionMsg({ kind: "ok", text: `redelivered (${j.delivery_id?.slice(0, 8) || "ok"})` });
+      await openDeliveries(hookId);
+    } catch (e: any) {
+      setActionMsg({ kind: "err", text: `redeliver failed: ${e?.message || String(e)}` });
+    } finally {
+      setActionBusy(null);
+      setTimeout(() => setActionMsg(null), 4000);
+    }
+  }
+
   async function copySecret() {
     if (!revealedSecret) return;
     try {
@@ -158,6 +208,16 @@ export default function WebhooksPage() {
         Each delivery carries an <code>X-Clawhum-Signature</code> header (HMAC-SHA256 of the body using your endpoint secret).
         Failed deliveries retry with exponential backoff up to three attempts.
       </p>
+
+      {actionMsg && (
+        <div
+          role="status"
+          className={`font-mono text-[11px] inline-flex items-center gap-1.5 ${actionMsg.kind === "ok" ? "text-[var(--color-phosphor)]" : "text-[var(--color-amber)]"}`}
+        >
+          {actionMsg.kind === "ok" ? <CheckCircle size={12} weight="duotone" /> : <Warning size={12} weight="duotone" />}
+          {actionMsg.text}
+        </div>
+      )}
 
       {/* Create form */}
       <div className="border border-[var(--color-line)] p-4 space-y-3 bg-[var(--color-panel)]">
@@ -260,6 +320,15 @@ export default function WebhooksPage() {
                   </div>
                   <div className="flex gap-2 shrink-0">
                     <button
+                      onClick={() => sendTest(w.id)}
+                      disabled={actionBusy === `test:${w.id}`}
+                      className="border border-[var(--color-phosphor)] text-[var(--color-phosphor)] px-2 py-1 font-mono text-[10px] uppercase tracking-widest hover:bg-[rgba(0,255,140,0.06)] disabled:opacity-30 disabled:cursor-not-allowed inline-flex items-center gap-1"
+                      title="Send a synthetic webhook.test event to this URL right now"
+                    >
+                      <PaperPlaneTilt size={12} weight="duotone" />
+                      {actionBusy === `test:${w.id}` ? "sending" : "send test"}
+                    </button>
+                    <button
                       onClick={() => openDeliveries(w.id)}
                       className="border border-[var(--color-line)] px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-panel)] inline-flex items-center gap-1"
                     >
@@ -302,6 +371,7 @@ export default function WebhooksPage() {
                               <th className="text-left px-3 py-1.5">status</th>
                               <th className="text-left px-3 py-1.5">latency</th>
                               <th className="text-left px-3 py-1.5">error</th>
+                              <th className="text-left px-3 py-1.5">replay</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-[var(--color-line)]">
@@ -318,6 +388,23 @@ export default function WebhooksPage() {
                                 </td>
                                 <td className="px-3 py-1.5 text-[var(--color-muted)]">{d.elapsed_ms}ms</td>
                                 <td className="px-3 py-1.5 text-[var(--color-dim)] max-w-[280px] truncate" title={d.error || ""}>{d.error || ""}</td>
+                                <td className="px-3 py-1.5">
+                                  {d.replayable ? (
+                                    <button
+                                      onClick={() => redeliver(w.id, d.id)}
+                                      disabled={actionBusy === `re:${d.id}`}
+                                      className="inline-flex items-center gap-1 text-[var(--color-muted)] hover:text-[var(--color-phosphor)] disabled:opacity-30 disabled:cursor-not-allowed"
+                                      title="Replay this delivery using the original payload"
+                                    >
+                                      <ArrowsClockwise size={12} weight="duotone" />
+                                      {actionBusy === `re:${d.id}` ? "sending" : "redeliver"}
+                                    </button>
+                                  ) : (
+                                    <span className="text-[var(--color-dim)]" title={d.redelivery_of ? `replay of ${d.redelivery_of}` : "no stored payload"}>
+                                      {d.redelivery_of ? "replay" : "—"}
+                                    </span>
+                                  )}
+                                </td>
                               </tr>
                             ))}
                           </tbody>

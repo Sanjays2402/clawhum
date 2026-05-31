@@ -157,12 +157,22 @@ Server-side coverage lives in `tests/integration/test_history.py::test_history_e
 
 ClawHum now ships outbound webhooks. Register a URL at `http://127.0.0.1:7452/webhooks` and every completed match POSTs the full `MatchResponse` JSON to that endpoint, signed with HMAC-SHA256 in the `X-Clawhum-Signature` header. Failed deliveries retry with exponential backoff up to three attempts, and every attempt is recorded in a per-webhook delivery log you can inspect from the same page.
 
+Every registered endpoint now also gets a one-click **send test** button that fires a synthetic `webhook.test` payload to the URL immediately so you can verify reachability before a real event ever happens. Each row in the delivery log carries a **redeliver** action that replays the original payload (same event, same bytes) so you can recover from a downstream outage without humming the same melody again. Test pings are not replayable on purpose: the log marks them with `replayable: false` so the UI keeps the button honest.
+
 ```bash
 # register an endpoint
 curl -X POST http://127.0.0.1:7451/webhooks \
   -H 'X-API-Key: dev' -H 'Content-Type: application/json' \
   -d '{"url":"https://example.com/hooks/clawhum","events":["match.completed"]}'
 # -> {"id":"...","secret":"whsec_...","events":["match.completed"], ...}
+
+# fire a synthetic test ping (logged like any real delivery)
+curl -X POST http://127.0.0.1:7451/webhooks/<id>/test -H 'X-API-Key: dev'
+# -> {"ok":true,"delivery_id":"...","event":"webhook.test"}
+
+# replay a past delivery (same payload, new attempt counter)
+curl -X POST http://127.0.0.1:7451/webhooks/<id>/deliveries/<delivery_id>/redeliver \
+  -H 'X-API-Key: dev'
 
 # list and inspect
 curl http://127.0.0.1:7451/webhooks -H 'X-API-Key: dev'
