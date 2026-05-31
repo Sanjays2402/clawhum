@@ -2,6 +2,21 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace security and breach notification contacts
+
+EU customers and enterprise procurement teams will not sign a paid contract without a documented contact path for security incidents (GDPR Art. 33 requires processors to notify controllers "without undue delay" on becoming aware of a personal data breach; SOC2 CC7.4 requires defined incident communication channels). Each workspace can now register the people we will reach during an incident at [`/settings/security-contacts`](http://127.0.0.1:7452/settings/security-contacts). Each contact carries an email, optional name and phone, and a role from `security`, `privacy`, `legal`, or `ops`. Exactly one contact per workspace may be marked primary; promoting a new primary demotes the previous one in a single audit-logged step. The roster is tenant scoped end to end: an admin in tenant A cannot list, create, delete, or promote contacts belonging to tenant B even when guessing the contact id (HTTP 404). Mutations require the admin role plus a fresh MFA step-up, and flow through the existing tamper-evident audit chain so reviewers get a forensic record of every change to the incident contact list. Email validation, role allowlisting, and duplicate-email rejection return structured 400s the admin console renders inline. Cross-tenant isolation, RBAC, and validation are pinned by `tests/integration/test_security_contacts.py`.
+
+### Try it (security contacts)
+
+```bash
+curl -sS -X POST http://127.0.0.1:7451/security-contacts \
+  -H 'X-API-Key: sk_admin' \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"soc@acme.com","name":"SOC Team","role":"security","primary":true}'
+
+curl -sS http://127.0.0.1:7451/security-contacts -H 'X-API-Key: sk_admin'
+```
+
 ## Per-workspace Data Processing Agreement acceptance
 
 No enterprise buyer signs a paid contract before a named, authorised person from their workspace has clicked accept on the vendor's Data Processing Agreement (GDPR Art. 28, CCPA service-provider obligations, SCC regimes). The workspace admin console at [`/admin/dpa`](http://127.0.0.1:7452/admin/dpa) now exposes the current vendor DPA version and URL, shows whether the workspace has accepted it, and records who clicked accept, when, from which IP, and with which user agent. Acceptance requires the admin role plus a fresh MFA step-up, and the mutation flows through the existing tamper-evident audit chain so reviewers get a forensically defensible record without extra plumbing. The client must echo the published version string when accepting, so a stale client cannot bind the workspace to an outdated contract (HTTP 422 `dpa_version_mismatch`). Cross-tenant isolation, role enforcement, version pinning, and withdraw/re-accept are pinned by `tests/integration/test_dpa.py`.

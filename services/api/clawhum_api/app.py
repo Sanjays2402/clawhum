@@ -22,6 +22,7 @@ from .routes import audit_forwarder as audit_forwarder_routes
 from .routes import batch as batch_routes
 from .routes import collections as collections_routes
 from .routes import embed_origins as embed_origins_routes
+from .routes import security_contacts as security_contacts_routes
 from .routes import legal_hold as legal_hold_routes
 from .routes import feedback as feedback_routes
 from .routes import health as health_routes
@@ -67,6 +68,8 @@ async def _lifespan(app: FastAPI):
     registry = get_registry()
     from . import ip_allowlist as _ip_allowlist
     _ip_allowlist.reset_cache()
+    from . import security_contacts as _security_contacts
+    _security_contacts.reset_cache()
     from . import sso_store as _sso_store
     _sso_store.reset_cache()
     from . import quota_store as _quota_store
@@ -175,6 +178,7 @@ def create_app() -> FastAPI:
     app.include_router(sessions_routes.router)
     app.include_router(seat_limit_routes.router)
     app.include_router(embed_origins_routes.router)
+    app.include_router(security_contacts_routes.router)
     app.include_router(legal_hold_routes.router)
     # Stable, version-pinned public API surface. The same routers are
     # mounted again under /v1 so integrators can target a URL we will not
@@ -206,6 +210,7 @@ def create_app() -> FastAPI:
     app.include_router(sessions_routes.router, prefix="/v1")
     app.include_router(seat_limit_routes.router, prefix="/v1")
     app.include_router(embed_origins_routes.router, prefix="/v1")
+    app.include_router(security_contacts_routes.router, prefix="/v1")
     app.include_router(legal_hold_routes.router, prefix="/v1")
     app.include_router(metrics_router)
     register_app_collector(app)

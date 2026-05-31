@@ -508,6 +508,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Workspace security and breach notification contacts */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">security contacts</span>
+            <a
+              href="/settings/security-contacts"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            the people we will reach during a security incident or personal data breach. one primary contact is paged first. required for GDPR article 33 notifications and SOC2 incident communication. admin role plus MFA required.
+          </p>
+        </section>
+
         {/* Workspace SSO */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">
