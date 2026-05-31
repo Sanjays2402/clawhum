@@ -42,7 +42,7 @@ jobs:
           pip-audit --strict --progress-spinner=off
       - name: Upload pip-audit report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pip-audit
           path: pip-audit.json
@@ -134,7 +134,7 @@ jobs:
           artifact-name: clawhum-sbom.spdx.json
           output-file: clawhum-sbom.spdx.json
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: clawhum-sbom.spdx.json
