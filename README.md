@@ -10,6 +10,50 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Step-up MFA for admin actions
+
+Destructive admin endpoints (revoke API key, delete user data, mutate the IP allowlist, delete a webhook) accept an optional `X-MFA-Code` header. Any actor (API key or PAT) can enroll a TOTP authenticator from the settings UI; once verified, the gate engages for that actor and the same endpoints reject calls without a fresh six-digit code with `401 WWW-Authenticate: MFA`. A bad code returns `403`. Recovery codes are single-use and shown exactly once at verification time.
+
+The gate is per-actor by design: an actor that has never enrolled is not blocked, so existing CI keys keep working until you opt them in. Disabling MFA requires a current TOTP or recovery code, so a stolen API key alone cannot turn the second factor off. Set `CLAWHUM_MFA_REQUIRED_FOR_ADMIN=false` to disable enforcement globally (not recommended for production).
+
+```bash
+# Enroll a fresh secret. Returns secret + otpauth URI; show in your authenticator.
+curl -X POST http://127.0.0.1:7451/mfa/enroll -H "X-API-Key: $CLAWHUM_KEY"
+
+# Verify the first code your authenticator shows. Returns 10 recovery codes ONCE.
+curl -X POST http://127.0.0.1:7451/mfa/verify \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "Content-Type: application/json" \
+  -d '{"code":"123456"}'
+
+# After enrollment, destructive admin calls must include X-MFA-Code:
+curl -X DELETE http://127.0.0.1:7451/v1/keys/abc123 \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "X-MFA-Code: 654321"
+```
+
+The web UI lives at `/settings/security` once `pnpm dev` is running.
+
+## Webhook destination policy (SSRF protection)
+
+Outbound webhook deliveries are validated against a workspace destination policy at both registration time and immediately before every delivery attempt. Hosts that resolve to loopback, link local (including the cloud metadata range `169.254.169.254`), multicast, or RFC1918 addresses are refused; cloud metadata hosts stay denied even if a workspace tries to allowlist them. The recheck on every delivery defeats DNS rebinding where a previously valid host starts pointing at an internal IP after registration.
+
+Workspace owners can add trusted host suffixes for on-prem receivers; suffix matching is implicit, so `acme.internal` covers `api.acme.internal` and any deeper subdomain.
+
+Manage the allowlist from the workspace UI at `/settings/webhook-destinations`, or from the API:
+
+```bash
+# Read the current policy (any authenticated key).
+curl http://127.0.0.1:7452/api/v1/webhooks/destination-allowlist \
+  -H "X-API-Key: $CLAWHUM_API_KEY"
+
+# Replace the trusted host suffixes (admin role required).
+curl -X PUT http://127.0.0.1:7452/api/v1/webhooks/destination-allowlist \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"hosts": ["acme.internal", "hooks.partner.com"]}'
+```
+
+A blocked delivery shows up in the webhook delivery log with `status=0`, `policy_blocked=true`, and a human-readable reason in `error`. Set `CLAWHUM_WEBHOOK_BLOCK_PRIVATE_IPS=false` only for local development; in production the default (`true`) closes a class of SSRF attacks that buyers' security reviews flag.
+
 ## Try it (sandbox dry-run for destructive calls)
 
 Every `DELETE` endpoint now accepts `?dry_run=true` (or the header `X-Dry-Run: 1`). The server runs the full auth, tenant scoping, and RBAC stack, then returns a structured preview of what would be removed without mutating storage. Audit log entries record `dry_run: true` so reviewers can tell previews apart from real mutations. A workspace UI lives at `/settings/sandbox` for interactive previews.
