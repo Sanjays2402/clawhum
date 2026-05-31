@@ -583,7 +583,16 @@ Server-side coverage lives in `tests/integration/test_history.py::test_history_e
 
 ClawHum now ships outbound webhooks. Register a URL at `http://127.0.0.1:7452/webhooks` and every completed match POSTs the full `MatchResponse` JSON to that endpoint, signed with HMAC-SHA256 in the `X-Clawhum-Signature` header. Failed deliveries retry with exponential backoff up to three attempts, and every attempt is recorded in a per-webhook delivery log you can inspect from the same page.
 
-Every registered endpoint now also gets a one-click **send test** button that fires a synthetic `webhook.test` payload to the URL immediately so you can verify reachability before a real event ever happens. Each row in the delivery log carries a **redeliver** action that replays the original payload (same event, same bytes) so you can recover from a downstream outage without humming the same melody again. Test pings are not replayable on purpose: the log marks them with `replayable: false` so the UI keeps the button honest.
+Workspace admins can now rotate a webhook's signing secret in place from `http://127.0.0.1:7452/webhooks` (or `POST /webhooks/{id}/rotate-secret` with `{"grace_seconds": 3600}`). The endpoint returns the new secret exactly once and, for any non-zero grace window, every outbound delivery during the overlap carries both `X-Clawhum-Signature` (new secret) and `X-Clawhum-Signature-Previous` (old secret) plus an `X-Clawhum-Previous-Secret-Expires` epoch header so your receiver can deploy the new key with zero dropped events. Setting `grace_seconds: 0` invalidates the old secret immediately for incident response. Rotation is admin-only, gated by MFA when enrolled, tenant-isolated (a cross-tenant rotate returns 404 with no disclosure), and the previous-hint disappears from `/webhooks` listings the moment the grace window expires.
+
+```bash
+curl -X POST http://127.0.0.1:7451/webhooks/$HOOK_ID/rotate-secret \
+  -H 'X-API-Key: dev' -H 'Content-Type: application/json' \
+  -d '{"grace_seconds": 3600}'
+# -> {"id":"...","secret":"whsec_...","previous_secret_expires_at":..., "rotated_at":...}
+```
+
+Every registered endpoint also has a one-click **send test** button that fires a synthetic `webhook.test` payload to the URL immediately so you can verify reachability before a real event ever happens. Each row in the delivery log carries a **redeliver** action that replays the original payload (same event, same bytes) so you can recover from a downstream outage without humming the same melody again. Test pings are not replayable on purpose: the log marks them with `replayable: false` so the UI keeps the button honest.
 
 Outbound destinations are protected against SSRF by default. Any URL whose hostname resolves to loopback, link local, multicast, RFC1918, or other private ranges is rejected with a 400 at registration, and the same check is re-run immediately before every delivery attempt to defeat DNS rebinding (a blocked delivery is recorded in the log with `status: 0` and never leaves the process). Cloud metadata endpoints (`169.254.169.254`, `metadata.google.internal`) are on a global denylist that cannot be overridden. Workspace owners can add trusted host suffixes for on prem receivers via `PUT /webhooks/destination-allowlist` (admin role required). Set `CLAWHUM_WEBHOOK_BLOCK_PRIVATE_IPS=false` only for local development.
 

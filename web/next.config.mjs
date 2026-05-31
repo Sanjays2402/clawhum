@@ -27,6 +27,7 @@ const nextConfig = {
       { source: "/api/webhooks/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhooks/:id` },
       { source: "/api/webhooks/:id/deliveries", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhooks/:id/deliveries` },
       { source: "/api/webhooks/:id/test", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhooks/:id/test` },
+      { source: "/api/webhooks/:id/rotate-secret", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhooks/:id/rotate-secret` },
       { source: "/api/webhooks/:id/deliveries/:dId/redeliver", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhooks/:id/deliveries/:dId/redeliver` },
       { source: "/api/activity", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/activity` },
       { source: "/api/collections", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/collections` },

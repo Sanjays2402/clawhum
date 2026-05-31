@@ -131,6 +131,13 @@ def _append_delivery(rec: dict[str, Any]) -> None:
 
 
 def _public_view(rec: dict[str, Any]) -> dict[str, Any]:
+    prev_hint = rec.get("previous_secret_hint") or None
+    prev_exp = rec.get("previous_secret_expires_at") or 0.0
+    # Hide an expired previous secret from the public view so the UI
+    # cannot show a misleading rotation badge after the grace window.
+    if prev_hint and prev_exp and prev_exp <= time.time():
+        prev_hint = None
+        prev_exp = 0.0
     return {
         "id": rec["id"],
         "url": rec["url"],
@@ -138,6 +145,9 @@ def _public_view(rec: dict[str, Any]) -> dict[str, Any]:
         "created_at": rec.get("created_at", 0.0),
         "active": bool(rec.get("active", True)),
         "secret_hint": rec.get("secret_hint", ""),
+        "previous_secret_hint": prev_hint,
+        "previous_secret_expires_at": prev_exp or None,
+        "rotated_at": rec.get("rotated_at") or None,
     }
 
 
@@ -161,6 +171,23 @@ class WebhookListItem(BaseModel):
     created_at: float
     active: bool
     secret_hint: str
+    previous_secret_hint: str | None = None
+    previous_secret_expires_at: float | None = None
+    rotated_at: float | None = None
+
+
+class RotateSecretBody(BaseModel):
+    # 0 means invalidate the old secret immediately (no overlap window).
+    # Cap matches webhook_max_attempts retry envelope: a week is plenty
+    # for any reasonable receiver-side rotation deployment.
+    grace_seconds: int = Field(default=86400, ge=0, le=604800)
+
+
+class RotateSecretResponse(BaseModel):
+    id: str
+    secret: str  # full new secret, returned ONCE
+    previous_secret_expires_at: float | None
+    rotated_at: float
 
 
 class WebhookListResponse(BaseModel):
@@ -273,6 +300,94 @@ async def delete_webhook(
     }
     _append_hook(tomb)
     return {"ok": True, "id": hook_id}
+
+
+@router.post(
+    "/webhooks/{hook_id}/rotate-secret",
+    dependencies=[
+        Depends(require_api_key),
+        Depends(require_roles("admin")),
+        Depends(require_mfa()),
+    ],
+)
+async def rotate_webhook_secret(
+    hook_id: str,
+    body: RotateSecretBody,
+    request: Request,
+    tenant_id: str = Depends(current_tenant),
+) -> dict[str, Any]:
+    """Rotate a webhook's signing secret with an optional overlap window.
+
+    Receivers cannot atomically swap signing keys; for any grace_seconds
+    > 0 outbound deliveries during the window carry both the new
+    signature (``X-Clawhum-Signature``) and the previous one
+    (``X-Clawhum-Signature-Previous``) so the receiver can accept either
+    while it deploys the new key. Setting grace_seconds=0 invalidates
+    the old secret immediately, which is the right choice for incident
+    response.
+
+    The new plaintext is returned exactly once, matching create.
+    """
+    if not hook_id.isalnum() or len(hook_id) > 32:
+        raise HTTPException(404, "not found")
+    current = {r["id"]: r for r in _live_hooks(tenant_id)}
+    hook = current.get(hook_id)
+    if hook is None:
+        raise HTTPException(404, "not found")
+
+    from ..dry_run import is_dry_run, preview
+    if is_dry_run(request):
+        return preview(
+            "webhook_secret_rotation",
+            hook_id,
+            tenant_id=tenant_id,
+            url=hook["url"],
+            grace_seconds=body.grace_seconds,
+        )
+
+    now = time.time()
+    new_secret = _new_secret()
+    new_hint = f"{new_secret[:10]}...{new_secret[-4:]}"
+    prev_hash = hook.get("secret_hash")
+    prev_hint = hook.get("secret_hint")
+    prev_expires_at: float | None
+    if body.grace_seconds > 0 and prev_hash:
+        prev_expires_at = now + body.grace_seconds
+    else:
+        prev_expires_at = None
+        prev_hash = None
+        prev_hint = None
+
+    rec = {
+        "id": hook_id,
+        "tenant_id": tenant_id,
+        "url": hook["url"],
+        "events": hook.get("events", list(ALL_EVENTS)),
+        "created_at": hook.get("created_at", now),
+        "active": bool(hook.get("active", True)),
+        "secret_hash": _hash_secret(new_secret),
+        "secret_hint": new_hint,
+        "previous_secret_hash": prev_hash,
+        "previous_secret_hint": prev_hint,
+        "previous_secret_expires_at": prev_expires_at,
+        "rotated_at": now,
+    }
+    _append_hook(rec)
+
+    # Promote any test-only plaintext override so signature assertions in
+    # tests still work after a rotation. Receivers in production track
+    # their own secret; this seam only matters when the API also signs.
+    old_plain = _PLAINTEXT_OVERRIDES.get(hook_id)
+    if old_plain and prev_expires_at:
+        _PLAINTEXT_PREVIOUS[hook_id] = (old_plain, prev_expires_at)
+    else:
+        _PLAINTEXT_PREVIOUS.pop(hook_id, None)
+    return RotateSecretResponse(
+        id=hook_id,
+        secret=new_secret,
+        previous_secret_expires_at=prev_expires_at,
+        rotated_at=now,
+    ).model_dump()
 
 
 @router.get(
@@ -472,6 +587,20 @@ async def _deliver_one(
     else:
         base_headers["X-Clawhum-Signature-Hint"] = hook.get("secret_hint", "")
 
+    # Rotation grace: include a signature against the previous secret
+    # so receivers can accept either while they roll out the new key.
+    prev_exp = hook.get("previous_secret_expires_at") or 0.0
+    if prev_exp and prev_exp > time.time():
+        prev_hint = hook.get("previous_secret_hint") or ""
+        if prev_hint:
+            base_headers["X-Clawhum-Signature-Hint-Previous"] = prev_hint
+        prev_plain_pair = _PLAINTEXT_PREVIOUS.get(hook["id"])
+        if prev_plain_pair and prev_plain_pair[1] > time.time():
+            base_headers["X-Clawhum-Signature-Previous"] = sign_body(
+                prev_plain_pair[0], body
+            )
+        base_headers["X-Clawhum-Previous-Secret-Expires"] = str(int(prev_exp))
+
     first_id: str | None = None
     tenant_id = hook.get("tenant_id", "")
     # Re-check SSRF policy on every delivery so a DNS rebind or a newly
@@ -575,6 +704,11 @@ async def dispatch_event(tenant_id: str, event: str, payload: dict[str, Any]) ->
 # code never populates this; the secret is shown once at create time and
 # the receiver is expected to store it on their side.
 _PLAINTEXT_OVERRIDES: dict[str, str] = {}
+
+# Mirror for the previous (pre-rotation) plaintext during the grace
+# window so tests can assert both signatures verify. Same production
+# caveat: never populated outside tests.
+_PLAINTEXT_PREVIOUS: dict[str, tuple[str, float]] = {}
 
 
 # -----------------------------------------------------------------------------

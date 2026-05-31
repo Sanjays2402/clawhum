@@ -9,6 +9,7 @@ import {
   Check,
   ArrowClockwise,
   ArrowsClockwise,
+  Key,
   PaperPlaneTilt,
   CheckCircle,
   XCircle,
@@ -23,6 +24,16 @@ interface WebhookItem {
   created_at: number;
   active: boolean;
   secret_hint: string;
+  previous_secret_hint?: string | null;
+  previous_secret_expires_at?: number | null;
+  rotated_at?: number | null;
+}
+
+interface RotateResponse {
+  id: string;
+  secret: string;
+  previous_secret_expires_at: number | null;
+  rotated_at: number;
 }
 
 interface CreateResponse {
@@ -68,6 +79,10 @@ export default function WebhooksPage() {
   const [delivErr, setDelivErr] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [rotateFor, setRotateFor] = useState<string | null>(null);
+  const [rotateGrace, setRotateGrace] = useState<number>(60);
+  const [rotated, setRotated] = useState<{ url: string; res: RotateResponse } | null>(null);
+  const [rotateCopied, setRotateCopied] = useState(false);
 
   const reload = useCallback(async () => {
     setLoadErr(null);
@@ -188,6 +203,39 @@ export default function WebhooksPage() {
     } catch {/* ignore */}
   }
 
+  async function rotateSecret(id: string, url: string) {
+    setActionBusy(`rot:${id}`);
+    setActionMsg(null);
+    try {
+      const r = await fetch(`/api/webhooks/${id}/rotate-secret`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ grace_seconds: Math.max(0, Math.floor(rotateGrace)) * 60 }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const detail = typeof j?.detail === "string" ? j.detail : `http ${r.status}`;
+        throw new Error(detail);
+      }
+      setRotated({ url, res: j as RotateResponse });
+      setRotateFor(null);
+      await reload();
+    } catch (e: any) {
+      setActionMsg({ kind: "err", text: `rotate failed: ${e?.message || String(e)}` });
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function copyRotated() {
+    if (!rotated) return;
+    try {
+      await navigator.clipboard.writeText(rotated.res.secret);
+      setRotateCopied(true);
+      setTimeout(() => setRotateCopied(false), 1500);
+    } catch {/* ignore */}
+  }
+
   return (
     <div className="px-4 py-4 space-y-4 max-w-[1100px]">
       <div className="flex items-center gap-2">
@@ -278,6 +326,38 @@ export default function WebhooksPage() {
         </div>
       )}
 
+      {/* Reveal-once secret */}
+      {rotated && (
+        <div className="border border-[var(--color-phosphor)] p-4 space-y-2 bg-[rgba(0,255,140,0.04)]">
+          <div className="font-mono text-[10px] uppercase tracking-widest text-[var(--color-phosphor)]">
+            new signing secret (shown once) for {rotated.url}
+          </div>
+          <div className="font-mono text-[11px] text-[var(--color-dim)]">
+            {rotated.res.previous_secret_expires_at
+              ? `previous secret stays valid until ${fmtTs(rotated.res.previous_secret_expires_at * 1000)}. deploy this key on your receiver before then.`
+              : "previous secret has been invalidated immediately."}
+          </div>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 bg-[var(--color-bg)] border border-[var(--color-line)] px-2 py-1.5 font-mono text-[12px] text-[var(--color-text)] break-all">
+              {rotated.res.secret}
+            </code>
+            <button
+              onClick={copyRotated}
+              className="border border-[var(--color-line)] px-2 py-1.5 hover:bg-[var(--color-panel)] inline-flex items-center gap-1"
+              aria-label="Copy new secret"
+            >
+              {rotateCopied ? <Check size={14} weight="duotone" className="text-[var(--color-phosphor)]" /> : <Copy size={14} weight="duotone" />}
+            </button>
+            <button
+              onClick={() => setRotated(null)}
+              className="border border-[var(--color-line)] px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-text)]"
+            >
+              dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* List */}
       <div className="border border-[var(--color-line)]">
         <div className="border-b border-[var(--color-line)] px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-[var(--color-dim)]">
@@ -317,6 +397,12 @@ export default function WebhooksPage() {
                     <div className="mt-1 font-mono text-[10px] text-[var(--color-dim)] uppercase tracking-widest">
                       id {w.id} · created {fmtTs(w.created_at * 1000)} · events {w.events.join(",")} · secret {w.secret_hint}
                     </div>
+                    {w.previous_secret_hint && w.previous_secret_expires_at && (
+                      <div className="mt-1 font-mono text-[10px] text-[var(--color-amber)] uppercase tracking-widest inline-flex items-center gap-1">
+                        <Key size={10} weight="duotone" />
+                        previous secret {w.previous_secret_hint} accepted until {fmtTs(w.previous_secret_expires_at * 1000)}
+                      </div>
+                    )}
                   </div>
                   <div className="flex gap-2 shrink-0">
                     <button
@@ -335,6 +421,13 @@ export default function WebhooksPage() {
                       <ClockClockwise size={12} weight="duotone" /> deliveries
                     </button>
                     <button
+                      onClick={() => { setRotateFor(rotateFor === w.id ? null : w.id); setRotateGrace(60); }}
+                      className="border border-[var(--color-line)] px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-panel)] inline-flex items-center gap-1"
+                      title="Generate a new signing secret with an optional overlap window"
+                    >
+                      <Key size={12} weight="duotone" /> rotate
+                    </button>
+                    <button
                       onClick={() => remove(w.id)}
                       disabled={busy}
                       className="border border-[var(--color-line)] px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-[var(--color-amber)] hover:bg-[rgba(245,158,11,0.06)] disabled:opacity-30 inline-flex items-center gap-1"
@@ -343,6 +436,50 @@ export default function WebhooksPage() {
                     </button>
                   </div>
                 </div>
+
+                {rotateFor === w.id && (
+                  <div className="mt-3 border border-[var(--color-phosphor)] p-3 bg-[rgba(0,255,140,0.04)] space-y-2">
+                    <div className="font-mono text-[10px] uppercase tracking-widest text-[var(--color-phosphor)]">
+                      rotate signing secret
+                    </div>
+                    <p className="font-mono text-[11px] text-[var(--color-dim)] max-w-[72ch]">
+                      Generates a new secret and returns it once. Within the overlap window
+                      we attach both <code>X-Clawhum-Signature</code> and
+                      <code> X-Clawhum-Signature-Previous</code> so your receiver can deploy
+                      the new key without dropping deliveries. Set the window to 0 to
+                      invalidate the old secret immediately.
+                    </p>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                      <label className="font-mono text-[11px] text-[var(--color-muted)] inline-flex items-center gap-2">
+                        overlap (minutes)
+                        <input
+                          type="number"
+                          min={0}
+                          max={10080}
+                          value={rotateGrace}
+                          onChange={e => setRotateGrace(Number(e.target.value))}
+                          className="w-24 bg-[var(--color-bg)] border border-[var(--color-line)] px-2 py-1 font-mono text-[12px] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-phosphor)]"
+                        />
+                      </label>
+                      <div className="flex gap-2 sm:ml-auto">
+                        <button
+                          onClick={() => setRotateFor(null)}
+                          className="border border-[var(--color-line)] px-3 py-1 font-mono text-[10px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-text)]"
+                        >
+                          cancel
+                        </button>
+                        <button
+                          disabled={actionBusy === `rot:${w.id}`}
+                          onClick={() => rotateSecret(w.id, w.url)}
+                          className="border border-[var(--color-phosphor)] text-[var(--color-phosphor)] px-3 py-1 font-mono text-[10px] uppercase tracking-widest hover:bg-[rgba(0,255,140,0.06)] disabled:opacity-30 inline-flex items-center gap-1"
+                        >
+                          <Key size={12} weight="duotone" />
+                          {actionBusy === `rot:${w.id}` ? "rotating" : "rotate secret"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {selected === w.id && (
                   <div className="mt-3 border border-[var(--color-line)] bg-[var(--color-bg)]">
