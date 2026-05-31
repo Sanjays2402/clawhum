@@ -1,0 +1,299 @@
+"""Per-tenant match history.
+
+Server-side persistence for run history so it survives device switches
+and localStorage clears. The web client also keeps a local cache, but
+this endpoint is the source of truth for an authenticated user.
+
+POST   /history             save a match (returns id)
+GET    /history             list saved matches (newest first, paginated)
+GET    /history/{id}        fetch one
+PATCH  /history/{id}        rename / retag
+DELETE /history/{id}        delete one
+
+Storage is a JSONL file at settings.history_path, scoped per tenant.
+Reads only return rows owned by the calling tenant. Public reads are
+intentionally not supported here; share links exist for that.
+"""
+
+from __future__ import annotations
+
+import json
+import secrets
+import time
+from pathlib import Path
+from threading import Lock
+from typing import Any
+
+from clawhum_core.settings import get_settings
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
+
+from ..auth import require_api_key
+from ..schemas import MatchResult
+
+router = APIRouter(tags=["history"])
+
+_WRITE_LOCK = Lock()
+_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz"
+_ID_LEN = 12
+_MAX_TAGS = 16
+_MAX_TAG_LEN = 32
+_MAX_NAME = 120
+_MAX_RESULTS = 50
+
+
+def _new_id() -> str:
+    return "".join(secrets.choice(_ALPHABET) for _ in range(_ID_LEN))
+
+
+def _valid_id(s: str) -> bool:
+    return bool(s) and len(s) <= 64 and s.isalnum()
+
+
+def _store_path() -> Path:
+    p = getattr(get_settings(), "history_path", Path("./data/history.jsonl"))
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def _iter_records():
+    p = _store_path()
+    if not p.exists():
+        return
+    with p.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+
+def _collapse(tenant_id: str) -> dict[str, dict[str, Any]]:
+    """Return latest record-per-id for the given tenant.
+
+    Deleted records are emitted as tombstones (deleted=True) so we
+    honor deletes without rewriting the file. PATCH writes append a
+    full updated row; the newest one wins.
+    """
+    by_id: dict[str, dict[str, Any]] = {}
+    for rec in _iter_records():
+        if rec.get("tenant_id") != tenant_id:
+            continue
+        rid = rec.get("id")
+        if not isinstance(rid, str):
+            continue
+        by_id[rid] = rec
+    # drop tombstones
+    return {k: v for k, v in by_id.items() if not v.get("deleted")}
+
+
+def _append(record: dict[str, Any]) -> None:
+    line = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+    with _WRITE_LOCK:
+        with _store_path().open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+
+
+def _normalize_tags(tags: list[str] | None) -> list[str]:
+    if not tags:
+        return []
+    seen: list[str] = []
+    for t in tags:
+        if not isinstance(t, str):
+            continue
+        v = t.strip().lower()[:_MAX_TAG_LEN]
+        if v and v not in seen:
+            seen.append(v)
+        if len(seen) >= _MAX_TAGS:
+            break
+    return seen
+
+
+class HistoryCreateBody(BaseModel):
+    query_id: str = Field(min_length=1, max_length=128)
+    elapsed_ms: int = 0
+    count: int = 0
+    results: list[MatchResult] = Field(default_factory=list)
+    filename: str | None = Field(default=None, max_length=240)
+    duration_sec: float | None = None
+    name: str | None = Field(default=None, max_length=_MAX_NAME)
+    tags: list[str] = Field(default_factory=list)
+
+
+class HistoryPatchBody(BaseModel):
+    name: str | None = Field(default=None, max_length=_MAX_NAME)
+    tags: list[str] | None = None
+
+
+class HistoryItem(BaseModel):
+    id: str
+    created_at: float
+    updated_at: float
+    query_id: str
+    elapsed_ms: int
+    count: int
+    results: list[MatchResult]
+    filename: str | None = None
+    duration_sec: float | None = None
+    name: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class HistoryListResponse(BaseModel):
+    items: list[HistoryItem]
+    total: int
+    limit: int
+    offset: int
+
+
+class HistoryCreateResponse(BaseModel):
+    id: str
+
+
+def _to_item(rec: dict[str, Any]) -> HistoryItem:
+    return HistoryItem(
+        id=str(rec["id"]),
+        created_at=float(rec.get("created_at") or 0.0),
+        updated_at=float(rec.get("updated_at") or rec.get("created_at") or 0.0),
+        query_id=str(rec.get("query_id") or ""),
+        elapsed_ms=int(rec.get("elapsed_ms") or 0),
+        count=int(rec.get("count") or 0),
+        results=[MatchResult(**r) for r in (rec.get("results") or [])],
+        filename=rec.get("filename"),
+        duration_sec=rec.get("duration_sec"),
+        name=rec.get("name"),
+        tags=list(rec.get("tags") or []),
+    )
+
+
+@router.post(
+    "/history",
+    response_model=HistoryCreateResponse,
+    dependencies=[Depends(require_api_key)],
+)
+async def create_history(body: HistoryCreateBody, request: Request) -> HistoryCreateResponse:
+    if not body.results:
+        raise HTTPException(400, "cannot save an empty result set")
+    if len(body.results) > _MAX_RESULTS:
+        raise HTTPException(400, f"too many results in one entry (max {_MAX_RESULTS})")
+    tenant_id = getattr(request.state, "tenant_id", "anonymous")
+    api_key_name = getattr(request.state, "api_key_name", "dev")
+    now = time.time()
+    hid = _new_id()
+    rec = {
+        "id": hid,
+        "tenant_id": tenant_id,
+        "api_key_name": api_key_name,
+        "created_at": now,
+        "updated_at": now,
+        "query_id": body.query_id,
+        "elapsed_ms": int(body.elapsed_ms),
+        "count": int(body.count or len(body.results)),
+        "results": [r.model_dump() for r in body.results],
+        "filename": body.filename,
+        "duration_sec": body.duration_sec,
+        "name": (body.name or "").strip() or None,
+        "tags": _normalize_tags(body.tags),
+    }
+    _append(rec)
+    return HistoryCreateResponse(id=hid)
+
+
+@router.get(
+    "/history",
+    response_model=HistoryListResponse,
+    dependencies=[Depends(require_api_key)],
+)
+async def list_history(
+    request: Request,
+    q: str = Query(default="", max_length=120),
+    tag: str = Query(default="", max_length=_MAX_TAG_LEN),
+    limit: int = Query(default=25, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> HistoryListResponse:
+    tenant_id = getattr(request.state, "tenant_id", "anonymous")
+    rows = list(_collapse(tenant_id).values())
+    needle = q.strip().lower()
+    tag_needle = tag.strip().lower()
+    if needle:
+        def hit(r: dict[str, Any]) -> bool:
+            if needle in (r.get("name") or "").lower():
+                return True
+            if needle in (r.get("filename") or "").lower():
+                return True
+            for res in r.get("results") or []:
+                if needle in str(res.get("title", "")).lower():
+                    return True
+                if needle in str(res.get("artist", "")).lower():
+                    return True
+            return False
+        rows = [r for r in rows if hit(r)]
+    if tag_needle:
+        rows = [r for r in rows if tag_needle in (r.get("tags") or [])]
+    rows.sort(key=lambda r: float(r.get("created_at") or 0.0), reverse=True)
+    total = len(rows)
+    page = rows[offset : offset + limit]
+    return HistoryListResponse(
+        items=[_to_item(r) for r in page],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/history/{hid}",
+    response_model=HistoryItem,
+    dependencies=[Depends(require_api_key)],
+)
+async def get_history(hid: str, request: Request) -> HistoryItem:
+    if not _valid_id(hid):
+        raise HTTPException(404, "not found")
+    tenant_id = getattr(request.state, "tenant_id", "anonymous")
+    rec = _collapse(tenant_id).get(hid)
+    if rec is None:
+        raise HTTPException(404, "not found")
+    return _to_item(rec)
+
+
+@router.patch(
+    "/history/{hid}",
+    response_model=HistoryItem,
+    dependencies=[Depends(require_api_key)],
+)
+async def patch_history(hid: str, body: HistoryPatchBody, request: Request) -> HistoryItem:
+    if not _valid_id(hid):
+        raise HTTPException(404, "not found")
+    tenant_id = getattr(request.state, "tenant_id", "anonymous")
+    rec = _collapse(tenant_id).get(hid)
+    if rec is None:
+        raise HTTPException(404, "not found")
+    updated = dict(rec)
+    if body.name is not None:
+        updated["name"] = body.name.strip() or None
+    if body.tags is not None:
+        updated["tags"] = _normalize_tags(body.tags)
+    updated["updated_at"] = time.time()
+    _append(updated)
+    return _to_item(updated)
+
+
+@router.delete("/history/{hid}", dependencies=[Depends(require_api_key)])
+async def delete_history(hid: str, request: Request) -> dict[str, Any]:
+    if not _valid_id(hid):
+        raise HTTPException(404, "not found")
+    tenant_id = getattr(request.state, "tenant_id", "anonymous")
+    rec = _collapse(tenant_id).get(hid)
+    if rec is None:
+        raise HTTPException(404, "not found")
+    tomb = {
+        "id": hid,
+        "tenant_id": tenant_id,
+        "deleted": True,
+        "updated_at": time.time(),
+    }
+    _append(tomb)
+    return {"ok": True, "id": hid}
