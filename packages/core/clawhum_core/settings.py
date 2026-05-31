@@ -35,6 +35,22 @@ class Settings(BaseSettings):
     usage_path: Path = Path("./data/usage.jsonl")
     webhooks_path: Path = Path("./data/webhooks.jsonl")
     pat_path: Path = Path("./data/personal_access_tokens.jsonl")
+    pat_max_ttl_days: int = Field(
+        default=365,
+        description=(
+            "Hard upper bound on PAT lifetime, in days. Mint requests "
+            "that ask for a longer TTL are clamped. 0 disables the cap "
+            "(tokens can live forever, not recommended for production)."
+        ),
+    )
+    pat_default_ttl_days: int = Field(
+        default=90,
+        description=(
+            "Default PAT lifetime in days when the caller does not pick "
+            "one. 0 means tokens default to non-expiring. Always bounded "
+            "by pat_max_ttl_days when that cap is enabled."
+        ),
+    )
     ip_allowlist_path: Path = Path("./data/ip_allowlist.jsonl")
     ip_allowlist_enabled: bool = Field(
         default=True,

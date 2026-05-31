@@ -101,15 +101,20 @@ curl -X PATCH http://127.0.0.1:7452/api/v1/share/$SHARE_ID \
 
 Mint, list, and revoke API tokens from the browser. Each token is scoped to the caller's tenant, carries a subset of the minter's roles, and is shown in plaintext exactly once. Tokens authenticate against the same `X-API-Key` header that the rest of the API uses, so existing curl/python/JS snippets keep working.
 
+Tokens now expire. Every PAT carries an optional `expires_at` (defaults to 90 days, capped by the workspace policy at `CLAWHUM_PAT_MAX_TTL_DAYS`, default 365). The mint form lets you pick the lifetime, the list view shows `expires` and flags expired rows in red, and an expired bearer is rejected at the auth layer the same way a revoked one is, so a leaked token has a known, bounded blast radius.
+
 ```bash
 make dev            # FastAPI on :7451, Next.js on :7452
 open http://127.0.0.1:7452/settings/keys
 
-# After minting a token in the UI, call any /v1/* endpoint with it.
+# Mint a token that auto-expires in 30 days.
 curl -X POST http://127.0.0.1:7452/api/v1/keys \
   -H "X-API-Key: $CLAWHUM_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"name":"ci-bot"}'
+  -d '{"name":"ci-bot","expires_in_days":30}'
+
+# Read the active workspace policy (max + default TTL in days).
+curl -s http://127.0.0.1:7452/api/v1/keys/policy -H "X-API-Key: $CLAWHUM_API_KEY"
 ```
 
 ## Try it (saved history views)

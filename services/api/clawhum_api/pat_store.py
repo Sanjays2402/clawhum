@@ -72,6 +72,12 @@ class PAT:
     secret_hash: str
     secret_hint: str  # last 4 chars, for the UI
     deleted: bool = False
+    expires_at: float = 0.0  # 0.0 means "never expires"
+
+    def is_expired(self, now: float | None = None) -> bool:
+        if self.expires_at <= 0:
+            return False
+        return (now if now is not None else time.time()) >= self.expires_at
 
 
 def _path() -> Path:
@@ -117,6 +123,7 @@ def _from_record(rec: dict[str, Any]) -> PAT:
         secret_hash=rec.get("secret_hash", ""),
         secret_hint=rec.get("secret_hint", ""),
         deleted=bool(rec.get("deleted", False)),
+        expires_at=float(rec.get("expires_at", 0.0) or 0.0),
     )
 
 
@@ -150,10 +157,13 @@ def lookup_by_secret(secret: str) -> PAT | None:
     if not looks_like_pat(secret):
         return None
     h = hash_secret(secret)
+    now = time.time()
     for tok in _reduce().values():
         if tok.deleted:
             continue
         if hmac_compare(tok.secret_hash, h):
+            if tok.is_expired(now):
+                return None
             return tok
     return None
 
@@ -168,27 +178,63 @@ def hmac_compare(a: str, b: str) -> bool:
     return diff == 0
 
 
+def resolve_expiry(
+    *,
+    requested_days: int | None,
+    now: float | None = None,
+) -> float:
+    """Translate a TTL in days into an absolute epoch seconds expiry.
+
+    Caller passes ``None`` to mean "use the deployment default". Passing
+    ``0`` explicitly means "never expires" and is honoured only when the
+    operator has not set a hard cap via ``pat_max_ttl_days``. Any
+    positive request is clamped to the cap so callers cannot escape the
+    workspace policy. Returns ``0.0`` for a non-expiring token.
+    """
+    s = get_settings()
+    cap = max(0, int(s.pat_max_ttl_days or 0))
+    default = max(0, int(s.pat_default_ttl_days or 0))
+    if requested_days is None:
+        days = default
+    else:
+        days = max(0, int(requested_days))
+    if cap > 0:
+        # Hard cap: clamp both explicit asks and the default to the
+        # operator-defined ceiling. A 0-day ask becomes the cap so
+        # "never" is never honoured when a cap is set.
+        if days <= 0 or days > cap:
+            days = cap
+    if days <= 0:
+        return 0.0
+    base = now if now is not None else time.time()
+    return base + days * 86400.0
+
+
 def create(
     *,
     tenant_id: str,
     name: str,
     roles: frozenset[str],
     rpm: int = 0,
+    expires_in_days: int | None = None,
 ) -> tuple[PAT, str]:
     """Mint a new PAT. Returns (record, plaintext_secret_shown_once)."""
     safe_roles = frozenset(r for r in roles if r in ROLES) or frozenset({"reader"})
     secret = new_secret()
+    now = time.time()
+    expires_at = resolve_expiry(requested_days=expires_in_days, now=now)
     rec = {
         "id": _new_id(),
         "tenant_id": tenant_id,
         "name": (name or "").strip()[:64] or "untitled",
         "roles": sorted(safe_roles),
         "rpm": max(0, int(rpm or 0)),
-        "created_at": time.time(),
+        "created_at": now,
         "last_used_at": 0.0,
         "secret_hash": hash_secret(secret),
         "secret_hint": secret[-4:],
         "deleted": False,
+        "expires_at": expires_at,
     }
     _append(rec)
     return _from_record(rec), secret
@@ -210,6 +256,7 @@ def revoke(*, tenant_id: str, pat_id: str) -> bool:
         "secret_hash": current.secret_hash,
         "secret_hint": current.secret_hint,
         "deleted": True,
+        "expires_at": current.expires_at,
         "revoked_at": time.time(),
     }
     _append(rec)
@@ -232,6 +279,7 @@ def touch_last_used(pat_id: str) -> None:
         "secret_hash": current.secret_hash,
         "secret_hint": current.secret_hint,
         "deleted": False,
+        "expires_at": current.expires_at,
     }
     _append(rec)
 
@@ -245,4 +293,6 @@ def public_view(p: PAT) -> dict[str, Any]:
         "created_at": p.created_at,
         "last_used_at": p.last_used_at,
         "secret_hint": p.secret_hint,
+        "expires_at": p.expires_at,
+        "expired": p.is_expired(),
     }

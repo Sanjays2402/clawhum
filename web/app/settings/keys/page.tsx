@@ -32,10 +32,17 @@ interface KeyRow {
   created_at: number;
   last_used_at: number;
   secret_hint: string;
+  expires_at: number;
+  expired: boolean;
 }
 
 interface CreatedKey extends KeyRow {
   secret: string;
+}
+
+interface KeyPolicy {
+  max_ttl_days: number;
+  default_ttl_days: number;
 }
 
 type ListState =
@@ -57,10 +64,41 @@ function timeAgo(ts: number): string {
   return `${Math.floor(d / 86400)}d ago`;
 }
 
+function ttlChoices(
+  policy: KeyPolicy | null,
+): { value: string; label: string }[] {
+  const cap = policy?.max_ttl_days ?? 0;
+  const base = [
+    { value: "1", label: "in 1 day" },
+    { value: "7", label: "in 7 days" },
+    { value: "30", label: "in 30 days" },
+    { value: "90", label: "in 90 days" },
+    { value: "180", label: "in 180 days" },
+    { value: "365", label: "in 365 days" },
+  ];
+  const filtered = cap > 0 ? base.filter((o) => Number(o.value) <= cap) : base;
+  if (cap > 0 && !filtered.some((o) => Number(o.value) === cap)) {
+    filtered.push({ value: String(cap), label: `in ${cap} days (max)` });
+  }
+  if (cap === 0) filtered.push({ value: "never", label: "never" });
+  return filtered;
+}
+
+function expiryLabel(expiresAt: number, expired: boolean): string {
+  if (!expiresAt) return "never";
+  if (expired) return "expired";
+  const d = expiresAt - Date.now() / 1000;
+  if (d < 3600) return `in ${Math.max(1, Math.floor(d / 60))}m`;
+  if (d < 86400) return `in ${Math.floor(d / 3600)}h`;
+  return `in ${Math.floor(d / 86400)}d`;
+}
+
 export default function KeysPage() {
   const [storedKey] = useApiKey();
   const [state, setState] = useState<ListState>({ kind: "loading" });
   const [name, setName] = useState("");
+  const [ttlDays, setTtlDays] = useState<string>("90");
+  const [policy, setPolicy] = useState<KeyPolicy | null>(null);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [justCreated, setJustCreated] = useState<CreatedKey | null>(null);
@@ -96,6 +134,30 @@ export default function KeysPage() {
     refresh();
   }, [refresh, storedKey]);
 
+  // Load workspace TTL policy so the dropdown reflects real limits.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch("/api/keys/policy", {
+          headers: authHeaders(),
+          cache: "no-store",
+        });
+        if (!r.ok || !alive) return;
+        const p = (await r.json()) as KeyPolicy;
+        if (!alive) return;
+        setPolicy(p);
+        if (p.default_ttl_days > 0) setTtlDays(String(p.default_ttl_days));
+        else if (p.max_ttl_days > 0) setTtlDays(String(p.max_ttl_days));
+      } catch {
+        /* policy is advisory; mint still works */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [storedKey]);
+
   async function create(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || creating) return;
@@ -105,7 +167,10 @@ export default function KeysPage() {
       const r = await fetch("/api/keys", {
         method: "POST",
         headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim() }),
+        body: JSON.stringify({
+          name: name.trim(),
+          expires_in_days: ttlDays === "never" ? 0 : Number(ttlDays),
+        }),
       });
       if (!r.ok) {
         const msg = await r.text().catch(() => r.statusText);
@@ -244,6 +309,18 @@ export default function KeysPage() {
             className="flex-1 bg-[var(--color-bg)] border border-[var(--color-line)] rounded px-3 py-2 text-sm focus:outline-none focus:border-[var(--color-accent)]"
             aria-label="Token name"
           />
+          <select
+            value={ttlDays}
+            onChange={(e) => setTtlDays(e.target.value)}
+            aria-label="Token lifetime"
+            className="bg-[var(--color-bg)] border border-[var(--color-line)] rounded px-3 py-2 text-sm focus:outline-none focus:border-[var(--color-accent)]"
+          >
+            {ttlChoices(policy).map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                expires {opt.label}
+              </option>
+            ))}
+          </select>
           <button
             type="submit"
             disabled={!name.trim() || creating}
@@ -253,6 +330,11 @@ export default function KeysPage() {
             {creating ? "creating..." : "create"}
           </button>
         </form>
+        {policy && policy.max_ttl_days > 0 && (
+          <p className="mt-2 text-[11px] text-[var(--color-muted)] font-mono uppercase tracking-wider">
+            workspace cap: {policy.max_ttl_days}d
+          </p>
+        )}
         {createError && (
           <p className="mt-2 text-xs text-red-500 flex items-center gap-1">
             <Warning size={12} weight="bold" /> {createError}
@@ -327,11 +409,26 @@ export default function KeysPage() {
                     <span className="font-mono text-[11px] text-[var(--color-muted)]">
                       pat_...{row.secret_hint}
                     </span>
+                    {row.expired && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded border border-red-500/50 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider text-red-500"
+                        title="This token has expired and can no longer authenticate"
+                      >
+                        <Warning size={10} weight="bold" /> expired
+                      </span>
+                    )}
                   </div>
                   <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-muted)] font-mono uppercase tracking-wider">
                     <span>roles: {row.roles.join(", ") || "reader"}</span>
                     <span>used: {timeAgo(row.last_used_at)}</span>
                     <span>created: {timeAgo(row.created_at)}</span>
+                    <span
+                      className={
+                        row.expired ? "text-red-500" : undefined
+                      }
+                    >
+                      expires: {expiryLabel(row.expires_at, row.expired)}
+                    </span>
                   </div>
                 </div>
                 {confirmId === row.id ? (

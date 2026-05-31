@@ -22,6 +22,7 @@ from .. import pat_store
 from ..api_keys import ROLES
 from ..auth import require_roles
 from ..tenant import current_tenant_id
+from clawhum_core.settings import get_settings
 
 router = APIRouter(tags=["keys"])
 
@@ -30,6 +31,16 @@ class CreateKeyBody(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     roles: list[str] | None = None  # defaults to caller's roles intersected with ROLES
     rpm: int | None = Field(default=0, ge=0, le=100_000)
+    expires_in_days: int | None = Field(
+        default=None,
+        ge=0,
+        le=3650,
+        description=(
+            "Token lifetime in days. Omit to use the workspace default. "
+            "0 requests a non-expiring token, which the server will "
+            "clamp to the configured max when a cap is set."
+        ),
+    )
 
 
 class KeyView(BaseModel):
@@ -40,10 +51,17 @@ class KeyView(BaseModel):
     created_at: float
     last_used_at: float
     secret_hint: str
+    expires_at: float
+    expired: bool
 
 
 class KeyCreateResponse(KeyView):
     secret: str  # plaintext, shown ONCE
+
+
+class KeyPolicyResponse(BaseModel):
+    max_ttl_days: int
+    default_ttl_days: int
 
 
 @router.get(
@@ -54,6 +72,24 @@ class KeyCreateResponse(KeyView):
 async def list_keys(request: Request) -> list[dict[str, Any]]:
     tenant = current_tenant_id(request)
     return [pat_store.public_view(p) for p in pat_store.live_for_tenant(tenant)]
+
+
+@router.get(
+    "/keys/policy",
+    response_model=KeyPolicyResponse,
+    dependencies=[Depends(require_roles("writer"))],
+)
+async def keys_policy() -> dict[str, int]:
+    """Expose the workspace PAT lifetime policy to the UI.
+
+    The mint form reads this to render the TTL picker so it never
+    offers a value the server will reject.
+    """
+    s = get_settings()
+    return {
+        "max_ttl_days": int(s.pat_max_ttl_days or 0),
+        "default_ttl_days": int(s.pat_default_ttl_days or 0),
+    }
 
 
 @router.post(
@@ -85,6 +121,7 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
         name=body.name,
         roles=requested,
         rpm=body.rpm or 0,
+        expires_in_days=body.expires_in_days,
     )
     view = pat_store.public_view(pat)
     view["secret"] = secret
