@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from .. import mfa
 from .. import mfa_lockout
+from .. import mfa_session
 from .. import audit
 from ..api_keys import ANON_TENANT_ID
 from ..auth import require_api_key, require_roles
@@ -155,6 +156,143 @@ async def mfa_disable(body: DisableBody, request: Request) -> dict[str, bool]:
             detail=result.get("error", "disable_failed"),
         )
     mfa_lockout.clear(actor_id, tenant_id=tenant_id, reason="disable")
+    # Invalidate any outstanding step-up session tokens issued to this
+    # actor so a previously minted sudo token cannot survive disabling
+    # the second factor that authorised it.
+    mfa_session.bump_epoch(tenant_id or ANON_TENANT_ID, actor_id)
+    audit.write_event(
+        {
+            "event": "mfa.session.revoked",
+            "actor_id": actor_id,
+            "tenant_id": tenant_id,
+            "reason": "mfa_disabled",
+        }
+    )
+    return {"ok": True}
+
+
+class StepUpSessionStatus(BaseModel):
+    enabled: bool
+    ttl_seconds: int
+    max_ttl_seconds: int
+    epoch: int
+
+
+class StepUpIssueBody(BaseModel):
+    code: str = Field(min_length=4, max_length=12)
+    ttl_seconds: int | None = Field(
+        default=None, ge=1,
+        description="Optional client-requested TTL; clamped to the server setting.",
+    )
+
+
+class StepUpIssueResponse(BaseModel):
+    token: str
+    ttl_seconds: int
+    expires_at: int
+
+
+@router.get("/mfa/session", response_model=StepUpSessionStatus,
+            dependencies=[Depends(require_api_key)])
+async def mfa_session_status(request: Request) -> StepUpSessionStatus:
+    api_key = request.headers.get("x-api-key", "")
+    actor_id = mfa.actor_id_for(api_key)
+    tenant_id = getattr(request.state, "tenant_id", "") or ANON_TENANT_ID
+    return StepUpSessionStatus(**mfa_session.status(tenant_id, actor_id))
+
+
+@router.post("/mfa/session", response_model=StepUpIssueResponse,
+             dependencies=[Depends(require_api_key)])
+async def mfa_session_issue(body: StepUpIssueBody, request: Request) -> StepUpIssueResponse:
+    """Exchange a fresh TOTP/recovery code for a short-lived step-up
+    session token. The returned ``X-MFA-Session`` token may be presented
+    in place of ``X-MFA-Code`` until it expires.
+
+    The exchange uses the same brute-force surface and audit hooks as
+    every other MFA verification.
+    """
+    api_key = request.headers.get("x-api-key", "")
+    actor_id = mfa.actor_id_for(api_key)
+    tenant_id = getattr(request.state, "tenant_id", "") or ANON_TENANT_ID
+    if not mfa.is_required(actor_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="mfa not enrolled",
+        )
+    if mfa_session.effective_ttl_seconds(tenant_id) <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="mfa step-up session disabled for workspace",
+        )
+    pre = mfa_lockout.lock_state(actor_id)
+    if pre.locked:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="mfa locked: too many failed attempts",
+            headers={"Retry-After": str(pre.retry_after)},
+        )
+    if not mfa.verify(actor_id, body.code):
+        after = mfa_lockout.record_failure(actor_id, tenant_id=tenant_id)
+        audit.write_event(
+            {
+                "event": "mfa.failed",
+                "actor_id": actor_id,
+                "tenant_id": tenant_id,
+                "path": request.url.path,
+                "failures": after.failures,
+                "locked": after.locked,
+            }
+        )
+        if after.locked:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="mfa locked: too many failed attempts",
+                headers={"Retry-After": str(after.retry_after)},
+            )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="invalid mfa code",
+        )
+    mfa_lockout.clear(actor_id, tenant_id=tenant_id, reason="session_issue")
+    issued = mfa_session.issue(
+        tenant_id=tenant_id, actor_id=actor_id,
+        ttl_seconds=body.ttl_seconds,
+    )
+    audit.write_event(
+        {
+            "event": "mfa.session.issued",
+            "actor_id": actor_id,
+            "tenant_id": tenant_id,
+            "ttl_seconds": issued.ttl_seconds,
+            "expires_at": issued.expires_at,
+        }
+    )
+    return StepUpIssueResponse(
+        token=issued.token,
+        ttl_seconds=issued.ttl_seconds,
+        expires_at=issued.expires_at,
+    )
+
+
+@router.delete("/mfa/session",
+               dependencies=[Depends(require_api_key)])
+async def mfa_session_revoke(request: Request) -> dict[str, bool]:
+    """Revoke every step-up session token outstanding for the calling
+    actor. Used by the dashboard's \"lock sudo mode\" button and by
+    the workspace-wide force-logout flow."""
+    api_key = request.headers.get("x-api-key", "")
+    actor_id = mfa.actor_id_for(api_key)
+    tenant_id = getattr(request.state, "tenant_id", "") or ANON_TENANT_ID
+    epoch = mfa_session.revoke_all(tenant_id, actor_id)
+    audit.write_event(
+        {
+            "event": "mfa.session.revoked",
+            "actor_id": actor_id,
+            "tenant_id": tenant_id,
+            "reason": "user_revoke",
+            "epoch": epoch,
+        }
+    )
     return {"ok": True}
 
 

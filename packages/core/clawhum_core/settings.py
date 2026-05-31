@@ -378,6 +378,29 @@ class Settings(BaseSettings):
     sentry_traces_sample_rate: float = 0.0
     sentry_profiles_sample_rate: float = 0.0
 
+    # MFA step-up session ("sudo mode") TTL. After one successful TOTP
+    # challenge the dashboard can present the issued X-MFA-Session
+    # token instead of typing a fresh code for every destructive call.
+    # Set to 0 to disable sudo mode entirely.
+    mfa_session_ttl_seconds: int = Field(
+        default=300,
+        description=(
+            "Lifetime in seconds of an MFA step-up (sudo mode) session "
+            "issued after a successful TOTP challenge. The X-MFA-Session "
+            "token may be presented in lieu of X-MFA-Code until it expires. "
+            "0 disables step-up entirely so every destructive call requires "
+            "a fresh code."
+        ),
+    )
+    mfa_session_max_ttl_seconds: int = Field(
+        default=900,
+        description=(
+            "Hard server-side cap on the MFA step-up session TTL, in "
+            "seconds. Per-tenant TTL is clamped to this value, which is "
+            "itself clamped to one hour at the code level."
+        ),
+    )
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -2,6 +2,33 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## MFA step-up session (sudo mode)
+
+Once MFA is enrolled, every destructive admin call requires a fresh `X-MFA-Code`. That gate is correct but the UX of retyping a TOTP for every click pushes admins to disable MFA in practice. Sudo mode lets an admin exchange one TOTP for a short-lived `X-MFA-Session` token (default 5 minutes, server-capped to `mfa_session_max_ttl_seconds`, hard ceiling 1h) that stands in for the code on subsequent calls. The token is HMAC-SHA256 signed by a machine-local secret in the data directory, cryptographically bound to `(tenant_id, actor_id)` so a leaked token cannot replay against any other actor, and tied to a per-actor revocation epoch that is bumped on MFA disable, force-logout-all, or an explicit revoke. Issuance and revoke flow through the tamper-evident audit log. Cross-actor rejection, expiry, epoch revocation, and the `ttl=0` kill-switch are pinned by `tests/integration/test_mfa_session.py`. The workspace UI lives at `http://127.0.0.1:7452/settings/security/sudo`.
+
+### Try it (sudo mode)
+
+```sh
+export CLAWHUM_API_URL=http://127.0.0.1:7451
+export CLAWHUM_ADMIN_KEY=opskey
+
+# 1. Exchange a TOTP for a step-up session token.
+curl -s -X POST -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"code":"123456"}' \
+  $CLAWHUM_API_URL/mfa/session
+# -> {"token":"v1.eyJ...","ttl_seconds":300,"expires_at":...}
+
+# 2. Reuse it on any destructive admin call.
+curl -s -X DELETE -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "X-MFA-Session: v1.eyJ..." \
+  $CLAWHUM_API_URL/keys/pat_abc
+
+# 3. Lock sudo mode (revokes every outstanding token for this actor).
+curl -s -X DELETE -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  $CLAWHUM_API_URL/mfa/session
+```
+
 ## Audit log forwarding to your SIEM
 
 Stream every audit event to a customer-controlled HTTPS sink (Splunk HEC,

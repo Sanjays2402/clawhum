@@ -192,8 +192,17 @@ async def revoke_all(
     current_id = getattr(request.state, "session_id", "") or ""
     if body.all_workspace:
         count = session_store.revoke_all_for_tenant(tenant_id, reason=body.reason or "all-workspace")
+        # Best-effort: invalidate every step-up MFA token issued to
+        # every actor in the workspace by bumping their per-actor
+        # epoch. We only know actors that have an outstanding session;
+        # other actors' tokens will expire naturally within the TTL.
+        from .. import mfa_session
+        for s in session_store.list_sessions(tenant_id, include_revoked=True):
+            mfa_session.bump_epoch(tenant_id, s.actor)
     else:
         count = session_store.revoke_all_for_actor(tenant_id, body.actor or "", reason=body.reason or "actor")
+        from .. import mfa_session
+        mfa_session.bump_epoch(tenant_id, body.actor or "")
     # Bring the caller's own session back to life when include_self is
     # false so the operator who initiated the incident response is not
     # locked out of the very console they used to do it.

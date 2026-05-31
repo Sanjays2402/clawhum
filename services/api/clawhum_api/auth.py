@@ -329,9 +329,11 @@ def require_mfa():
         request: Request,
         x_api_key: str = Header(default=""),
         x_mfa_code: str = Header(default=""),
+        x_mfa_session: str = Header(default=""),
     ) -> str:
         from . import mfa  # deferred to avoid circular import at package load
         from . import mfa_lockout
+        from . import mfa_session
         from . import audit
         await require_api_key(request, x_api_key=x_api_key)
         settings = get_settings()
@@ -342,6 +344,25 @@ def require_mfa():
             request.state.mfa_used = False
             return x_api_key or "dev"
         tenant_id = getattr(request.state, "tenant_id", "") or ""
+        # Step-up session token short-circuit. A valid token issued by
+        # POST /mfa/session within the workspace TTL stands in for a
+        # fresh code. The token is HMAC-bound to (tenant_id, actor_id)
+        # so a leak cannot replay against a different actor, and the
+        # per-actor revocation epoch invalidates every outstanding
+        # token in O(1) when MFA is disabled or sessions force-logout.
+        if x_mfa_session:
+            result = mfa_session.verify(
+                x_mfa_session, tenant_id=tenant_id, actor_id=actor_id,
+            )
+            if result.valid:
+                request.state.mfa_used = True
+                request.state.mfa_session_used = True
+                return x_api_key or "dev"
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"mfa session invalid: {result.reason}",
+                headers={"WWW-Authenticate": "MFA"},
+            )
         # Lockout takes precedence over the MFA check so an attacker
         # cannot keep observing whether a guess would have worked
         # while the cooldown is active.

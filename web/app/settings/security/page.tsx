@@ -437,6 +437,19 @@ export default function SecurityPage() {
             </form>
           )}
 
+          {/* Sudo mode link */}
+          <div className="rounded-lg border border-zinc-200 p-4 text-xs text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
+            <div className="mb-1 text-[10px] uppercase tracking-widest text-zinc-500">
+              Step-up session
+            </div>
+            <p>
+              Verify once and skip retyping codes for a short window.{" "}
+              <Link href="/settings/security/sudo" className="underline hover:text-zinc-900 dark:hover:text-zinc-100">
+                Open sudo mode
+              </Link>
+            </p>
+          </div>
+
           {/* What this gates */}
           <div className="rounded-lg border border-zinc-200 p-4 text-xs text-zinc-600 dark:border-zinc-800 dark:text-zinc-400">
             <div className="mb-1 text-[10px] uppercase tracking-widest text-zinc-500">
