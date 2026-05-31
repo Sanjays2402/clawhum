@@ -1,11 +1,63 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import Waveform from "@/components/Waveform";
 import Spectrogram from "@/components/Spectrogram";
 import { getMatch, type StoredMatch } from "@/lib/history";
+
+type RefAudioState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; samples: Float32Array; duration: number; url: string; mime: string }
+  | { status: "missing" }
+  | { status: "error"; message: string };
+
+function useReferenceAudio(trackId: string | undefined): RefAudioState {
+  const [state, setState] = useState<RefAudioState>({ status: "idle" });
+  useEffect(() => {
+    if (!trackId) { setState({ status: "idle" }); return; }
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setState({ status: "loading" });
+    (async () => {
+      try {
+        const url = `/api/track/${encodeURIComponent(trackId)}/audio`;
+        const r = await fetch(url);
+        if (r.status === 404) { if (!cancelled) setState({ status: "missing" }); return; }
+        if (!r.ok) {
+          const t = await r.text().catch(() => "");
+          throw new Error(`${r.status} ${r.statusText} ${t.slice(0, 140)}`);
+        }
+        const buf = await r.arrayBuffer();
+        const mime = r.headers.get("content-type") || "audio/mpeg";
+        const blob = new Blob([buf], { type: mime });
+        objectUrl = URL.createObjectURL(blob);
+        const Ctor: typeof AudioContext =
+          (window as any).AudioContext || (window as any).webkitAudioContext;
+        const ac = new Ctor();
+        try {
+          const decoded = await ac.decodeAudioData(buf.slice(0));
+          const ch0 = decoded.getChannelData(0);
+          const samples = new Float32Array(ch0.length);
+          samples.set(ch0);
+          if (cancelled) return;
+          setState({ status: "ready", samples, duration: decoded.duration, url: objectUrl, mime });
+        } finally {
+          ac.close();
+        }
+      } catch (e: any) {
+        if (!cancelled) setState({ status: "error", message: e?.message || String(e) });
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [trackId]);
+  return state;
+}
 
 function ScoreBar({ value, max, active }: { value: number; max: number; active?: boolean }) {
   const pct = max > 0 ? Math.max(2, (value / max) * 100) : 0;
@@ -58,6 +110,7 @@ export default function MatchDetail({ params }: { params: Promise<{ id: string }
   const cand = m.results[active] ?? m.results[0];
   const dur = m.duration_sec || 0;
   const maxScore = m.results.length ? Math.max(...m.results.map(r => r.score)) : 1;
+  const refAudio = useReferenceAudio(cand?.track_id);
 
   // Synthesize "matched segment" highlight in the query waveform aligned to the candidate's segment_index.
   // Match window is conventionally ~1s slid by hop; we render a 1s band centered on segment_index seconds.
@@ -132,18 +185,48 @@ export default function MatchDetail({ params }: { params: Promise<{ id: string }
         </div>
         <div className="px-2 py-2">
           <Waveform
-            samples={null}
+            samples={refAudio.status === "ready" ? refAudio.samples : null}
             height={160}
-            animate
+            animate={refAudio.status === "loading"}
             color="#FF3DBE"
-            duration={dur || undefined}
-            highlight={highlight}
-            label="reference segment (placeholder)"
+            duration={refAudio.status === "ready" ? refAudio.duration : (dur || undefined)}
+            highlight={
+              refAudio.status === "ready"
+                ? [
+                    Math.max(0, (cand?.segment_index ?? 0)),
+                    Math.min(refAudio.duration, (cand?.segment_index ?? 0) + 1),
+                  ]
+                : highlight
+            }
+            label={
+              refAudio.status === "ready"
+                ? `reference / ${refAudio.duration.toFixed(2)}s decoded`
+                : refAudio.status === "loading"
+                ? "loading reference audio..."
+                : refAudio.status === "missing"
+                ? "reference audio not available"
+                : refAudio.status === "error"
+                ? `reference load failed: ${refAudio.message.slice(0, 80)}`
+                : "reference segment"
+            }
           />
         </div>
-        <div className="px-3 py-2 border-t border-[var(--color-line)]">
-          <Spectrogram height={56} showAxis seed={cand?.track_id || m.query_id} label="reference chroma / mfcc bins" />
-        </div>
+        {refAudio.status === "ready" && (
+          <div className="px-3 py-2 border-t border-[var(--color-line)] flex items-center gap-3">
+            <span className="label-xs whitespace-nowrap">reference / play</span>
+            <audio controls src={refAudio.url} className="flex-1 h-8" preload="metadata" />
+          </div>
+        )}
+        {refAudio.status === "missing" && (
+          <div className="px-3 py-2 border-t border-[var(--color-line)] font-mono text-[10px] text-[var(--color-dim)] uppercase tracking-widest">
+            reference audio not on disk / catalog entry only
+          </div>
+        )}
+        {refAudio.status === "error" && (
+          <div className="px-3 py-2 border-t border-[var(--color-line)] font-mono text-[10px] text-[#ff5577] break-words">
+            {refAudio.message}
+          </div>
+        )}
       </div>
 
       {/* Candidates with score bars */}

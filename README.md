@@ -26,6 +26,11 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
   curl -F audio=@web/public/samples/twinkle.wav -F top_k=10 -F threshold=0.0 \
        -H 'x-api-key: dev' http://127.0.0.1:7451/match
   ```
+- `GET /track/{track_id}/audio` streams the reference audio for any track in the in-memory catalogue. The match detail page (`/matches/[id]`) uses this to decode the matched track in the browser, render its real waveform next to the captured query, and offer an A/B player so a user can hear why the score is what it is. Files are confined to `CLAWHUM_LIBRARY_PATH`; unknown ids return 404, paths outside the library root return 403. Try it:
+  ```
+  curl -H 'x-api-key: dev' -o ref.wav \
+       http://127.0.0.1:7451/track/local:abc1234567890abc/audio
+  ```
 - 8 locale files under `web/i18n/` (de, en, es, fr, it, ja, ko, pt).
 - OpenTelemetry FastAPI instrumentation, OTLP exporter when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 
