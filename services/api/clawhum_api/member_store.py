@@ -263,6 +263,53 @@ def invite(
     return member, token
 
 
+def create_active(
+    *,
+    tenant_id: str,
+    email: str,
+    role: str,
+    invited_by: str,
+    now: float | None = None,
+) -> Member:
+    """Provision an already-active seat without an invite token.
+
+    Used by domain auto-join: the workspace admin has pre-authorised
+    any successful SSO sign in from the configured email domain, so
+    no out-of-band invite hand-off is needed. The returned member is
+    immediately ``STATUS_ACTIVE`` with ``accepted_at`` set to ``now``.
+    Idempotent: if an active or invited member already exists for
+    this email + tenant we return the existing record unchanged so
+    repeat sign-ins do not balloon the audit log.
+    """
+    tenant_id = (tenant_id or "").strip().lower()
+    if not tenant_id:
+        raise ValueError("tenant_id is required")
+    email = normalise_email(email)
+    if not is_valid_email(email):
+        raise ValueError("invalid email")
+    role = (role or "").strip().lower()
+    if role not in ROLES:
+        raise ValueError(f"invalid role: {role}")
+    existing = find_active_by_email(tenant_id, email)
+    if existing is not None:
+        return existing
+    now = time.time() if now is None else now
+    member = Member(
+        id=_new_id(),
+        tenant_id=tenant_id,
+        email=email,
+        role=role,
+        status=STATUS_ACTIVE,
+        invited_by=invited_by or "sso-auto-join",
+        invited_at=now,
+        accepted_at=now,
+        invite_token_hash="",
+        invite_expires_at=0.0,
+    )
+    _append(asdict(member))
+    return member
+
+
 def accept(token: str, *, now: float | None = None) -> Member:
     """Accept a pending invite. Raises ValueError on any failure path."""
     m = lookup_by_token(token)

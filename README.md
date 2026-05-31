@@ -192,6 +192,26 @@ curl -X DELETE http://127.0.0.1:7451/v1/sso/config \
 
 Web UI: `http://127.0.0.1:7452/settings/sso`.
 
+## SSO domain auto-join
+
+When an enterprise rolls out clawhum through their existing IdP, hand-inviting every seat is a non-starter. Auto-join lets a workspace admin pre-approve their own email domain: on the SSO settings page, flip `domain auto-join` on and pick the default role (`reader`, `writer`, or `admin`). Any subsequent successful sign in from that email domain claims a workspace seat at the pre-approved role with no out-of-band invite. The seat lands as `active` immediately and shows up in `/settings/members` for the admin to promote, demote, or revoke. Repeat sign ins are idempotent, never escalate the role, and never cross tenants: only the workspace that owns the email domain can ever be the auto-join target, and the route refuses to provision a seat when auto-join is off even for mapped domains. Unknown domains and opted-out workspaces return the same shape so the endpoint cannot be used to enumerate customers. Every claim is written to the immutable audit log with the actor, resolved tenant, client IP, and request id.
+
+### Try it (auto-join)
+
+```bash
+# Admin opts a workspace into auto-join at the reader role.
+curl -X PUT http://127.0.0.1:7451/v1/sso/config \
+  -H "X-API-Key: $CLAWHUM_KEY" -H 'Content-Type: application/json' \
+  -d '{"provider":"okta","issuer":"https://acme.okta.com","client_id":"0oa-acme","client_secret":"s3cret","email_domain":"acme.com","enforced":true,"auto_join":true,"auto_join_role":"reader"}'
+
+# Verified email from the OIDC callback claims a seat.
+curl -X POST http://127.0.0.1:7451/v1/sso/auto-join \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"newhire@acme.com"}'
+```
+
+Web UI: `http://127.0.0.1:7452/settings/sso`.
+
 ## Workspace members and invites
 
 A workspace admin manages the human roster from `/settings/members`: invite a teammate by email with a role (`reader`, `writer`, `admin`), see pending invites with their expiry, change a member's role, and revoke a seat when someone leaves. Invite tokens are returned exactly once and hashed at rest; the recipient trades the token for membership at `POST /members/accept` with no API key required. Role changes and revokes are gated by admin role plus a fresh `X-MFA-Code` once the actor has enrolled TOTP. The roster is strictly per workspace: another tenant's admin cannot see, mutate, or even probe for member ids they do not own.

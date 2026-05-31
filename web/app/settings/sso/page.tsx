@@ -47,6 +47,8 @@ interface SSOConfig {
   client_secret: string; // masked
   email_domain: string;
   enforced: boolean;
+  auto_join: boolean;
+  auto_join_role: string;
   created_at: number;
   updated_at: number;
   created_by: string;
@@ -78,6 +80,8 @@ export default function SSOSettingsPage() {
   const [clientSecret, setClientSecret] = useState("");
   const [emailDomain, setEmailDomain] = useState("");
   const [enforced, setEnforced] = useState(false);
+  const [autoJoin, setAutoJoin] = useState(false);
+  const [autoJoinRole, setAutoJoinRole] = useState<"admin" | "writer" | "reader">("reader");
   const [mfaCode, setMfaCode] = useState("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -117,6 +121,12 @@ export default function SSOSettingsPage() {
         setClientId(config.client_id);
         setEmailDomain(config.email_domain);
         setEnforced(config.enforced);
+        setAutoJoin(config.auto_join);
+        setAutoJoinRole(
+          (config.auto_join_role === "admin" || config.auto_join_role === "writer")
+            ? config.auto_join_role
+            : "reader"
+        );
         setClientSecret("");
       }
     } catch (err) {
@@ -153,6 +163,8 @@ export default function SSOSettingsPage() {
           client_secret: clientSecret,
           email_domain: emailDomain.trim().toLowerCase(),
           enforced,
+          auto_join: autoJoin,
+          auto_join_role: autoJoinRole,
         }),
       });
       if (!r.ok) {
@@ -195,6 +207,8 @@ export default function SSOSettingsPage() {
       setClientSecret("");
       setEmailDomain("");
       setEnforced(false);
+      setAutoJoin(false);
+      setAutoJoinRole("reader");
       await refresh();
     } finally {
       setDeleting(false);
@@ -276,6 +290,16 @@ export default function SSOSettingsPage() {
                     }
                   >
                     {state.config.enforced ? "on" : "off"}
+                  </span>
+                </div>
+                <div>
+                  domain auto-join:{" "}
+                  <span
+                    className={
+                      state.config.auto_join ? "text-[var(--color-phosphor)]" : "text-[var(--color-muted)]"
+                    }
+                  >
+                    {state.config.auto_join ? `on (role: ${state.config.auto_join_role})` : "off"}
                   </span>
                 </div>
                 <div>updated: {formatTs(state.config.updated_at)} by {state.config.created_by || "unknown"}</div>
@@ -389,6 +413,36 @@ export default function SSOSettingsPage() {
                 enforce sso for this email domain (hide password and magic link sign in)
               </span>
             </label>
+
+            <div className="space-y-2 border border-[var(--color-line)] p-3">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={autoJoin}
+                  onChange={(e) => setAutoJoin(e.target.checked)}
+                  className="h-4 w-4 accent-[var(--color-phosphor)]"
+                />
+                <span className="font-mono text-[12px]">
+                  domain auto-join: provision a seat on first sign in from this email domain
+                </span>
+              </label>
+              <label className="block space-y-1">
+                <span className="label-xs">default role for auto-joined members</span>
+                <select
+                  value={autoJoinRole}
+                  onChange={(e) => setAutoJoinRole(e.target.value as "admin" | "writer" | "reader")}
+                  disabled={!autoJoin}
+                  className="w-40 border border-[var(--color-line)] bg-[var(--color-bg)] px-2 py-1 font-mono text-[12px] disabled:opacity-50"
+                >
+                  <option value="reader">reader</option>
+                  <option value="writer">writer</option>
+                  <option value="admin">admin</option>
+                </select>
+                <span className="block font-mono text-[11px] text-[var(--color-muted)]">
+                  pick the least-privileged role that matches your onboarding policy. you can promote later from the members page.
+                </span>
+              </label>
+            </div>
 
             <label className="block space-y-1">
               <span className="label-xs">admin MFA code (if enrolled)</span>

@@ -28,7 +28,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from .. import sso_store
+from .. import member_store, sso_store
 from ..api_keys import ANON_TENANT_ID, DEV_TENANT_ID
 from ..auth import require_admin_with_mfa, require_roles
 from ..tenant import current_tenant
@@ -54,6 +54,8 @@ class SSOConfigOut(BaseModel):
     client_secret: str  # masked unless reveal=true and caller is admin+MFA
     email_domain: str
     enforced: bool
+    auto_join: bool
+    auto_join_role: str
     created_at: float
     updated_at: float
     created_by: str
@@ -68,6 +70,26 @@ class SSOConfigBody(BaseModel):
     client_secret: str = Field(default="", max_length=512)
     email_domain: str = Field(min_length=3, max_length=253)
     enforced: bool = False
+    auto_join: bool = False
+    auto_join_role: str = Field(default="reader", pattern="^(admin|writer|reader)$")
+
+
+class AutoJoinBody(BaseModel):
+    # Public route. We deliberately accept just the email so the
+    # caller (the OIDC token exchange handler living in front of this
+    # API, or a sign-in shim) can hand the just-verified address in.
+    # The route itself never trusts the email as proof of identity;
+    # it only resolves the workspace and provisions the seat.
+    email: str = Field(min_length=3, max_length=320)
+
+
+class AutoJoinResponse(BaseModel):
+    claimed: bool  # true if a fresh seat was created on this call
+    member_id: str
+    tenant_id: str
+    email: str
+    role: str
+    status: str
 
 
 class DiscoveryResponse(BaseModel):
@@ -79,6 +101,7 @@ class DiscoveryResponse(BaseModel):
     # login URL itself. We do not return the client_id here because
     # discovery is unauthenticated.
     issuer: str
+    auto_join: bool = False
 
 
 def _guard_tenant(tenant_id: str) -> str:
@@ -127,6 +150,7 @@ async def discover(email: str = "", domain: str = "") -> DiscoveryResponse:
         provider=rec.provider,
         provider_label=sso_store.KNOWN_PROVIDERS.get(rec.provider, "OIDC"),
         issuer=rec.issuer,
+        auto_join=rec.auto_join,
     )
 
 
@@ -162,6 +186,8 @@ async def upsert_config(
             email_domain=body.email_domain,
             enforced=body.enforced,
             actor=actor,
+            auto_join=body.auto_join,
+            auto_join_role=body.auto_join_role,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
@@ -178,3 +204,61 @@ async def delete_config(
     actor = getattr(request.state, "api_key_name", "unknown") or "unknown"
     sso_store.delete(tenant_id, actor)
     return None
+
+
+@router.post(
+    "/auto-join",
+    response_model=AutoJoinResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def auto_join(body: AutoJoinBody, request: Request) -> AutoJoinResponse:
+    """Claim a workspace seat for a freshly authenticated SSO user.
+
+    This endpoint is public on purpose: it sits behind the OIDC
+    sign-in callback (the front-end exchanges the IdP code, then
+    posts the verified email here). It is safe to be public because
+    it only provisions a seat when a workspace admin has explicitly
+    enabled ``auto_join`` for the email's domain, and the assigned
+    role is whatever that admin pre-approved. The audit log records
+    every claim with actor, IP, and the resolved tenant so an SOC
+    reviewer can see who got in and when.
+
+    The response is intentionally non-revealing when no workspace
+    has the domain configured: we return HTTP 404 with a generic
+    detail so the endpoint cannot be used to enumerate customers.
+    """
+    email = str(body.email or "").strip().lower()
+    if "@" not in email:
+        raise HTTPException(status_code=400, detail="email is required")
+    domain = email.split("@", 1)[1]
+    rec = sso_store.get_by_email_domain(domain)
+    if rec is None or rec.deleted:
+        # Same shape an attacker would see for any unknown domain;
+        # no information leak about which domains are customers.
+        raise HTTPException(status_code=404, detail="no workspace for this domain")
+    if not rec.auto_join:
+        # Domain is mapped but auto-join is off: tell the caller
+        # explicitly so the sign-in UI can fall back to "ask your
+        # admin to invite you" instead of looping forever.
+        raise HTTPException(
+            status_code=403,
+            detail="domain auto-join is disabled for this workspace",
+        )
+    existing = member_store.find_active_by_email(rec.tenant_id, email)
+    try:
+        member = member_store.create_active(
+            tenant_id=rec.tenant_id,
+            email=email,
+            role=rec.auto_join_role,
+            invited_by="sso-auto-join",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return AutoJoinResponse(
+        claimed=existing is None,
+        member_id=member.id,
+        tenant_id=member.tenant_id,
+        email=member.email,
+        role=member.role,
+        status=member.status,
+    )

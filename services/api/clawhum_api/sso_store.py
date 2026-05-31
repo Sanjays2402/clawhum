@@ -74,6 +74,12 @@ class SSOConfig:
     updated_at: float
     created_by: str  # actor name from request.state.api_key_name
     deleted: bool = False
+    # Domain auto-join: when True, a successful sign in from
+    # ``email_domain`` claims a workspace seat at ``auto_join_role``
+    # without an explicit invite. The IT admin still controls who can
+    # reach the IdP, so the security boundary is the OIDC tenant.
+    auto_join: bool = False
+    auto_join_role: str = "reader"
 
     def public_dict(self, reveal_secret: bool = False) -> dict:
         """JSON-safe view for admins. Client secret is masked by default."""
@@ -87,6 +93,8 @@ class SSOConfig:
             "client_secret": secret,
             "email_domain": self.email_domain,
             "enforced": self.enforced,
+            "auto_join": self.auto_join,
+            "auto_join_role": self.auto_join_role,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "created_by": self.created_by,
@@ -139,6 +147,8 @@ def _from_row(row: dict) -> SSOConfig | None:
             updated_at=float(row.get("updated_at", 0.0)),
             created_by=str(row.get("created_by", "")),
             deleted=bool(row.get("deleted", False)),
+            auto_join=bool(row.get("auto_join", False)),
+            auto_join_role=str(row.get("auto_join_role", "reader")) or "reader",
         )
     except (KeyError, TypeError, ValueError):
         return None
@@ -220,6 +230,8 @@ def upsert(
     email_domain: str,
     enforced: bool,
     actor: str,
+    auto_join: bool = False,
+    auto_join_role: str = "reader",
 ) -> SSOConfig:
     """Create or replace the SSO config for a tenant.
 
@@ -242,6 +254,12 @@ def upsert(
     email_domain = normalise_domain(email_domain)
     if not is_valid_domain(email_domain):
         raise ValueError("email_domain must look like example.com")
+    auto_join_role = (auto_join_role or "reader").strip().lower()
+    # ROLES lives in api_keys; keep the allowed set local to avoid
+    # dragging the routing layer into a storage module. The route
+    # validator independently asserts the same values.
+    if auto_join_role not in {"admin", "writer", "reader"}:
+        raise ValueError("auto_join_role must be admin, writer, or reader")
     now = time.time()
     with _LOCK:
         existing = _load_locked().get(tenant_id)
@@ -272,6 +290,8 @@ def upsert(
             updated_at=now,
             created_by=existing.created_by if existing else actor,
             deleted=False,
+            auto_join=bool(auto_join),
+            auto_join_role=auto_join_role,
         )
         _append_locked(rec)
         return rec
@@ -296,6 +316,8 @@ def delete(tenant_id: str, actor: str) -> bool:
             updated_at=time.time(),
             created_by=actor or existing.created_by,
             deleted=True,
+            auto_join=False,
+            auto_join_role=existing.auto_join_role,
         )
         _append_locked(tomb)
         return True
