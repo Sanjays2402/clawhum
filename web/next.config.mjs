@@ -27,6 +27,10 @@ const nextConfig = {
       { source: "/api/activity", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/activity` },
       { source: "/api/v1/privacy/export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/export` },
       { source: "/api/v1/privacy/me", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/me` },
+      // Stable v1 public API: forward everything under /api/v1/* to the
+      // backend /v1/* surface. Integrators target this prefix from curl,
+      // python, JS, etc. and we promise not to break paths under it.
+      { source: "/api/v1/:path*", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/:path*` },
     ];
   },
 };

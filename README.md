@@ -10,6 +10,17 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Try it (developers, v1 API)
+
+`http://127.0.0.1:7452/developers` is the integrator landing page: every public endpoint, copy-paste curl/python/JS pre-filled with your stored API key, and a live `try /v1/me` button that calls the backend through the same proxy a real client would use. The same FastAPI routers (match, batch, share, history, usage, me, webhooks, library stats) are now mounted twice, once at their original path for the in-app UI and once under `/v1` as the stable public surface we promise not to break. The web app forwards `/api/v1/*` straight through to the backend `/v1/*`.
+
+```bash
+# version-pinned match endpoint, same shape as /match
+curl -X POST http://127.0.0.1:7452/api/v1/match \
+  -H "X-API-Key: $CLAWHUM_API_KEY" \
+  -F "audio=@hum.wav" -F "top_k=5"
+```
+
 ## Try it (activity inbox)
 
 `http://127.0.0.1:7452/activity` is a single chronological feed of every saved match and every webhook delivery on your account, tenant-scoped on the server side. New items since your last visit light an unread dot on the nav tab; opening the page clears it. Filter by kind (match or delivery) or by free text. The backend route is `GET /activity?limit=&since=&kind=` and returns `{items, total, latest_at}` so the client can store a cursor without polling individual subsystems.
