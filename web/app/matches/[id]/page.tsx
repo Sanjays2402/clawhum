@@ -7,6 +7,7 @@ import Waveform from "@/components/Waveform";
 import Spectrogram from "@/components/Spectrogram";
 import PitchOverlay from "@/components/PitchOverlay";
 import { getMatch, type StoredMatch } from "@/lib/history";
+import ShareButton from "@/components/ShareButton";
 
 type RefAudioState =
   | { status: "idle" }
@@ -158,6 +159,9 @@ export default function MatchDetail({ params }: { params: Promise<{ id: string }
           <span className="label-xs mr-2">window</span>
           <span className="text-[var(--color-text)] tabular-nums">{dur.toFixed(2)}</span>
           <span className="text-[var(--color-dim)] ml-0.5">s</span>
+        </div>
+        <div className="ml-auto">
+          <ShareButton match={m} />
         </div>
       </div>
 

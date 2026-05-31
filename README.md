@@ -8,6 +8,26 @@ Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local
 
 Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile`/`librosa`, and runs it through a DSP pre-processing chain (butterworth biquad band-pass, pre-emphasis at 0.97, optional VAD trim). The cleaned signal is segmented into 6 s windows and embedded with CLAP (`laion/clap-htsat-unfused`) when ML extras are installed, or with a deterministic MFCC + chroma + spectral-contrast hash embedder as fallback. Embeddings are searched against a FAISS HNSW index (or a NumPy brute-force index on Apple Silicon where `faiss-cpu` is unavailable) and reranked by tempo proximity. Results stream back as scored track candidates with previews and artwork. A Prometheus `/metrics` endpoint and structured logs expose request volume, match counts, and index size.
 
+## Try it
+
+Share any match result with one click. Open any item in `/matches`, hit *share* in the top strip, and a public read-only URL is copied to your clipboard. The link works in an incognito window without an API key:
+
+```bash
+# create a share record (writer role required)
+curl -X POST http://127.0.0.1:7451/share \
+     -H 'content-type: application/json' \
+     -H 'x-api-key: dev' \
+     -d '{"query_id":"q-abc","elapsed_ms":42,"count":1,
+          "results":[{"track_id":"t1","title":"Test Song",
+                      "artist":"Tester","score":0.91,"segment_index":0}]}'
+# -> {"id":"a1b2c3d4e5f6","url_path":"/r/a1b2c3d4e5f6"}
+
+# read it publicly (no auth)
+curl http://127.0.0.1:7451/share/a1b2c3d4e5f6
+```
+
+Open `http://127.0.0.1:7452/r/<id>` to see the rendered page with ranked candidates, latency, and OG metadata for link previews. Records are appended to `CLAWHUM_SHARES_PATH` (defaults to `./data/shares.jsonl`).
+
 ## Features
 
 - `POST /match` audio upload with configurable `top_k` and `threshold`, API-key gated.

@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     metadata_path: Path = Path("./data/index/metadata.jsonl")
     library_path: Path = Path("./data/audio")
     feedback_path: Path = Path("./data/feedback.jsonl")
+    shares_path: Path = Path("./data/shares.jsonl")
     audit_log_path: Path = Path("./data/audit.jsonl")
     audit_enabled: bool = True
     # Size-based rotation for the audit JSONL file. When the active file

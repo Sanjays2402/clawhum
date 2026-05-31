@@ -20,6 +20,7 @@ from .routes import library as library_routes
 from .routes import match as match_routes
 from .routes import pitch as pitch_routes
 from .routes import privacy as privacy_routes
+from .routes import share as share_routes
 from .routes import spotify as spotify_routes
 from .state import AppState
 from .tenant import TenantScopeMiddleware
@@ -92,6 +93,7 @@ def create_app() -> FastAPI:
     app.include_router(feedback_routes.router)
     app.include_router(spotify_routes.router)
     app.include_router(privacy_routes.router)
+    app.include_router(share_routes.router)
     app.include_router(metrics_router)
     register_app_collector(app)
     return app
