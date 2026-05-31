@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .audit import AuditLogMiddleware
+from .idempotency import IdempotencyMiddleware, build_store, register as _register_idem_store
 from .metrics import PrometheusMiddleware, register_app_collector
 from .metrics import router as metrics_router
 from .middleware import RequestIDMiddleware, SecurityHeadersMiddleware, SimpleRateLimit
@@ -86,6 +87,16 @@ def create_app() -> FastAPI:
     app.add_middleware(UsageRecorderMiddleware)
     app.add_middleware(TenantScopeMiddleware)
     app.add_middleware(SimpleRateLimit, max_per_minute=settings.rate_limit_per_minute)
+    # Idempotency-Key replay cache sits outside the rate limiter so a
+    # cached replay does not double-charge the workspace quota, and
+    # inside RequestID so replays still carry the original request id.
+    _idem_store = build_store(settings)
+    _register_idem_store(_idem_store)
+    app.add_middleware(
+        IdempotencyMiddleware,
+        enabled=settings.idempotency_enabled,
+        store=_idem_store,
+    )
     # Residency runs outside the rate limiter so a 451 response is not
     # also counted against the workspace quota; it sits inside RequestID
     # so structured logs still carry the request id for the rejection.
@@ -107,7 +118,7 @@ def create_app() -> FastAPI:
         allow_methods=settings.cors_methods_list(),
         allow_headers=settings.cors_headers_list(),
         allow_credentials=cors_allow_credentials,
-        expose_headers=["X-Request-ID", "traceparent", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-RateLimit-Scope", "X-RateLimit-Plan", "X-RateLimit-Limit-Day", "X-RateLimit-Remaining-Day", "X-Data-Region", "X-Workspace-Region", "Retry-After"],
+        expose_headers=["X-Request-ID", "traceparent", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-RateLimit-Scope", "X-RateLimit-Plan", "X-RateLimit-Limit-Day", "X-RateLimit-Remaining-Day", "X-Data-Region", "X-Workspace-Region", "Retry-After", "Idempotent-Replayed", "X-Original-Request-ID"],
         max_age=600,
     )
     # Security headers run outermost so they apply to every response,

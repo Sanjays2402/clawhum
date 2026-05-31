@@ -169,6 +169,24 @@ class Settings(BaseSettings):
         description="Maximum number of rotated audit log files to retain.",
     )
 
+    # Idempotency-Key support for mutating routes. Enterprise integrators
+    # retry POST/PUT/PATCH/DELETE on timeouts, and without server-side
+    # de-duplication a retry can double-write a row. The middleware
+    # caches the first response keyed by (tenant, key, body-hash) for
+    # ``idempotency_ttl_seconds`` and replays it on subsequent calls.
+    idempotency_enabled: bool = Field(
+        default=True,
+        description="Enable Idempotency-Key replay cache for mutating HTTP methods.",
+    )
+    idempotency_ttl_seconds: int = Field(
+        default=24 * 60 * 60,
+        description="How long a cached idempotent response stays replayable.",
+    )
+    idempotency_max_per_tenant: int = Field(
+        default=1024,
+        description="Hard cap on cached idempotent responses per tenant (LRU evicted).",
+    )
+
     model_id: str = "laion/clap-htsat-unfused"
     device: str = "auto"
     embed_dim: int = 512

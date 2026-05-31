@@ -21,6 +21,38 @@ curl -s -X PUT -H "X-API-Key: $CLAWHUM_API_KEY" -H "X-MFA-Code: 123456" \
   http://127.0.0.1:7451/workspace/seat-limit | jq
 ```
 
+## Idempotency-Key replay cache
+
+Enterprise integrators routinely retry POST/PUT/PATCH/DELETE calls after a network blip. Without server-side de-duplication a retry can double-write feedback, double-fire a webhook, or replay the same admin mutation twice. ClawHum now honors an `Idempotency-Key` header on every mutating route, Stripe-style: the first call's response is cached for 24 hours (configurable via `CLAWHUM_IDEMPOTENCY_TTL_SECONDS`) and replays return the original status, body, and headers tagged with `Idempotent-Replayed: true`. The original request id is surfaced as `X-Original-Request-ID` so log searches can stitch the retry to its origin. Reusing the same key with a different body returns HTTP 409 (`idempotency_key_conflict`) so a buggy client cannot silently overwrite a prior outcome. Keys are scoped per resolved tenant (falling back to the API key hash, then client IP) so two workspaces can reuse the same key string without collision and without information leakage. The cache is bounded per tenant by `CLAWHUM_IDEMPOTENCY_MAX_PER_TENANT` (default 1024, LRU evicted) so one noisy workspace cannot exhaust shared memory. Concurrent retries on the same key serialize on an asyncio lock so the origin runs exactly once. The middleware sits outside the rate limiter so cached replays do not double-charge the workspace quota, and inside the request-id middleware so structured logs still correlate. Replay, conflict, cross-tenant isolation, malformed-key rejection, and passthrough behaviour are pinned by `tests/integration/test_idempotency.py`.
+
+### Try it (idempotency)
+
+```bash
+# Start the API with at least one workspace key.
+CLAWHUM_API_KEYS=acme:sk_acme:9999:admin:acme uv run uvicorn clawhum_api.app:create_app --factory --port 7451 &
+
+# First call writes feedback and returns Idempotent-Replayed: false.
+curl -s -i -X POST http://127.0.0.1:7451/feedback \
+  -H 'X-API-Key: sk_acme' \
+  -H 'Idempotency-Key: feedback-2026-05-31-001' \
+  -H 'Content-Type: application/json' \
+  -d '{"query_id":"q1","track_id":"t1","score":0.91,"vote":1}' | head -20
+
+# Replaying the same request returns the cached body and Idempotent-Replayed: true.
+curl -s -i -X POST http://127.0.0.1:7451/feedback \
+  -H 'X-API-Key: sk_acme' \
+  -H 'Idempotency-Key: feedback-2026-05-31-001' \
+  -H 'Content-Type: application/json' \
+  -d '{"query_id":"q1","track_id":"t1","score":0.91,"vote":1}' | head -20
+
+# Reusing the same key with a different body is rejected with 409.
+curl -s -i -X POST http://127.0.0.1:7451/feedback \
+  -H 'X-API-Key: sk_acme' \
+  -H 'Idempotency-Key: feedback-2026-05-31-001' \
+  -H 'Content-Type: application/json' \
+  -d '{"query_id":"q1","track_id":"t1","score":0.91,"vote":-1}' | head -20
+```
+
 ## Per-token last-used forensics
 
 When a personal access token leaks, the first incident-response question is "where was it last used from?" Each PAT now records the resolved client IP (X-Forwarded-For aware) and a length-bounded User-Agent on every successful authentication, surfaced in the same `/keys` response that already powers the settings table. The web UI at [`/settings/keys`](http://127.0.0.1:7452/settings/keys) renders `used: 3m ago from 203.0.113.42` inline with a hover tooltip carrying the full User-Agent so an operator can spot a token being driven from an unexpected host or library without grepping the audit log. Breadcrumbs are tenant-scoped: a sibling workspace listing its own keys can never see another tenant's IPs. The User-Agent is stripped of control bytes and capped at 200 characters so a hostile client cannot bloat the append-only PAT log. Cross-tenant isolation and the IP/UA capture are pinned by `tests/integration/test_pat_last_used_forensics.py`.
