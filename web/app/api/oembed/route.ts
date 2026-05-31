@@ -22,6 +22,7 @@ interface SharedPayload {
   created_at: number;
   count: number;
   results: SharedResult[];
+  embed_allowed_origins?: string[];
 }
 
 const API_BASE = process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451";
@@ -85,6 +86,31 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return jsonError(404, "shared match not found");
   }
 
+  // Per-workspace embed origin allowlist enforcement. When the
+  // workspace that owns this share has registered one or more allowed
+  // origins, browser oEmbed calls from any other origin are rejected
+  // with 403, and the response's Access-Control-Allow-Origin is
+  // narrowed to the calling origin (only when allowed) rather than
+  // the wildcard. Server-to-server calls (no Origin header) are still
+  // served so link previews and crawlers keep working.
+  const allowed = Array.isArray(data.embed_allowed_origins)
+    ? data.embed_allowed_origins
+    : [];
+  const callerOrigin = req.headers.get("origin");
+  let corsOrigin = "*";
+  if (allowed.length > 0) {
+    if (callerOrigin) {
+      if (!allowed.includes(callerOrigin)) {
+        return jsonError(403, "origin not permitted to embed this share");
+      }
+      corsOrigin = callerOrigin;
+    } else {
+      // No browser caller. Strip the permissive ACAO so a hostile
+      // page cannot replay this response from JS.
+      corsOrigin = allowed[0]!;
+    }
+  }
+
   const { width, height } = clampSize(sp.get("maxwidth"), sp.get("maxheight"), DEFAULT_SIZE);
   const top = data.results?.[0];
   const title = top
@@ -112,7 +138,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "public, max-age=300, s-maxage=3600",
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": corsOrigin,
+      Vary: "Origin",
     },
   });
 }

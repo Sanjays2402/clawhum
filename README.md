@@ -4,6 +4,26 @@ Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local
 
 ![landing](docs/screenshots/landing.png)
 
+## Per-workspace embed origin allowlist
+
+Enterprise buyers reject vendors that let any site frame their workspace content because that turns every public share into a clickjacking primitive against their own users. Each workspace can now register one or more origins (scheme plus host, optional port) that are permitted to embed its public shares. An empty list means "no restriction" so existing embeds keep working unchanged. Admins manage the list from [`/settings/embed-origins`](http://127.0.0.1:7452/settings/embed-origins) (admin role plus a fresh TOTP code). When the list is non-empty three enforcement points fire off the same store: `GET /share/{id}` rejects browser reads from a non-allowed `Origin` with 403, `GET /api/oembed` rejects oEmbed calls from a non-allowed `Origin` with 403 and narrows `Access-Control-Allow-Origin` to the caller rather than `*`, and `/r/{id}/embed` returns a `Content-Security-Policy: frame-ancestors` header narrowed to the allowed origins so a hostile site cannot iframe the embed even if it crafts the URL by hand. Server-to-server reads (no `Origin` header) still resolve so crawlers and link previews keep working. Cross-tenant isolation is pinned by `tests/integration/test_embed_origins.py`.
+
+### Try it (embed origin allowlist)
+
+```bash
+# 1. register an allowed origin (admin + MFA)
+curl -sS -X POST http://127.0.0.1:7451/embed-origins \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d '{"origin":"https://docs.acme.com","label":"docs portal"}'
+
+# 2. read the public share with a browser-style Origin header
+curl -i "http://127.0.0.1:7451/share/$SHARE_ID" -H 'Origin: https://evil.example'
+# -> 403 origin not permitted to read this share
+
+curl -s "http://127.0.0.1:7451/share/$SHARE_ID" -H 'Origin: https://docs.acme.com' | jq .embed_allowed_origins
+# -> ["https://docs.acme.com"]
+```
+
 ## Workspace seat license
 
 Enterprise contracts price by seats, so the platform has to refuse seat N+1 instead of silently overflowing the contracted count. Each workspace now has an optional seat cap covering active plus pending members. Admins set it from [`/settings/seat-limit`](http://127.0.0.1:7452/settings/seat-limit) (admin role plus a fresh TOTP code). A cap of 0 means unlimited and is the default, so workspaces without a contract attached keep working unchanged. Once the cap is reached, `POST /members/invite` and SSO domain auto-join both return HTTP 402 Payment Required with a structured body `{error: seat_limit_exceeded, current, limit}` so the UI can render an upgrade affordance instead of a generic failure. Revoked members release their seat; re-activating an existing tombstoned row does not consume a fresh seat. The cap is strictly per workspace and isolation is pinned by `tests/integration/test_seat_limit.py`.

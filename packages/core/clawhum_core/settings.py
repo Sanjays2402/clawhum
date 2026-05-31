@@ -116,6 +116,7 @@ class Settings(BaseSettings):
         ),
     )
     ip_allowlist_path: Path = Path("./data/ip_allowlist.jsonl")
+    embed_origins_path: Path = Path("./data/embed_origins.jsonl")
     sessions_path: Path = Path("./data/sessions.jsonl")
     session_policy_path: Path = Path("./data/session_policy.jsonl")
     ip_allowlist_enabled: bool = Field(

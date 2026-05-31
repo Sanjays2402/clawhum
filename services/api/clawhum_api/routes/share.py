@@ -146,6 +146,7 @@ class SharePublicResponse(BaseModel):
     filename: str | None = None
     duration_sec: float | None = None
     note: str | None = None
+    embed_allowed_origins: list[str] = []
 
 
 @router.post("/share", response_model=ShareCreateResponse, dependencies=[Depends(require_api_key)])
@@ -287,12 +288,26 @@ async def revoke_share(share_id: str, request: Request) -> dict[str, Any]:
 
 
 @router.get("/share/{share_id}", response_model=SharePublicResponse)
-async def get_share(share_id: str) -> SharePublicResponse:
+async def get_share(share_id: str, request: Request) -> SharePublicResponse:
     if not share_id or len(share_id) > 64 or not share_id.isalnum():
         raise HTTPException(404, "not found")
     rec = _find(share_id)
     if rec is None or _is_deleted(rec):
         raise HTTPException(404, "not found")
+    from .. import embed_origins as _eo
+    tenant_id = str(rec.get("tenant_id") or "")
+    allowed = [o.origin for o in _eo.list_origins(tenant_id)] if tenant_id else []
+    if allowed:
+        # If the request came from a browser via fetch(), the Origin
+        # header is present. We do not block the JSON read itself
+        # (the share remains publicly readable for crawlers, link
+        # previews, and server-side renderers), but we do enforce
+        # the allowlist when a browser is calling: a non-matching
+        # Origin gets 403 so the JSON cannot be lifted into a hostile
+        # page that then re-embeds the iframe.
+        origin = request.headers.get("origin")
+        if origin and not _eo.is_allowed(tenant_id, origin):
+            raise HTTPException(status_code=403, detail="origin not permitted to read this share")
     return SharePublicResponse(
         id=rec["id"],
         created_at=float(rec.get("created_at") or 0.0),
@@ -303,4 +318,5 @@ async def get_share(share_id: str) -> SharePublicResponse:
         filename=rec.get("filename"),
         duration_sec=rec.get("duration_sec"),
         note=rec.get("note"),
+        embed_allowed_origins=allowed,
     )

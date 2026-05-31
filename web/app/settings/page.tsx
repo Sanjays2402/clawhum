@@ -444,6 +444,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Workspace embed origin allowlist */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">embed origins</span>
+            <a
+              href="/settings/embed-origins"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            lock down which sites may frame your workspace share embeds and call the oembed endpoint. admin role plus MFA required.
+          </p>
+        </section>
+
         {/* Workspace SSO */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">
