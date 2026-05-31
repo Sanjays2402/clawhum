@@ -23,6 +23,13 @@ curl -s -X POST -H "X-API-Key: $CLAWHUM_API_KEY" \
 # the response.url_path is your public link: /c/<id>
 ```
 
+Shared collection links now ship a 1200x630 Open Graph preview image rendered
+on demand at `/c/<id>/opengraph-image`, so pasting a collection URL into
+Slack, iMessage, Twitter, or LinkedIn unfurls into a card with the title,
+item count, top match, and a preview of the first few items. The image
+generates from live data (no snapshotting), respects the same public
+access rules as the page, and matches the existing `/r/<id>` share card.
+
 ## Try it (developers, v1 API): every public endpoint, copy-paste curl/python/JS pre-filled with your stored API key, and a live `try /v1/me` button that calls the backend through the same proxy a real client would use. The same FastAPI routers (match, batch, share, history, usage, me, webhooks, library stats) are now mounted twice, once at their original path for the in-app UI and once under `/v1` as the stable public surface we promise not to break. The web app forwards `/api/v1/*` straight through to the backend `/v1/*`.
 
 ```bash
