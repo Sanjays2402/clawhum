@@ -15,6 +15,7 @@ import {
   Check,
   PencilSimple,
   X,
+  Hourglass,
 } from "@phosphor-icons/react/dist/ssr";
 import { useApiKey, getApiKey } from "@/lib/apiKey";
 import { toast } from "@/lib/toast";
@@ -32,6 +33,24 @@ interface ShareItem {
   top_artist: string | null;
   top_score: number | null;
   url_path: string;
+  expires_at: number;
+  expired: boolean;
+}
+
+function fmtExpiry(
+  expiresAt: number,
+  expired: boolean,
+): { label: string; tone: "dim" | "muted" | "warn" | "bad" } {
+  if (!expiresAt) return { label: "no expiry", tone: "dim" };
+  if (expired) return { label: "expired", tone: "bad" };
+  const ms = expiresAt * 1000 - Date.now();
+  if (ms <= 0) return { label: "expired", tone: "bad" };
+  const days = Math.floor(ms / 86_400_000);
+  const hours = Math.floor(ms / 3_600_000);
+  if (days >= 2) return { label: `expires in ${days}d`, tone: days <= 3 ? "warn" : "muted" };
+  if (hours >= 1) return { label: `expires in ${hours}h`, tone: "warn" };
+  const mins = Math.max(1, Math.floor(ms / 60_000));
+  return { label: `expires in ${mins}m`, tone: "warn" };
 }
 
 interface ShareList {
@@ -359,6 +378,30 @@ export default function SharesPage() {
                         <span>score {s.top_score.toFixed(3)}</span>
                       )}
                       {s.filename && <span className="truncate max-w-[140px]">{s.filename}</span>}
+                      {(() => {
+                        const e = fmtExpiry(s.expires_at, s.expired);
+                        const cls =
+                          e.tone === "bad"
+                            ? "text-[var(--color-magenta)]"
+                            : e.tone === "warn"
+                              ? "text-[var(--color-phosphor)]"
+                              : e.tone === "muted"
+                                ? "text-[var(--color-muted)]"
+                                : "text-[var(--color-dim)]";
+                        return (
+                          <span
+                            className={cls}
+                            title={
+                              s.expires_at
+                                ? new Date(s.expires_at * 1000).toISOString()
+                                : "link never expires"
+                            }
+                          >
+                            <Hourglass size={9} weight="duotone" className="inline mr-0.5 -mt-px" />
+                            {e.label}
+                          </span>
+                        );
+                      })()}
                     </div>
                     {editingId === s.id ? (
                       <form

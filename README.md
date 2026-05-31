@@ -4,6 +4,31 @@ Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local
 
 ![landing](docs/screenshots/landing.png)
 
+## Share link expiry and 410 governance
+
+Enterprise security reviews flag any product that mints permanent public URLs: a leaked link is a leaked record forever. Public `/r/<id>` share pages now carry an optional `expires_at` and the server enforces it. Callers can pass `expires_in_days` on `POST /share` (0 means no expiry, omitted falls back to the workspace default), and the same field on `PATCH /share/{id}` extends or clears the lifetime without rotating the id. Once the clock passes, the public `GET /share/{id}` returns HTTP 410 Gone with a structured `share link expired` body instead of 200, so crawlers, oEmbed consumers, and Slack unfurls stop pointing at the resource. The owner's `/share` listing still returns the row with `expired: true` so the workspace can either revoke it or extend it; cross-tenant patches and revokes still 404 by design. Two new server-side knobs make this a procurement lever: `CLAWHUM_SHARE_DEFAULT_TTL_DAYS` applies an automatic lifetime to every new share (set it to 30 once and every client respects it), and `CLAWHUM_SHARE_MAX_TTL_DAYS` clamps any caller request, including legacy clients that ask for non-expiring links when a deployment-wide ceiling is in force. The shares table at [`/shares`](http://127.0.0.1:7452/shares) renders a duotone `expires in 7d` badge (warning tint inside 72 hours, magenta when expired) and the public page swaps in a calm 410 surface instead of a generic 404. Audit middleware already captures share create, patch, and revoke so the expiry policy plugs straight into the tamper-evident hash chain. Workspace default application, server-side max clamp, 410 on expired reads, owner-driven extension, expiry isolation across tenants, and the no-default-expiry baseline are pinned by `tests/integration/test_share.py`.
+
+### Try it (share link expiry)
+
+```bash
+# Create a share that self-revokes in 7 days.
+curl -s -X POST http://127.0.0.1:7451/share \
+  -H "X-API-Key: $CLAWHUM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"query_id":"q1","elapsed_ms":42,"count":1,"expires_in_days":7,
+       "results":[{"track_id":"t1","title":"demo","artist":"x",
+                   "score":0.9,"segment_index":0}]}' | jq
+
+# Extend a link from /shares without rotating its id.
+curl -s -X PATCH http://127.0.0.1:7451/share/<id> \
+  -H "X-API-Key: $CLAWHUM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"expires_in_days":30}' | jq
+
+# Public read after expiry returns 410 Gone, not 404.
+curl -s -i http://127.0.0.1:7451/share/<expired-id> | head -1
+```
+
 ## Per-workspace embed origin allowlist
 
 Enterprise buyers reject vendors that let any site frame their workspace content because that turns every public share into a clickjacking primitive against their own users. Each workspace can now register one or more origins (scheme plus host, optional port) that are permitted to embed its public shares. An empty list means "no restriction" so existing embeds keep working unchanged. Admins manage the list from [`/settings/embed-origins`](http://127.0.0.1:7452/settings/embed-origins) (admin role plus a fresh TOTP code). When the list is non-empty three enforcement points fire off the same store: `GET /share/{id}` rejects browser reads from a non-allowed `Origin` with 403, `GET /api/oembed` rejects oEmbed calls from a non-allowed `Origin` with 403 and narrows `Access-Control-Allow-Origin` to the caller rather than `*`, and `/r/{id}/embed` returns a `Content-Security-Policy: frame-ancestors` header narrowed to the allowed origins so a hostile site cannot iframe the embed even if it crafts the URL by hand. Server-to-server reads (no `Origin` header) still resolve so crawlers and link previews keep working. Cross-tenant isolation is pinned by `tests/integration/test_embed_origins.py`.

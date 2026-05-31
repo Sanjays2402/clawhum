@@ -92,6 +92,55 @@ def _is_deleted(rec: dict[str, Any] | None) -> bool:
     return bool(rec and rec.get("deleted"))
 
 
+_SECONDS_PER_DAY = 86_400
+
+
+def _expires_at_value(rec: dict[str, Any] | None) -> float:
+    """Return ``expires_at`` as a float, treating 0/missing as no expiry."""
+    if not rec:
+        return 0.0
+    try:
+        return float(rec.get("expires_at") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _is_expired(rec: dict[str, Any] | None, now: float | None = None) -> bool:
+    exp = _expires_at_value(rec)
+    if exp <= 0:
+        return False
+    return (now if now is not None else time.time()) >= exp
+
+
+def _resolve_expires_at(requested_days: int | None, now: float) -> float:
+    """Translate a caller-supplied ``expires_in_days`` to an epoch second.
+
+    Rules:
+      * ``None`` (omitted) -> apply ``share_default_ttl_days``; 0 means
+        no expiry.
+      * ``0`` -> caller explicitly asked for a non-expiring link. We
+        honour that unless ``share_max_ttl_days`` is set AND the
+        workspace default is also non-zero, in which case we clamp to
+        the max as a safety net for compliance-driven deployments.
+      * positive int -> clamp to ``share_max_ttl_days`` and translate.
+    """
+    s = get_settings()
+    default_days = int(s.share_default_ttl_days or 0)
+    max_days = int(s.share_max_ttl_days or 0)
+    if requested_days is None:
+        days = default_days
+    else:
+        days = int(requested_days)
+    if days <= 0:
+        if requested_days == 0 and default_days > 0 and max_days > 0:
+            days = max_days
+        else:
+            return 0.0
+    if max_days > 0 and days > max_days:
+        days = max_days
+    return now + days * _SECONDS_PER_DAY
+
+
 class ShareCreateBody(BaseModel):
     query_id: str
     elapsed_ms: int = 0
@@ -100,20 +149,42 @@ class ShareCreateBody(BaseModel):
     filename: str | None = None
     duration_sec: float | None = None
     note: str | None = Field(default=None, max_length=280)
+    expires_in_days: int | None = Field(
+        default=None,
+        ge=0,
+        le=3650,
+        description=(
+            "Link lifetime in days. Omit to use the workspace default "
+            "(share_default_ttl_days). 0 requests a non-expiring link; "
+            "the server clamps to share_max_ttl_days when a ceiling is "
+            "set. Values above the ceiling are clamped silently."
+        ),
+    )
 
 
 class ShareUpdateBody(BaseModel):
-    """Partial update for an existing share. Today only the human note
-    is editable. New optional fields can be added here without breaking
-    older clients because every field is optional.
+    """Partial update for an existing share. Today the human note and
+    the link lifetime are editable. New optional fields can be added
+    here without breaking older clients because every field is optional.
     """
 
     note: str | None = Field(default=None, max_length=280)
+    expires_in_days: int | None = Field(
+        default=None,
+        ge=0,
+        le=3650,
+        description=(
+            "Reset the link lifetime, measured from now. 0 removes the "
+            "expiry (subject to share_max_ttl_days). Omit to leave the "
+            "current expiry untouched."
+        ),
+    )
 
 
 class ShareCreateResponse(BaseModel):
     id: str
     url_path: str  # client renders the absolute URL using window.location.origin
+    expires_at: float = 0.0
 
 
 class ShareListItem(BaseModel):
@@ -129,6 +200,8 @@ class ShareListItem(BaseModel):
     top_artist: str | None = None
     top_score: float | None = None
     url_path: str
+    expires_at: float = 0.0
+    expired: bool = False
 
 
 class ShareListResponse(BaseModel):
@@ -146,7 +219,30 @@ class SharePublicResponse(BaseModel):
     filename: str | None = None
     duration_sec: float | None = None
     note: str | None = None
+    expires_at: float = 0.0
     embed_allowed_origins: list[str] = []
+
+
+def _row_from_record(sid: str, rec: dict[str, Any], now: float) -> ShareListItem:
+    results = rec.get("results") or []
+    top = results[0] if results else None
+    expires_at = _expires_at_value(rec)
+    return ShareListItem(
+        id=sid,
+        created_at=float(rec.get("created_at") or 0.0),
+        query_id=str(rec.get("query_id") or ""),
+        elapsed_ms=int(rec.get("elapsed_ms") or 0),
+        count=int(rec.get("count") or 0),
+        filename=rec.get("filename"),
+        duration_sec=rec.get("duration_sec"),
+        note=rec.get("note"),
+        top_title=(top or {}).get("title"),
+        top_artist=(top or {}).get("artist"),
+        top_score=(top or {}).get("score"),
+        url_path=f"/r/{sid}",
+        expires_at=expires_at,
+        expired=expires_at > 0 and now >= expires_at,
+    )
 
 
 @router.post("/share", response_model=ShareCreateResponse, dependencies=[Depends(require_api_key)])
@@ -158,9 +254,11 @@ async def create_share(body: ShareCreateBody, request: Request) -> ShareCreateRe
     tenant_id = getattr(request.state, "tenant_id", "anonymous")
     api_key_name = getattr(request.state, "api_key_name", "dev")
     share_id = _new_id()
+    now = time.time()
+    expires_at = _resolve_expires_at(body.expires_in_days, now)
     record = {
         "id": share_id,
-        "created_at": time.time(),
+        "created_at": now,
         "tenant_id": tenant_id,
         "api_key_name": api_key_name,
         "query_id": body.query_id,
@@ -170,12 +268,15 @@ async def create_share(body: ShareCreateBody, request: Request) -> ShareCreateRe
         "filename": body.filename,
         "duration_sec": body.duration_sec,
         "note": body.note,
+        "expires_at": expires_at,
     }
     line = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
     with _WRITE_LOCK:
         with _store_path().open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
-    return ShareCreateResponse(id=share_id, url_path=f"/r/{share_id}")
+    return ShareCreateResponse(
+        id=share_id, url_path=f"/r/{share_id}", expires_at=expires_at
+    )
 
 
 @router.get(
@@ -186,28 +287,12 @@ async def create_share(body: ShareCreateBody, request: Request) -> ShareCreateRe
 async def list_shares(request: Request) -> ShareListResponse:
     tenant_id = getattr(request.state, "tenant_id", "anonymous")
     collapsed = _collapse_for_tenant(tenant_id)
+    now = time.time()
     items: list[ShareListItem] = []
     for sid, rec in collapsed.items():
         if _is_deleted(rec):
             continue
-        results = rec.get("results") or []
-        top = results[0] if results else None
-        items.append(
-            ShareListItem(
-                id=sid,
-                created_at=float(rec.get("created_at") or 0.0),
-                query_id=str(rec.get("query_id") or ""),
-                elapsed_ms=int(rec.get("elapsed_ms") or 0),
-                count=int(rec.get("count") or 0),
-                filename=rec.get("filename"),
-                duration_sec=rec.get("duration_sec"),
-                note=rec.get("note"),
-                top_title=(top or {}).get("title"),
-                top_artist=(top or {}).get("artist"),
-                top_score=(top or {}).get("score"),
-                url_path=f"/r/{sid}",
-            )
-        )
+        items.append(_row_from_record(sid, rec, now))
     items.sort(key=lambda x: x.created_at, reverse=True)
     return ShareListResponse(shares=items, total=len(items))
 
@@ -236,27 +321,16 @@ async def update_share(
         # Empty string is a valid clear; treat as removing the note.
         note = body.note.strip()
         merged["note"] = note if note else None
-    merged["updated_at"] = time.time()
+    now = time.time()
+    if body.expires_in_days is not None:
+        # Re-resolve against current settings so an admin lowering
+        # share_max_ttl_days takes effect on every subsequent extend.
+        merged["expires_at"] = _resolve_expires_at(body.expires_in_days, now)
+    merged["updated_at"] = now
     line = json.dumps(merged, ensure_ascii=False, separators=(",", ":"))
-    with _WRITE_LOCK:
-        with _store_path().open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-    results = merged.get("results") or []
-    top = results[0] if results else None
-    return ShareListItem(
-        id=share_id,
-        created_at=float(merged.get("created_at") or 0.0),
-        query_id=str(merged.get("query_id") or ""),
-        elapsed_ms=int(merged.get("elapsed_ms") or 0),
-        count=int(merged.get("count") or 0),
-        filename=merged.get("filename"),
-        duration_sec=merged.get("duration_sec"),
-        note=merged.get("note"),
-        top_title=(top or {}).get("title"),
-        top_artist=(top or {}).get("artist"),
-        top_score=(top or {}).get("score"),
-        url_path=f"/r/{share_id}",
-    )
+    with _WRITE_LOCK, _store_path().open("a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+    return _row_from_record(share_id, merged, now)
 
 
 @router.delete("/share/{share_id}", dependencies=[Depends(require_api_key)])
@@ -294,6 +368,12 @@ async def get_share(share_id: str, request: Request) -> SharePublicResponse:
     rec = _find(share_id)
     if rec is None or _is_deleted(rec):
         raise HTTPException(404, "not found")
+    if _is_expired(rec):
+        # 410 Gone communicates "this resource existed and is now
+        # intentionally retired" so search engines and clients can
+        # cache the deletion. We deliberately do not 404 here because
+        # the owner can still extend the lifetime via PATCH.
+        raise HTTPException(410, "share link expired")
     from .. import embed_origins as _eo
     tenant_id = str(rec.get("tenant_id") or "")
     allowed = [o.origin for o in _eo.list_origins(tenant_id)] if tenant_id else []
@@ -318,5 +398,6 @@ async def get_share(share_id: str, request: Request) -> SharePublicResponse:
         filename=rec.get("filename"),
         duration_sec=rec.get("duration_sec"),
         note=rec.get("note"),
+        expires_at=_expires_at_value(rec),
         embed_allowed_origins=allowed,
     )

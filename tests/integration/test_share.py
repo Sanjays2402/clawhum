@@ -214,3 +214,126 @@ def test_share_patch_404_for_missing_and_other_tenant(monkeypatch, tmp_path):
             headers={"X-API-Key": "secret-a"},
         )
         assert gone.status_code == 404
+
+
+def _client_with_share_ttl(monkeypatch, tmp_path, *, default_days=0, max_days=365):
+    monkeypatch.setenv("CLAWHUM_SHARE_DEFAULT_TTL_DAYS", str(default_days))
+    monkeypatch.setenv("CLAWHUM_SHARE_MAX_TTL_DAYS", str(max_days))
+    return _client(monkeypatch, tmp_path)
+
+
+def test_share_create_honours_requested_expiry(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as c:
+        body = _sample_body()
+        body["expires_in_days"] = 7
+        r = c.post("/share", json=body, headers={"X-API-Key": "changeme"})
+        assert r.status_code == 200, r.text
+        created = r.json()
+        sid = created["id"]
+        assert created["expires_at"] > 0
+        pub = c.get(f"/share/{sid}")
+        assert pub.status_code == 200
+        assert pub.json()["expires_at"] == created["expires_at"]
+        listed = c.get("/share", headers={"X-API-Key": "changeme"}).json()
+        assert listed["total"] == 1
+        row = listed["shares"][0]
+        assert row["expires_at"] == created["expires_at"]
+        assert row["expired"] is False
+
+
+def test_share_create_default_no_expiry(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as c:
+        r = c.post("/share", json=_sample_body(), headers={"X-API-Key": "changeme"})
+        assert r.status_code == 200
+        assert r.json()["expires_at"] == 0.0
+        listed = c.get("/share", headers={"X-API-Key": "changeme"}).json()
+        assert listed["shares"][0]["expired"] is False
+        assert listed["shares"][0]["expires_at"] == 0.0
+
+
+def test_share_workspace_default_ttl_applied(monkeypatch, tmp_path):
+    with _client_with_share_ttl(monkeypatch, tmp_path, default_days=14) as c:
+        r = c.post("/share", json=_sample_body(), headers={"X-API-Key": "changeme"})
+        assert r.status_code == 200
+        exp = r.json()["expires_at"]
+        assert exp > 0
+        import time as _t
+        assert 12 * 86400 < (exp - _t.time()) < 16 * 86400
+
+
+def test_share_max_ttl_clamps_request(monkeypatch, tmp_path):
+    with _client_with_share_ttl(monkeypatch, tmp_path, default_days=0, max_days=5) as c:
+        body = _sample_body()
+        body["expires_in_days"] = 30
+        r = c.post("/share", json=body, headers={"X-API-Key": "changeme"})
+        assert r.status_code == 200
+        exp = r.json()["expires_at"]
+        import time as _t
+        assert 4 * 86400 < (exp - _t.time()) < 6 * 86400
+
+
+def test_share_expired_public_get_returns_410(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as c:
+        body = _sample_body()
+        body["expires_in_days"] = 1
+        r = c.post("/share", json=body, headers={"X-API-Key": "changeme"})
+        sid = r.json()["id"]
+
+        import json as _json
+        from pathlib import Path as _P
+        p = _P(tmp_path / "shares.jsonl")
+        lines = p.read_text().splitlines()
+        rec = _json.loads(lines[-1])
+        rec["expires_at"] = 1.0
+        lines[-1] = _json.dumps(rec)
+        p.write_text("\n".join(lines) + "\n")
+
+        gone = c.get(f"/share/{sid}")
+        assert gone.status_code == 410
+        listed = c.get("/share", headers={"X-API-Key": "changeme"}).json()
+        assert listed["total"] == 1
+        assert listed["shares"][0]["expired"] is True
+
+        ext = c.patch(
+            f"/share/{sid}",
+            json={"expires_in_days": 30},
+            headers={"X-API-Key": "changeme"},
+        )
+        assert ext.status_code == 200
+        assert ext.json()["expired"] is False
+        again = c.get(f"/share/{sid}")
+        assert again.status_code == 200
+
+
+def test_share_patch_can_clear_expiry(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as c:
+        body = _sample_body()
+        body["expires_in_days"] = 3
+        sid = c.post("/share", json=body, headers={"X-API-Key": "changeme"}).json()["id"]
+        cleared = c.patch(
+            f"/share/{sid}",
+            json={"expires_in_days": 0},
+            headers={"X-API-Key": "changeme"},
+        )
+        assert cleared.status_code == 200
+        assert cleared.json()["expires_at"] == 0.0
+        assert c.get(f"/share/{sid}").json()["expires_at"] == 0.0
+
+
+def test_share_expiry_isolated_across_tenants(monkeypatch, tmp_path):
+    api_keys = "alice:secret-a:9999:writer:tenant-a,bob:secret-b:9999:writer:tenant-b"
+    with _client(monkeypatch, tmp_path, api_keys=api_keys) as c:
+        body = _sample_body()
+        body["expires_in_days"] = 7
+        sid = c.post(
+            "/share", json=body, headers={"X-API-Key": "secret-a"}
+        ).json()["id"]
+        deny = c.patch(
+            f"/share/{sid}",
+            json={"expires_in_days": 1000},
+            headers={"X-API-Key": "secret-b"},
+        )
+        assert deny.status_code == 404
+        alice_list = c.get("/share", headers={"X-API-Key": "secret-a"}).json()
+        assert alice_list["total"] == 1
+        assert alice_list["shares"][0]["expires_at"] > 0

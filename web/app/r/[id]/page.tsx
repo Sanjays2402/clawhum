@@ -27,19 +27,25 @@ interface SharedPayload {
   filename: string | null;
   duration_sec: number | null;
   note: string | null;
+  expires_at: number;
 }
 
-async function fetchShare(id: string): Promise<SharedPayload | null> {
+type FetchResult =
+  | { kind: "ok"; data: SharedPayload }
+  | { kind: "expired" }
+  | { kind: "missing" };
+
+async function fetchShare(id: string): Promise<FetchResult> {
   const base = process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451";
   try {
     const r = await fetch(`${base}/share/${encodeURIComponent(id)}`, {
       cache: "no-store",
     });
-    if (r.status === 404) return null;
-    if (!r.ok) return null;
-    return (await r.json()) as SharedPayload;
+    if (r.status === 410) return { kind: "expired" };
+    if (r.status === 404 || !r.ok) return { kind: "missing" };
+    return { kind: "ok", data: (await r.json()) as SharedPayload };
   } catch {
-    return null;
+    return { kind: "missing" };
   }
 }
 
@@ -54,10 +60,11 @@ export async function generateMetadata(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Metadata> {
   const { id } = await params;
-  const data = await fetchShare(id);
-  if (!data) {
+  const result = await fetchShare(id);
+  if (result.kind !== "ok") {
     return { title: "clawhum / shared match not found" };
   }
+  const data = result.data;
   const top = data.results[0];
   const title = top
     ? `${top.title} by ${top.artist || "unknown"} / clawhum match`
@@ -87,8 +94,35 @@ export default async function SharedMatchPage(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const data = await fetchShare(id);
-  if (!data) notFound();
+  const result = await fetchShare(id);
+  if (result.kind === "missing") notFound();
+  if (result.kind === "expired") {
+    return (
+      <div className="px-4 py-10 max-w-xl mx-auto text-center space-y-3">
+        <div className="flex items-center justify-center gap-2 font-mono text-[10px] uppercase tracking-widest text-[var(--color-dim)]">
+          <ShareNetwork size={12} weight="duotone" />
+          <span>shared match</span>
+          <span aria-hidden="true">/</span>
+          <span className="text-[var(--color-magenta)]">{id}</span>
+        </div>
+        <h1 className="font-mono text-[14px] uppercase tracking-widest text-[var(--color-text)]">
+          this link has expired
+        </h1>
+        <p className="font-mono text-[11px] text-[var(--color-muted)]">
+          the owner can extend or revoke this link from their shares page.
+          expired links are intentionally retired and return HTTP 410 so
+          crawlers and clients can stop pointing at them.
+        </p>
+        <Link
+          href="/"
+          className="inline-block font-mono text-[11px] uppercase tracking-widest text-[var(--color-phosphor)] hover:underline"
+        >
+          try clawhum →
+        </Link>
+      </div>
+    );
+  }
+  const data = result.data;
 
   const top = data.results[0];
   const maxScore = data.results.reduce((m, r) => Math.max(m, r.score), 0) || 1;

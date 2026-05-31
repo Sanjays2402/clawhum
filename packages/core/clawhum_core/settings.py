@@ -29,6 +29,29 @@ class Settings(BaseSettings):
     library_path: Path = Path("./data/audio")
     feedback_path: Path = Path("./data/feedback.jsonl")
     shares_path: Path = Path("./data/shares.jsonl")
+    share_default_ttl_days: int = Field(
+        default=0,
+        ge=0,
+        le=3650,
+        description=(
+            "Default lifetime in days applied to new public share links "
+            "when the caller does not pass expires_in_days. 0 means no "
+            "default expiry: links live until revoked, matching the "
+            "legacy behaviour. Use this to make every new share "
+            "self-expire (e.g. 30 days) without changing client code."
+        ),
+    )
+    share_max_ttl_days: int = Field(
+        default=365,
+        ge=1,
+        le=3650,
+        description=(
+            "Hard upper bound (in days) on the expires_in_days a caller "
+            "may request when creating or extending a share link. "
+            "Requests above this are clamped silently. Enterprises set "
+            "this low (e.g. 30) to enforce link governance."
+        ),
+    )
     collections_path: Path = Path("./data/collections.jsonl")
     history_path: Path = Path("./data/history.jsonl")
     history_views_path: Path = Path("./data/history_views.jsonl")
@@ -141,6 +164,16 @@ class Settings(BaseSettings):
     webhook_deliveries_path: Path = Path("./data/webhook_deliveries.jsonl")
     webhook_timeout_sec: float = 5.0
     webhook_max_attempts: int = 3
+    webhook_auto_disable_threshold: int = Field(
+        default=10,
+        ge=0,
+        description=(
+            "Auto disable a webhook endpoint after this many consecutive"
+            " failed deliveries. A success or an admin resume resets the"
+            " counter. Set to 0 to disable the circuit breaker and rely"
+            " on operators to pause sick endpoints manually."
+        ),
+    )
     webhook_allowlist_path: Path = Path("./data/webhook_allowlist.jsonl")
     webhook_block_private_ips: bool = Field(
         default=True,
