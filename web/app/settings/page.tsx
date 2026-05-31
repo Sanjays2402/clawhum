@@ -540,6 +540,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Per-workspace vendor support access grants */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">support access</span>
+            <a
+              href="/settings/support-access"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            approve named clawhum support staff to touch your workspace for a bounded window with read or write scope. without an active grant, vendor staff get 403 on every request. every action under a grant is recorded in the audit log with the support actor email and grant id, giving you forensic proof for SOC2 CC6.1 and ISO 27001 A.9.2.3. admin role plus MFA required.
+          </p>
+        </section>
+
         {/* Workspace SSO */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

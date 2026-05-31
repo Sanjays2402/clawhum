@@ -171,6 +171,7 @@ class Settings(BaseSettings):
     invite_domains_path: Path = Path("./data/invite_domains.jsonl")
     scope_policy_path: Path = Path("./data/scope_policy.jsonl")
     dpa_acceptances_path: Path = Path("./data/dpa_acceptances.jsonl")
+    support_access_path: Path = Path("./data/support_access.jsonl")
     sessions_path: Path = Path("./data/sessions.jsonl")
     session_policy_path: Path = Path("./data/session_policy.jsonl")
     ip_allowlist_enabled: bool = Field(

@@ -7,7 +7,7 @@ from fastapi import Header, HTTPException, Request, status
 from clawhum_core.settings import get_settings
 
 from .api_keys import ANON_TENANT_ID, DEV_TENANT_ID, ROLES, SCOPES, scopes_allowed_for_roles, get_registry
-from . import ip_allowlist, pat_store, sessions as session_store
+from . import ip_allowlist, pat_store, sessions as session_store, support_access
 
 
 async def require_api_key(
@@ -27,6 +27,7 @@ async def require_api_key(
         request.state.api_key_scopes = SCOPES
         request.state.tenant_id = DEV_TENANT_ID
         _enforce_ip_allowlist(request)
+        _enforce_support_actor(request)
         return "dev"
     key = registry.lookup(x_api_key)
     if key is None:
@@ -116,6 +117,7 @@ async def require_api_key(
                     pass
                 _enforce_ip_allowlist(request)
                 _record_and_enforce_session(request, actor=f"pat:{pat.name}", actor_kind="pat")
+                _enforce_support_actor(request)
                 return x_api_key
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid api key")
     request.state.api_key_name = key.name
@@ -124,6 +126,7 @@ async def require_api_key(
     request.state.tenant_id = key.tenant_id or ANON_TENANT_ID
     _enforce_ip_allowlist(request)
     _record_and_enforce_session(request, actor=key.name, actor_kind="key")
+    _enforce_support_actor(request)
     return x_api_key
 
 
@@ -291,6 +294,62 @@ def _enforce_pat_ip_allowlist(request: Request, pat: pat_store.PAT) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"ip {client_ip} not in pat allowlist",
         )
+
+
+def _enforce_support_actor(request: Request) -> None:
+    """When ``X-Support-Actor`` is set, require an active grant.
+
+    The header is the contract between clawhum support staff and the
+    customer: support staff identify themselves by email on every
+    request made on the customer's behalf, and the customer
+    pre-approves which support emails are allowed and for how long.
+    No active grant means the request is rejected 403 before any
+    business logic runs. When a grant exists, the matching grant id
+    and the support actor's email are stamped on request.state so the
+    AuditLogMiddleware records every mutating action under that grant
+    automatically. The customer keeps the resulting audit chain as
+    forensic evidence that vendor access was approved, scoped, and
+    time-boxed.
+
+    Read grants restrict the support actor to safe HTTP methods
+    (GET, HEAD, OPTIONS); write grants permit any method. A request
+    that violates the scope returns 403 with a deterministic detail
+    so the support staffer can ask the customer to upgrade the grant
+    instead of silently failing on a downstream permission check.
+    """
+    actor_header = request.headers.get("x-support-actor") or ""
+    actor = actor_header.strip().lower()
+    if not actor:
+        return
+    tenant_id = getattr(request.state, "tenant_id", "") or ""
+    if not tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="support actor header requires an authenticated tenant",
+        )
+    grant = support_access.find_active_for_actor(tenant_id, actor)
+    if grant is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"no active support access grant for {actor} in this "
+                "workspace; the workspace owner must approve access "
+                "from /settings/support-access before this request "
+                "can proceed"
+            ),
+        )
+    if not grant.permits_method(request.method):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"support grant {grant.id} is read-only; ask the "
+                "workspace owner to upgrade the grant scope to write "
+                "before retrying this request"
+            ),
+        )
+    request.state.support_actor = actor
+    request.state.support_grant_id = grant.id
+    request.state.support_grant_scope = grant.scope
 
 
 def _enforce_ip_allowlist(request: Request) -> None:

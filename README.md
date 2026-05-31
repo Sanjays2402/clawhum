@@ -2,6 +2,30 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace vendor support access grants
+
+Enterprise procurement keeps asking the same question: "when your support staff need to look at our data to debug an incident, how is that access authorised, scoped, time-boxed, and recorded?" Each workspace can now answer it from [`/settings/support-access`](http://127.0.0.1:7452/settings/support-access). A workspace owner grants a named clawhum support actor (identified by email) either `read` or `write` access for a bounded window (hard cap 7 days) with a stated reason that lands in the audit log. Inbound requests that carry `X-Support-Actor: <email>` are checked against the workspace's active grants at the auth layer: with no active grant the request is rejected HTTP 403 before any route runs, and the same support email cannot ride a grant from tenant A into tenant B. With an active grant, every mutating action is recorded in the tamper-evident audit chain with `support_actor` and `support_grant_id` fields stamped automatically by the audit middleware, giving the customer a defensible forensic trail for SOC2 CC6.1 and ISO 27001 A.9.2.3 reviews. Read grants restrict the support actor to safe HTTP methods; revocation takes effect on the next request. Mutations require the admin role plus a fresh MFA step-up. Cross-tenant isolation, RBAC, scope enforcement, revocation, and TTL cap are pinned by `tests/integration/test_support_access.py`.
+
+### Try it (support access grants)
+
+UI: <http://127.0.0.1:7452/settings/support-access> (admin role, MFA).
+
+```bash
+# grant alice@clawhum.com read access for an hour
+curl -sS -X POST http://127.0.0.1:7451/support-grants \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"support_actor":"alice@clawhum.com","scope":"read","reason":"Debug match latency for ticket #42","ttl_seconds":3600}'
+
+# support staff acting under the grant
+curl -sS http://127.0.0.1:7451/me \
+  -H 'X-API-Key: sk_admin' -H 'X-Support-Actor: alice@clawhum.com'
+
+# revoke instantly when the incident closes
+curl -sS -X POST http://127.0.0.1:7451/support-grants/<id>/revoke \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"reason":"incident closed"}'
+```
+
 ## Per-workspace PAT scope policy
 
 Enterprise procurement keeps asking the same question: "can an admin in our workspace ever mint a PAT carrying `write:keys` or `admin` scope?". With nothing in place the answer is yes, because the admin role implies every scope. Workspace owners can now pin the maximum scope set their workspace is ever allowed to mint at [`/settings/scope-policy`](http://127.0.0.1:7452/settings/scope-policy). When a policy is active, `POST /keys` clamps requested scopes to (caller role scopes ∩ workspace policy scopes), and any explicit out-of-policy scope is rejected with HTTP 403 and a machine-parseable `scope_not_allowed` error code carrying the denied scope list. Default (unset) PATs minted under an active policy are stored with scopes already clamped so the dashboard's effective-scopes column never lies. `GET /keys/policy` surfaces the workspace pin so the create-key UI never offers a scope the server will reject. Mutations require the admin role plus a fresh MFA step-up and are written to the tamper-evident audit chain with before and after snapshots. Tenant scoped end to end: tenant A cannot read or affect tenant B's pin. Pinned by `tests/integration/test_scope_policy.py`.
