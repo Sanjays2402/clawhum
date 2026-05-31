@@ -1,8 +1,10 @@
 from __future__ import annotations
 import mimetypes
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
+from typing import Literal, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from clawhum_core.settings import get_settings
 from clawhum_indexer.build import build_index, IndexerOptions
@@ -54,6 +56,92 @@ async def reindex(body: ReindexBody, request: Request, bg: BackgroundTasks):
 
     bg.add_task(_run)
     return {"started": True, "library_path": str(lib), "spotify_playlist": body.spotify_playlist}
+
+
+class TrackSummary(BaseModel):
+    id: str
+    title: str
+    artist: str = ""
+    album: str = ""
+    duration_s: float = 0.0
+    source: str = "local"
+    tempo_bpm: Optional[float] = None
+    key: Optional[str] = None
+    preview_url: Optional[str] = None
+    artwork_url: Optional[str] = None
+    has_audio: bool = False
+
+
+class TracksListResponse(BaseModel):
+    items: list[TrackSummary]
+    total: int
+    limit: int
+    offset: int
+
+
+def _track_to_summary(t) -> TrackSummary:
+    raw = getattr(t, "path", None)
+    has_audio = False
+    if raw:
+        try:
+            has_audio = Path(raw).is_file()
+        except OSError:
+            has_audio = False
+    return TrackSummary(
+        id=t.id, title=t.title or "", artist=t.artist or "", album=t.album or "",
+        duration_s=float(t.duration_s or 0.0), source=t.source or "local",
+        tempo_bpm=t.tempo_bpm, key=t.key,
+        preview_url=t.preview_url, artwork_url=t.artwork_url,
+        has_audio=has_audio,
+    )
+
+
+@router.get("/tracks", response_model=TracksListResponse)
+async def list_tracks(
+    request: Request,
+    q: str = Query("", description="case-insensitive substring match across id/title/artist/album"),
+    source: Optional[str] = Query(None, description="filter by source, e.g. local, spotify"),
+    sort: Literal["title", "artist", "duration", "id"] = Query("title"),
+    order: Literal["asc", "desc"] = Query("asc"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """List indexed tracks. Server-backed catalog browser."""
+    state = request.app.state.clawhum
+    tracks = list(state.tracks.values())
+    if q:
+        needle = q.lower()
+        tracks = [
+            t for t in tracks
+            if needle in (t.id or "").lower()
+            or needle in (t.title or "").lower()
+            or needle in (t.artist or "").lower()
+            or needle in (t.album or "").lower()
+        ]
+    if source:
+        tracks = [t for t in tracks if (t.source or "") == source]
+    key_fns = {
+        "title": lambda t: (t.title or "").lower(),
+        "artist": lambda t: (t.artist or "").lower(),
+        "duration": lambda t: float(t.duration_s or 0.0),
+        "id": lambda t: t.id,
+    }
+    tracks.sort(key=key_fns[sort], reverse=(order == "desc"))
+    total = len(tracks)
+    page = tracks[offset:offset + limit]
+    return TracksListResponse(
+        items=[_track_to_summary(t) for t in page],
+        total=total, limit=limit, offset=offset,
+    )
+
+
+@router.get("/track/{track_id}", response_model=TrackSummary)
+async def get_track(track_id: str, request: Request):
+    state = request.app.state.clawhum
+    t = state.tracks.get(track_id)
+    if t is None:
+        raise HTTPException(404, "unknown track_id")
+    return _track_to_summary(t)
 
 
 @router.get("/track/{track_id}/audio")

@@ -10,6 +10,15 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Try it (browse the indexed catalog)
+
+`http://127.0.0.1:7452/catalog` is now a server-backed browser over every fingerprinted track in the index, not just the ones you happen to have matched against locally. Search across title, artist, album, or id; sort by title, artist, duration, or id; filter by source; paginate 24 at a time. Click any card to land on `/track/<id>` for a detail view with reference audio playback, tempo, key, and a direct link back into the capture flow. Both pages call the new `GET /tracks` and `GET /track/{id}` endpoints, also exposed as `GET /v1/tracks` and `GET /v1/track/{id}` for integrators.
+
+```bash
+curl -H "X-API-Key: $CLAWHUM_API_KEY" \
+  "http://127.0.0.1:7451/v1/tracks?q=bach&sort=duration&order=desc&limit=10"
+```
+
 ## Try it (browser notifications)
 
 `http://127.0.0.1:7452/settings/notifications` registers the browser `Notification` permission for the tab, then opts you into one or more event kinds: a saved match landing in history, or a webhook attempt out of `/v1/hooks`. A background poller hits `/api/activity` every 30 seconds, diffs against a per-device cursor, and fires a real OS-level notification for anything new whose kind you turned on. Optional 250 ms WebAudio cue. Recent firings are logged in-app so you can audit what the engine actually delivered.

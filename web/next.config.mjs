@@ -11,6 +11,8 @@ const nextConfig = {
       { source: "/api/health", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/health` },
       { source: "/api/track/:trackId/audio", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/track/:trackId/audio` },
       { source: "/api/track/:trackId/pitch", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/track/:trackId/pitch` },
+      { source: "/api/track/:trackId", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/track/:trackId` },
+      { source: "/api/tracks", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/tracks` },
       { source: "/api/pitch", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/pitch` },
       { source: "/api/share", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/share` },
       { source: "/api/share/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/share/:id` },
