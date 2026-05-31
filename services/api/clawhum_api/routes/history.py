@@ -17,15 +17,19 @@ intentionally not supported here; share links exist for that.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import secrets
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any
 
 from clawhum_core.settings import get_settings
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from ..auth import require_api_key
@@ -241,6 +245,114 @@ async def list_history(
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+@router.get("/history/export", dependencies=[Depends(require_api_key)])
+async def export_history(
+    request: Request,
+    format: str = Query(default="csv", pattern="^(csv|json)$"),
+    q: str = Query(default="", max_length=120),
+    tag: str = Query(default="", max_length=_MAX_TAG_LEN),
+) -> Response:
+    """Download the caller's full history matching the given filters.
+
+    Returns every record (not paginated). CSV flattens to one row per
+    candidate result; JSON returns a list of full history items.
+    """
+    tenant_id = getattr(request.state, "tenant_id", "anonymous")
+    rows = list(_collapse(tenant_id).values())
+    needle = q.strip().lower()
+    tag_needle = tag.strip().lower()
+    if needle:
+        def hit(r: dict[str, Any]) -> bool:
+            if needle in (r.get("name") or "").lower():
+                return True
+            if needle in (r.get("filename") or "").lower():
+                return True
+            for res in r.get("results") or []:
+                if needle in str(res.get("title", "")).lower():
+                    return True
+                if needle in str(res.get("artist", "")).lower():
+                    return True
+            return False
+        rows = [r for r in rows if hit(r)]
+    if tag_needle:
+        rows = [r for r in rows if tag_needle in (r.get("tags") or [])]
+    rows.sort(key=lambda r: float(r.get("created_at") or 0.0), reverse=True)
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    if format == "json":
+        items = [_to_item(r).model_dump() for r in rows]
+        payload = {
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "tenant_id": tenant_id,
+            "count": len(items),
+            "items": items,
+        }
+        body = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+        return Response(
+            content=body,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="clawhum-history-{stamp}.json"',
+                "Cache-Control": "no-store",
+            },
+        )
+
+    # CSV: one row per candidate result. Empty history still emits headers.
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow([
+        "history_id",
+        "created_at_iso",
+        "query_id",
+        "name",
+        "filename",
+        "duration_sec",
+        "elapsed_ms",
+        "tags",
+        "candidate_rank",
+        "track_id",
+        "title",
+        "artist",
+        "album",
+        "score",
+    ])
+    for r in rows:
+        created = float(r.get("created_at") or 0.0)
+        created_iso = datetime.fromtimestamp(created, timezone.utc).isoformat() if created else ""
+        tags_s = ",".join(r.get("tags") or [])
+        results = r.get("results") or []
+        if not results:
+            w.writerow([
+                r.get("id", ""), created_iso, r.get("query_id", ""),
+                r.get("name") or "", r.get("filename") or "",
+                r.get("duration_sec") if r.get("duration_sec") is not None else "",
+                int(r.get("elapsed_ms") or 0), tags_s,
+                "", "", "", "", "", "",
+            ])
+            continue
+        for idx, res in enumerate(results, start=1):
+            w.writerow([
+                r.get("id", ""), created_iso, r.get("query_id", ""),
+                r.get("name") or "", r.get("filename") or "",
+                r.get("duration_sec") if r.get("duration_sec") is not None else "",
+                int(r.get("elapsed_ms") or 0), tags_s,
+                idx,
+                str(res.get("track_id") or ""),
+                str(res.get("title") or ""),
+                str(res.get("artist") or ""),
+                str(res.get("album") or ""),
+                res.get("score") if res.get("score") is not None else "",
+            ])
+    return Response(
+        content=buf.getvalue().encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="clawhum-history-{stamp}.csv"',
+            "Cache-Control": "no-store",
+        },
     )
 
 

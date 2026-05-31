@@ -87,6 +87,24 @@ curl -X DELETE http://127.0.0.1:7451/history/<id> -H 'X-API-Key: dev'
 
 Entries are tenant-scoped at write time so each API key only sees its own history.
 
+## Try it (export your full history)
+
+Download your entire saved history as CSV or JSON, respecting the search and tag filters currently active on `/history`. The CSV flattens to one row per candidate match so it drops straight into a spreadsheet; the JSON is the full nested payload for programmatic re-ingestion.
+
+Open `http://127.0.0.1:7452/history`, set any filter you want, click **export**, then pick CSV or JSON. From the API:
+
+```sh
+# full history as CSV
+curl -L 'http://127.0.0.1:7451/history/export?format=csv' \
+  -H 'X-API-Key: dev' -o history.csv
+
+# only entries tagged "jazz", as JSON
+curl -L 'http://127.0.0.1:7451/history/export?format=json&tag=jazz' \
+  -H 'X-API-Key: dev' -o history.json
+```
+
+Server-side coverage lives in `tests/integration/test_history.py::test_history_export_csv_and_json`.
+
 ## Try it (webhooks)
 
 ClawHum now ships outbound webhooks. Register a URL at `http://127.0.0.1:7452/webhooks` and every completed match POSTs the full `MatchResponse` JSON to that endpoint, signed with HMAC-SHA256 in the `X-Clawhum-Signature` header. Failed deliveries retry with exponential backoff up to three attempts, and every attempt is recorded in a per-webhook delivery log you can inspect from the same page.

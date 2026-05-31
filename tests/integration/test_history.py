@@ -92,3 +92,50 @@ def test_history_validates(monkeypatch, tmp_path):
         bad["results"] = []
         assert c.post("/history", json=bad, headers=h).status_code == 400
         assert c.get("/history/bad..id", headers=h).status_code == 404
+
+
+def test_history_export_csv_and_json(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as c:
+        h = {"X-API-Key": "changeme"}
+        # seed two entries
+        assert c.post("/history", json=_body(name="hum-1", tags=["jazz"]), headers=h).status_code == 200
+        assert c.post("/history", json=_body(name="hum-2", tags=["rock"]), headers=h).status_code == 200
+
+        # auth required
+        assert c.get("/history/export").status_code == 401
+
+        # csv
+        r = c.get("/history/export?format=csv", headers=h)
+        assert r.status_code == 200, r.text
+        assert r.headers["content-type"].startswith("text/csv")
+        assert "attachment" in r.headers["content-disposition"]
+        body = r.text
+        # header + 4 candidate rows (2 entries x 2 results each)
+        lines = [ln for ln in body.splitlines() if ln.strip()]
+        assert lines[0].startswith("history_id,created_at_iso,query_id")
+        assert len(lines) == 1 + 4
+        assert "Bohemian Rhapsody" in body
+        assert "Queen" in body
+
+        # json
+        rj = c.get("/history/export?format=json", headers=h)
+        assert rj.status_code == 200
+        assert rj.headers["content-type"].startswith("application/json")
+        payload = rj.json()
+        assert payload["count"] == 2
+        assert len(payload["items"]) == 2
+        assert {it["name"] for it in payload["items"]} == {"hum-1", "hum-2"}
+
+        # filter by tag narrows export
+        rt = c.get("/history/export?format=json&tag=jazz", headers=h)
+        assert rt.status_code == 200
+        pt = rt.json()
+        assert pt["count"] == 1
+        assert pt["items"][0]["name"] == "hum-1"
+
+        # invalid format rejected
+        assert c.get("/history/export?format=xml", headers=h).status_code == 422
+
+        # tenant isolation: other tenant sees nothing
+        other = c.get("/history/export?format=json", headers={"X-API-Key": "othersecret"}).json()
+        assert other["count"] == 0

@@ -12,6 +12,9 @@ import {
   Key,
   Check,
   X,
+  DownloadSimple,
+  FileCsv,
+  FileCode,
 } from "@phosphor-icons/react/dist/ssr";
 import { useApiKey } from "@/lib/apiKey";
 
@@ -173,6 +176,7 @@ export default function HistoryPage() {
           >
             <ArrowsClockwise size={12} weight="duotone" /> refresh
           </button>
+          <ExportAllMenu q={q} tag={tag} total={total} />
         </div>
       </div>
 
@@ -334,6 +338,90 @@ export default function HistoryPage() {
             >
               next
             </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExportAllMenu({ q, tag, total }: { q: string; tag: string; total: number }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState<"csv" | "json" | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const disabled = total === 0;
+
+  async function download(format: "csv" | "json") {
+    setErr(null);
+    setBusy(format);
+    try {
+      const u = new URL("/api/history/export", window.location.origin);
+      u.searchParams.set("format", format);
+      if (q.trim()) u.searchParams.set("q", q.trim());
+      if (tag.trim()) u.searchParams.set("tag", tag.trim().toLowerCase());
+      const r = await fetch(u.pathname + u.search);
+      if (!r.ok) {
+        if (r.status === 401) throw new Error("set an api key in settings first");
+        throw new Error(`export failed (${r.status})`);
+      }
+      const blob = await r.blob();
+      const link = document.createElement("a");
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      link.href = URL.createObjectURL(blob);
+      link.download = `clawhum-history-${stamp}.${format}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+      setOpen(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "export failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={disabled}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={disabled ? "no history to export" : "export all matching history"}
+        className="font-mono text-[10px] uppercase tracking-widest px-2 py-1 border border-[var(--color-line)] hover:bg-[var(--color-panel)] flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        <DownloadSimple size={12} weight="duotone" /> export
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 mt-1 z-10 panel border border-[var(--color-line)] rounded-[2px] min-w-[180px] bg-[var(--color-bg)]"
+        >
+          <button
+            role="menuitem"
+            onClick={() => download("csv")}
+            disabled={busy !== null}
+            className="w-full text-left px-3 py-2 font-mono text-[11px] uppercase tracking-widest hover:bg-[var(--color-panel)] flex items-center gap-2 disabled:opacity-40"
+          >
+            <FileCsv size={14} weight="duotone" /> {busy === "csv" ? "downloading..." : "csv (flat rows)"}
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => download("json")}
+            disabled={busy !== null}
+            className="w-full text-left px-3 py-2 font-mono text-[11px] uppercase tracking-widest hover:bg-[var(--color-panel)] flex items-center gap-2 border-t border-[var(--color-line)] disabled:opacity-40"
+          >
+            <FileCode size={14} weight="duotone" /> {busy === "json" ? "downloading..." : "json (nested)"}
+          </button>
+          {err && (
+            <div className="px-3 py-2 border-t border-[var(--color-line)] text-[var(--color-amber)] font-mono text-[10px]">
+              {err}
+            </div>
+          )}
+          <div className="px-3 py-2 border-t border-[var(--color-line)] font-mono text-[9px] text-[var(--color-dim)] uppercase tracking-widest">
+            {total} entries match filters
           </div>
         </div>
       )}
