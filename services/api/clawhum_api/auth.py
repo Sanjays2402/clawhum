@@ -47,7 +47,19 @@ async def require_api_key(
                 _enforce_pat_ip_allowlist(request, pat)
                 # Best-effort, fire and forget. Failures must never block auth.
                 try:
-                    pat_store.touch_last_used(pat.id)
+                    headers = list(request.headers.items())
+                    client_host = request.client.host if request.client else ""
+                    resolved_ip = (
+                        ip_allowlist.client_ip_from_request(headers, client_host)
+                        or client_host
+                        or ""
+                    )
+                    ua = request.headers.get("user-agent", "")
+                    pat_store.touch_last_used(
+                        pat.id,
+                        client_ip=resolved_ip,
+                        user_agent=ua,
+                    )
                 except Exception:
                     pass
                 _enforce_ip_allowlist(request)

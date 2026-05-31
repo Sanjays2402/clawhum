@@ -72,6 +72,16 @@ class PAT:
     last_used_at: float  # 0.0 means "never"
     secret_hash: str
     secret_hint: str  # last 4 chars, for the UI
+    # Forensic breadcrumbs from the most recent successful auth using
+    # this token. Empty string means "no use recorded yet" (either the
+    # PAT was never used, or every use predates this field). We record
+    # the client IP that auth.py resolved (X-Forwarded-For aware) plus
+    # a truncated User-Agent so an operator can spot a leaked token
+    # being driven from an unexpected host or library without having
+    # to grep the audit log. UA is hard-capped at 200 chars so a
+    # hostile client cannot bloat the JSONL file.
+    last_used_ip: str = ""
+    last_used_ua: str = ""
     deleted: bool = False
     expires_at: float = 0.0  # 0.0 means "never expires"
     # Fine-grained scopes layered on top of roles. An empty set means
@@ -152,6 +162,8 @@ def _from_record(rec: dict[str, Any]) -> PAT:
         last_used_at=float(rec.get("last_used_at", 0.0)),
         secret_hash=rec.get("secret_hash", ""),
         secret_hint=rec.get("secret_hint", ""),
+        last_used_ip=str(rec.get("last_used_ip", "") or ""),
+        last_used_ua=str(rec.get("last_used_ua", "") or ""),
         deleted=bool(rec.get("deleted", False)),
         expires_at=float(rec.get("expires_at", 0.0) or 0.0),
         scopes=normalise_scopes(rec.get("scopes") or []),
@@ -295,6 +307,8 @@ def create(
         "last_used_at": 0.0,
         "secret_hash": hash_secret(secret),
         "secret_hint": secret[-4:],
+        "last_used_ip": "",
+        "last_used_ua": "",
         "deleted": False,
         "expires_at": expires_at,
         "scopes": sorted(safe_scopes),
@@ -355,6 +369,8 @@ def rotate(
         "last_used_at": current.last_used_at,
         "secret_hash": hash_secret(new_secret),
         "secret_hint": new_secret[-4:],
+        "last_used_ip": current.last_used_ip,
+        "last_used_ua": current.last_used_ua,
         "deleted": False,
         "expires_at": current.expires_at,
         "scopes": sorted(current.scopes),
@@ -388,6 +404,8 @@ def revoke(*, tenant_id: str, pat_id: str) -> bool:
         "last_used_at": current.last_used_at,
         "secret_hash": current.secret_hash,
         "secret_hint": current.secret_hint,
+        "last_used_ip": current.last_used_ip,
+        "last_used_ua": current.last_used_ua,
         "deleted": True,
         "expires_at": current.expires_at,
         "scopes": sorted(current.scopes),
@@ -426,11 +444,40 @@ def revoke_all_for_tenant(
     return out
 
 
-def touch_last_used(pat_id: str) -> None:
-    """Append a no-op record that bumps last_used_at. Best-effort."""
+_UA_MAX_LEN = 200
+
+
+def _trim_ua(ua: str | None) -> str:
+    """Bound the recorded User-Agent.
+
+    Clients control this header so we strip control bytes and cap the
+    length to keep one JSONL line bounded regardless of input.
+    """
+    if not ua:
+        return ""
+    cleaned = "".join(ch for ch in str(ua) if ch >= " " and ch != "\x7f")
+    return cleaned[:_UA_MAX_LEN]
+
+
+def touch_last_used(
+    pat_id: str,
+    *,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
+) -> None:
+    """Append a no-op record that bumps last_used_at. Best-effort.
+
+    When ``client_ip`` or ``user_agent`` is provided, those fields are
+    refreshed too so the keys UI and incident-response tooling can
+    show *where* a token was last used from. Empty/None values reuse
+    whatever was previously recorded, so a misbehaving proxy that
+    strips XFF on one request does not erase the last good signal.
+    """
     current = _reduce().get(pat_id)
     if current is None or current.deleted:
         return
+    new_ip = (client_ip or "").strip() or current.last_used_ip
+    new_ua = _trim_ua(user_agent) or current.last_used_ua
     rec = {
         "id": current.id,
         "tenant_id": current.tenant_id,
@@ -441,6 +488,8 @@ def touch_last_used(pat_id: str) -> None:
         "last_used_at": time.time(),
         "secret_hash": current.secret_hash,
         "secret_hint": current.secret_hint,
+        "last_used_ip": new_ip,
+        "last_used_ua": new_ua,
         "deleted": False,
         "expires_at": current.expires_at,
         "scopes": sorted(current.scopes),
@@ -460,6 +509,8 @@ def public_view(p: PAT) -> dict[str, Any]:
         "rpm": p.rpm,
         "created_at": p.created_at,
         "last_used_at": p.last_used_at,
+        "last_used_ip": p.last_used_ip,
+        "last_used_ua": p.last_used_ua,
         "secret_hint": p.secret_hint,
         "expires_at": p.expires_at,
         "expired": p.is_expired(),
@@ -543,6 +594,8 @@ def set_ip_cidrs(
         "last_used_at": current.last_used_at,
         "secret_hash": current.secret_hash,
         "secret_hint": current.secret_hint,
+        "last_used_ip": current.last_used_ip,
+        "last_used_ua": current.last_used_ua,
         "deleted": False,
         "expires_at": current.expires_at,
         "scopes": sorted(current.scopes),

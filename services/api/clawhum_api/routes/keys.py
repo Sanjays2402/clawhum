@@ -70,6 +70,8 @@ class KeyView(BaseModel):
     rpm: int
     created_at: float
     last_used_at: float
+    last_used_ip: str = ""
+    last_used_ua: str = ""
     secret_hint: str
     expires_at: float
     expired: bool

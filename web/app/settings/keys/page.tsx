@@ -32,6 +32,8 @@ interface KeyRow {
   rpm: number;
   created_at: number;
   last_used_at: number;
+  last_used_ip?: string;
+  last_used_ua?: string;
   secret_hint: string;
   expires_at: number;
   expired: boolean;
@@ -666,7 +668,20 @@ export default function KeysPage() {
                     <span title={row.effective_scopes.join(", ")}>
                       scopes: {row.scopes.length > 0 ? row.scopes.join(", ") : "role default"}
                     </span>
-                    <span>used: {timeAgo(row.last_used_at)}</span>
+                    <span
+                      title={
+                        row.last_used_at > 0
+                          ? `Last successful auth from ${row.last_used_ip || "unknown ip"}${row.last_used_ua ? " using " + row.last_used_ua : ""}`
+                          : "Token has not been used since it was minted."
+                      }
+                    >
+                      used: {timeAgo(row.last_used_at)}
+                      {row.last_used_at > 0 && row.last_used_ip ? (
+                        <span className="ml-1 normal-case tracking-normal text-[var(--color-muted)]/70">
+                          from {row.last_used_ip}
+                        </span>
+                      ) : null}
+                    </span>
                     <span>created: {timeAgo(row.created_at)}</span>
                     <span
                       className={

@@ -4,6 +4,28 @@ Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local
 
 ![landing](docs/screenshots/landing.png)
 
+## Per-token last-used forensics
+
+When a personal access token leaks, the first incident-response question is "where was it last used from?" Each PAT now records the resolved client IP (X-Forwarded-For aware) and a length-bounded User-Agent on every successful authentication, surfaced in the same `/keys` response that already powers the settings table. The web UI at [`/settings/keys`](http://127.0.0.1:7452/settings/keys) renders `used: 3m ago from 203.0.113.42` inline with a hover tooltip carrying the full User-Agent so an operator can spot a token being driven from an unexpected host or library without grepping the audit log. Breadcrumbs are tenant-scoped: a sibling workspace listing its own keys can never see another tenant's IPs. The User-Agent is stripped of control bytes and capped at 200 characters so a hostile client cannot bloat the append-only PAT log. Cross-tenant isolation and the IP/UA capture are pinned by `tests/integration/test_pat_last_used_forensics.py`.
+
+### Try it (last-used forensics)
+
+```bash
+# Mint a PAT, use it from a known IP, then read the breadcrumb back.
+curl -s http://127.0.0.1:7451/v1/keys \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"name":"ci"}' | jq -r .secret
+# export PAT=pat_...
+curl -s http://127.0.0.1:7451/me \
+  -H "X-API-Key: $PAT" \
+  -H 'X-Forwarded-For: 203.0.113.42' \
+  -H 'User-Agent: my-ci/1.0' >/dev/null
+curl -s http://127.0.0.1:7451/keys \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  | jq '.[] | {name, last_used_ip, last_used_ua, last_used_at}'
+```
+
 ## Per-token IP allowlist
 
 Enterprise security teams want every machine credential pinned to the IP range it should be used from, not just the workspace as a whole. Each personal access token now carries its own list of allowed CIDR ranges; a request authenticated by the token is rejected with HTTP `403 ip ... not in pat allowlist` when the client IP falls outside the list. An empty list means "no restriction" so existing tokens keep working unchanged. The fence applies to IPv4 and IPv6, accepts host addresses (normalised to `/32` and `/128`), collapses duplicates, and caps at 64 ranges per token. Workspace owners edit the list inline at [`/settings/keys`](http://127.0.0.1:7452/settings/keys) (one CIDR per line), or via the REST API at `PUT /v1/keys/{id}/ip-allowlist`. Setting or clearing the list is a destructive admin action: it requires step-up MFA when the workspace enforces it, flows through the tamper-evident audit log via the audit middleware, and honours the existing dry-run mode. The PAT IP fence is independent of the workspace-wide `ip_allowlist`: both gates run, both must pass. Cross-IP isolation, normalisation, validation, and clear-restore behaviour are pinned by `tests/integration/test_pat_ip_allowlist.py`.
