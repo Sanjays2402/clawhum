@@ -4,6 +4,34 @@ Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local
 
 ![landing](docs/screenshots/landing.png)
 
+## Per-token IP allowlist
+
+Enterprise security teams want every machine credential pinned to the IP range it should be used from, not just the workspace as a whole. Each personal access token now carries its own list of allowed CIDR ranges; a request authenticated by the token is rejected with HTTP `403 ip ... not in pat allowlist` when the client IP falls outside the list. An empty list means "no restriction" so existing tokens keep working unchanged. The fence applies to IPv4 and IPv6, accepts host addresses (normalised to `/32` and `/128`), collapses duplicates, and caps at 64 ranges per token. Workspace owners edit the list inline at [`/settings/keys`](http://127.0.0.1:7452/settings/keys) (one CIDR per line), or via the REST API at `PUT /v1/keys/{id}/ip-allowlist`. Setting or clearing the list is a destructive admin action: it requires step-up MFA when the workspace enforces it, flows through the tamper-evident audit log via the audit middleware, and honours the existing dry-run mode. The PAT IP fence is independent of the workspace-wide `ip_allowlist`: both gates run, both must pass. Cross-IP isolation, normalisation, validation, and clear-restore behaviour are pinned by `tests/integration/test_pat_ip_allowlist.py`.
+
+### Try it (per-token IP allowlist)
+
+```bash
+# Mint a CI token pinned to a build farm range.
+curl -s http://127.0.0.1:7451/v1/keys \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"github-actions","ip_cidrs":["140.82.112.0/20"]}'
+
+# Tighten or replace the list on an existing token.
+curl -s -X PUT http://127.0.0.1:7451/v1/keys/$KEY_ID/ip-allowlist \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"cidrs":["10.0.0.0/24","2001:db8::/32"]}'
+
+# Clear the restriction (empty list = usable from any IP).
+curl -s -X PUT http://127.0.0.1:7451/v1/keys/$KEY_ID/ip-allowlist \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"cidrs":[]}'
+```
+
+UI: <http://127.0.0.1:7452/settings/keys>
+
 ## Active sessions and force logout
 
 Every authenticated request creates an active session keyed by the tuple `(workspace, actor, IP, user-agent)`. Admins can list them at [`/settings/sessions`](http://127.0.0.1:7452/settings/sessions), revoke a single session, force log out every session for an actor (incident response for a suspected leaked key), or pin a workspace `idle_timeout_minutes`, `absolute_max_minutes`, and `max_pat_lifetime_minutes`. The auth layer enforces those caps on every request and clamps newly minted PAT lifetimes to the workspace cap so a careless operator cannot mint a token that outlives the contract window. Sessions are tenant-scoped at the query layer; the cross-tenant isolation and force-logout behaviour are covered by `tests/integration/test_sessions.py`. Mutating routes require the `admin` role plus a fresh `X-MFA-Code` once MFA is enrolled, and every policy change flows through the audit log.

@@ -39,6 +39,12 @@ async def require_api_key(
                 request.state.api_key_scopes = pat.effective_scopes()
                 request.state.tenant_id = pat.tenant_id or ANON_TENANT_ID
                 request.state.pat_id = pat.id
+                # Enforce the per-PAT IP allowlist BEFORE touching
+                # last_used so a denied request does not look like a
+                # successful use of the token. The workspace allowlist
+                # is still enforced separately below; both gates must
+                # pass for the request to proceed.
+                _enforce_pat_ip_allowlist(request, pat)
                 # Best-effort, fire and forget. Failures must never block auth.
                 try:
                     pat_store.touch_last_used(pat.id)
@@ -199,6 +205,27 @@ def _record_and_enforce_session(request: Request, *, actor: str, actor_kind: str
                 "WWW-Authenticate": "Session",
                 "Session-Expired-Reason": reason,
             },
+        )
+
+
+def _enforce_pat_ip_allowlist(request: Request, pat: pat_store.PAT) -> None:
+    """Reject when the caller's IP is outside the per-PAT allowlist.
+
+    Empty allowlist means "no restriction", matching how the workspace
+    allowlist behaves. Trusts the first X-Forwarded-For hop when set,
+    mirroring ``_enforce_ip_allowlist`` so a deployment behind a single
+    trusted proxy honours both gates identically. Operators who do not
+    terminate TLS at a trusted edge MUST strip XFF upstream.
+    """
+    if not pat.ip_cidrs:
+        return
+    headers = {k.decode().lower(): v.decode() for k, v in request.headers.raw}
+    client_host = request.client.host if request.client else None
+    client_ip = ip_allowlist.client_ip_from_request(headers, client_host)
+    if not pat_store.ip_in_cidrs(client_ip, pat.ip_cidrs):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"ip {client_ip} not in pat allowlist",
         )
 
 

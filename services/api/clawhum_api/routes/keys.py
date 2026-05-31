@@ -50,6 +50,17 @@ class CreateKeyBody(BaseModel):
             "above the caller's role are clamped server-side."
         ),
     )
+    ip_cidrs: list[str] | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "Optional list of CIDR ranges (IPv4 or IPv6) that this "
+            "token may be used from. Empty or omitted means no IP "
+            "restriction. Requests from any other client IP are "
+            "rejected with HTTP 403. Use this to pin CI tokens to a "
+            "build farm or office VPN range."
+        ),
+    )
 
 
 class KeyView(BaseModel):
@@ -67,6 +78,7 @@ class KeyView(BaseModel):
     prior_secret_hint: str = ""
     prior_secret_expires_at: float = 0.0
     rotation_active: bool = False
+    ip_cidrs: list[str] = Field(default_factory=list)
 
 
 class KeyCreateResponse(KeyView):
@@ -138,14 +150,21 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="no valid roles requested",
         )
-    pat, secret = pat_store.create(
-        tenant_id=tenant,
-        name=body.name,
-        roles=requested,
-        rpm=body.rpm or 0,
-        expires_in_days=body.expires_in_days,
-        scopes=normalise_scopes(body.scopes or []),
-    )
+    try:
+        pat, secret = pat_store.create(
+            tenant_id=tenant,
+            name=body.name,
+            roles=requested,
+            rpm=body.rpm or 0,
+            expires_in_days=body.expires_in_days,
+            scopes=normalise_scopes(body.scopes or []),
+            ip_cidrs=body.ip_cidrs or [],
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid ip_cidrs: {exc}",
+        )
     view = pat_store.public_view(pat)
     view["secret"] = secret
     return view
@@ -293,3 +312,76 @@ async def rotate_key(
     view = pat_store.public_view(pat)
     view["secret"] = secret
     return view
+
+
+class IpAllowlistBody(BaseModel):
+    cidrs: list[str] = Field(
+        default_factory=list,
+        max_length=64,
+        description=(
+            "Replacement list of CIDR ranges the token may be used from. "
+            "Pass an empty list to clear the restriction. IPv4 and IPv6 "
+            "are both accepted; host addresses are normalised to /32 or "
+            "/128. Invalid input returns 400 with the offending value."
+        ),
+    )
+
+
+class IpAllowlistResponse(BaseModel):
+    ok: bool
+    id: str
+    ip_cidrs: list[str]
+
+
+@router.put(
+    "/keys/{key_id}/ip-allowlist",
+    response_model=IpAllowlistResponse,
+    dependencies=[Depends(require_roles("writer")), Depends(require_mfa())],
+)
+async def set_key_ip_allowlist(
+    key_id: str,
+    body: IpAllowlistBody,
+    request: Request,
+) -> dict[str, Any]:
+    """Pin a PAT to a list of source IP ranges.
+
+    The empty list clears the restriction (token usable from any IP).
+    Step-up MFA is required because tightening or loosening the IP
+    fence is destructive: a misconfigured CIDR can lock a CI pipeline
+    out, and a loosened fence widens the blast radius if the token
+    leaks. The mutation is captured by the audit middleware so a
+    forensic review can reconstruct who changed what when.
+    """
+    from ..dry_run import is_dry_run, preview
+    tenant = current_tenant_id(request)
+    existing = next(
+        (p for p in pat_store.live_for_tenant(tenant) if p.id == key_id),
+        None,
+    )
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    if is_dry_run(request):
+        return preview(
+            "api_key_ip_allowlist",
+            key_id,
+            tenant_id=tenant,
+            name=existing.name,
+            previous=sorted(existing.ip_cidrs),
+            requested=list(body.cidrs),
+        )
+    try:
+        updated = pat_store.set_ip_cidrs(
+            tenant_id=tenant, pat_id=key_id, cidrs=body.cidrs
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid ip_cidrs: {exc}",
+        )
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    return {"ok": True, "id": updated.id, "ip_cidrs": sorted(updated.ip_cidrs)}

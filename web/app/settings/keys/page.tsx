@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   Terminal,
   ArrowLeft,
+  GlobeHemisphereWest,
 } from "@phosphor-icons/react/dist/ssr";
 import { getApiKey, useApiKey } from "@/lib/apiKey";
 
@@ -39,6 +40,7 @@ interface KeyRow {
   prior_secret_hint?: string;
   prior_secret_expires_at?: number;
   rotation_active?: boolean;
+  ip_cidrs?: string[];
 }
 
 interface CreatedKey extends KeyRow {
@@ -118,6 +120,10 @@ export default function KeysPage() {
   const [rotateError, setRotateError] = useState<string | null>(null);
   const [revokeAllOpen, setRevokeAllOpen] = useState(false);
   const [revokingAll, setRevokingAll] = useState(false);
+  const [ipId, setIpId] = useState<string | null>(null);
+  const [ipDraft, setIpDraft] = useState<string>("");
+  const [ipSaving, setIpSaving] = useState<string | null>(null);
+  const [ipError, setIpError] = useState<string | null>(null);
   const [revokeAllError, setRevokeAllError] = useState<string | null>(null);
   const [revokeAllResult, setRevokeAllResult] = useState<
     { revoked: number; preserved: boolean } | null
@@ -249,6 +255,37 @@ export default function KeysPage() {
       }
     } finally {
       setRevoking(null);
+    }
+  }
+
+  async function saveIpAllowlist(id: string) {
+    if (ipSaving) return;
+    setIpSaving(id);
+    setIpError(null);
+    // Split on commas, whitespace, or newlines so paste from a wiki
+    // or a CI yaml file works without manual cleanup.
+    const cidrs = ipDraft
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    try {
+      const r = await fetch(`/api/keys/${id}/ip-allowlist`, {
+        method: "PUT",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ cidrs }),
+      });
+      if (!r.ok) {
+        const msg = await r.text().catch(() => "");
+        setIpError(msg || `failed with ${r.status}`);
+        return;
+      }
+      setIpId(null);
+      setIpDraft("");
+      await refresh();
+    } catch (e: any) {
+      setIpError(e?.message || String(e));
+    } finally {
+      setIpSaving(null);
     }
   }
 
@@ -638,6 +675,25 @@ export default function KeysPage() {
                     >
                       expires: {expiryLabel(row.expires_at, row.expired)}
                     </span>
+                    <span
+                      title={
+                        (row.ip_cidrs?.length ?? 0) > 0
+                          ? `Token rejected from any IP outside: ${row.ip_cidrs!.join(", ")}`
+                          : "Token usable from any IP. Click 'ip allowlist' to restrict."
+                      }
+                      className={
+                        (row.ip_cidrs?.length ?? 0) > 0
+                          ? "text-[var(--color-accent)]"
+                          : undefined
+                      }
+                    >
+                      ips:{" "}
+                      {(row.ip_cidrs?.length ?? 0) > 0
+                        ? row.ip_cidrs!.length === 1
+                          ? row.ip_cidrs![0]
+                          : `${row.ip_cidrs!.length} ranges`
+                        : "any"}
+                    </span>
                   </div>
                 </div>
                 {confirmId === row.id ? (
@@ -693,6 +749,56 @@ export default function KeysPage() {
                       <span className="text-[11px] text-red-500">{rotateError}</span>
                     )}
                   </div>
+                ) : ipId === row.id ? (
+                  <div className="flex flex-col gap-2 w-full sm:w-[28rem]">
+                    <label
+                      htmlFor={`ip-cidrs-${row.id}`}
+                      className="text-[11px] text-[var(--color-muted)] font-mono uppercase tracking-wider"
+                    >
+                      allowed cidrs (one per line, ipv4 or ipv6)
+                    </label>
+                    <textarea
+                      id={`ip-cidrs-${row.id}`}
+                      value={ipDraft}
+                      onChange={(e) => setIpDraft(e.target.value)}
+                      rows={3}
+                      spellCheck={false}
+                      placeholder={"203.0.113.0/24\n2001:db8::/32"}
+                      className="w-full px-2 py-1 rounded border border-[var(--color-line)] bg-[var(--color-bg)] text-xs font-mono"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => saveIpAllowlist(row.id)}
+                        disabled={ipSaving === row.id}
+                        className="px-3 py-1.5 rounded bg-[var(--color-accent)] text-[var(--color-bg)] text-xs font-medium hover:opacity-90 disabled:opacity-50"
+                      >
+                        {ipSaving === row.id ? "saving..." : "save"}
+                      </button>
+                      <button
+                        onClick={() => setIpDraft("")}
+                        className="px-3 py-1.5 rounded border border-[var(--color-line)] text-xs"
+                        title="Clear the editor (empty list removes the IP restriction when saved)"
+                      >
+                        clear
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIpId(null);
+                          setIpDraft("");
+                          setIpError(null);
+                        }}
+                        className="px-3 py-1.5 rounded border border-[var(--color-line)] text-xs"
+                      >
+                        cancel
+                      </button>
+                      {ipError && (
+                        <span className="text-[11px] text-red-500 break-all">{ipError}</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-[var(--color-muted)]">
+                      Empty list removes the restriction. Step-up MFA is required when the workspace enforces it.
+                    </p>
+                  </div>
                 ) : (
                   <div className="flex items-center gap-2">
                     <button
@@ -707,6 +813,19 @@ export default function KeysPage() {
                       title="Mint a new secret for this token. The old secret keeps working briefly so deployed clients can swap without downtime."
                     >
                       <ShieldCheck size={12} weight="bold" /> rotate
+                    </button>
+                    <button
+                      onClick={() => {
+                        setIpId(row.id);
+                        setIpDraft((row.ip_cidrs ?? []).join("\n"));
+                        setIpError(null);
+                      }}
+                      disabled={row.expired}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-[var(--color-line)] text-xs hover:bg-[var(--color-bg)] disabled:opacity-50"
+                      aria-label={`Edit IP allowlist for ${row.name}`}
+                      title="Restrict this token to specific source IP ranges (CIDR). Empty list means usable from any IP."
+                    >
+                      <GlobeHemisphereWest size={12} weight="duotone" /> ip allowlist
                     </button>
                     <button
                       onClick={() => setConfirmId(row.id)}

@@ -23,10 +23,11 @@ carry its own per-minute rate limit; if 0, the server default applies.
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
 from typing import Any, Iterable
@@ -84,6 +85,14 @@ class PAT:
     prior_secret_hash: str = ""
     prior_secret_hint: str = ""
     prior_secret_expires_at: float = 0.0
+    # Per-PAT IP allowlist. Each entry is a CIDR string (e.g.
+    # "203.0.113.0/24" or "2001:db8::/32"). Empty set means "no
+    # restriction" so existing PATs minted before this field stay
+    # usable from any IP. When non-empty, the client IP MUST match at
+    # least one CIDR or the request is rejected with 403. This is a
+    # per-credential narrowing layered on top of the workspace-wide
+    # ip_allowlist; both must pass.
+    ip_cidrs: frozenset[str] = frozenset()
 
     def prior_secret_active(self, now: float | None = None) -> bool:
         if not self.prior_secret_hash or self.prior_secret_expires_at <= 0:
@@ -149,6 +158,7 @@ def _from_record(rec: dict[str, Any]) -> PAT:
         prior_secret_hash=str(rec.get("prior_secret_hash", "") or ""),
         prior_secret_hint=str(rec.get("prior_secret_hint", "") or ""),
         prior_secret_expires_at=float(rec.get("prior_secret_expires_at", 0.0) or 0.0),
+        ip_cidrs=normalise_cidrs(rec.get("ip_cidrs") or []),
     )
 
 
@@ -250,6 +260,7 @@ def create(
     rpm: int = 0,
     expires_in_days: int | None = None,
     scopes: frozenset[str] | None = None,
+    ip_cidrs: Iterable[str] | None = None,
 ) -> tuple[PAT, str]:
     """Mint a new PAT. Returns (record, plaintext_secret_shown_once).
 
@@ -262,6 +273,7 @@ def create(
     """
     safe_roles = frozenset(r for r in roles if r in ROLES) or frozenset({"reader"})
     safe_scopes = normalise_scopes(scopes) & scopes_allowed_for_roles(safe_roles)
+    safe_cidrs = normalise_cidrs(ip_cidrs)
     secret = new_secret()
     now = time.time()
     expires_at = resolve_expiry(requested_days=expires_in_days, now=now)
@@ -289,6 +301,7 @@ def create(
         "prior_secret_hash": "",
         "prior_secret_hint": "",
         "prior_secret_expires_at": 0.0,
+        "ip_cidrs": sorted(safe_cidrs),
     }
     _append(rec)
     return _from_record(rec), secret
@@ -348,6 +361,7 @@ def rotate(
         "prior_secret_hash": current.secret_hash if grace > 0 else "",
         "prior_secret_hint": current.secret_hint if grace > 0 else "",
         "prior_secret_expires_at": grace_expires,
+        "ip_cidrs": sorted(current.ip_cidrs),
         "rotated_at": now,
     }
     _append(rec)
@@ -380,6 +394,7 @@ def revoke(*, tenant_id: str, pat_id: str) -> bool:
         "prior_secret_hash": "",
         "prior_secret_hint": "",
         "prior_secret_expires_at": 0.0,
+        "ip_cidrs": sorted(current.ip_cidrs),
         "revoked_at": time.time(),
     }
     _append(rec)
@@ -432,6 +447,7 @@ def touch_last_used(pat_id: str) -> None:
         "prior_secret_hash": current.prior_secret_hash,
         "prior_secret_hint": current.prior_secret_hint,
         "prior_secret_expires_at": current.prior_secret_expires_at,
+        "ip_cidrs": sorted(current.ip_cidrs),
     }
     _append(rec)
 
@@ -452,4 +468,89 @@ def public_view(p: PAT) -> dict[str, Any]:
         "prior_secret_hint": p.prior_secret_hint,
         "prior_secret_expires_at": p.prior_secret_expires_at,
         "rotation_active": p.prior_secret_active(),
+        "ip_cidrs": sorted(p.ip_cidrs),
     }
+
+
+def normalise_cidrs(raw: Iterable[str] | None) -> frozenset[str]:
+    """Validate and canonicalise a list of CIDR strings.
+
+    Each entry is parsed with ``strict=False`` so a host address like
+    ``192.0.2.5/32`` round-trips cleanly and ``192.168.1.5/24`` becomes
+    ``192.168.1.0/24``. Anything unparseable raises ``ValueError`` so
+    the caller surfaces a 400; duplicates are collapsed. Returns an
+    empty frozenset when ``raw`` is None or empty.
+    """
+    if not raw:
+        return frozenset()
+    out: set[str] = set()
+    for entry in raw:
+        s = str(entry or "").strip()
+        if not s:
+            continue
+        # Raises ValueError on malformed input; let it propagate.
+        net = ipaddress.ip_network(s, strict=False)
+        out.add(str(net))
+        if len(out) > 64:
+            raise ValueError("too many cidrs (max 64 per pat)")
+    return frozenset(out)
+
+
+def ip_in_cidrs(client_ip: str, cidrs: Iterable[str]) -> bool:
+    """Return True when ``client_ip`` matches any CIDR in ``cidrs``.
+
+    Empty ``cidrs`` means "no restriction" and is always True. An
+    unparseable client IP is always False so a credential constrained
+    by IP cannot be used when the peer address is unknown.
+    """
+    cidr_list = list(cidrs)
+    if not cidr_list:
+        return True
+    try:
+        addr = ipaddress.ip_address(client_ip)
+    except (ValueError, TypeError):
+        return False
+    for entry in cidr_list:
+        try:
+            if addr in ipaddress.ip_network(entry, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def set_ip_cidrs(
+    *, tenant_id: str, pat_id: str, cidrs: Iterable[str]
+) -> PAT | None:
+    """Replace the per-PAT IP allowlist. Returns updated PAT or None.
+
+    Empty list clears the restriction (token usable from any IP).
+    Caller is responsible for validating ``cidrs`` upstream so a 400
+    is returned to the user instead of a 500 from the parser; we
+    re-normalise here as a defence-in-depth.
+    """
+    current = _reduce().get(pat_id)
+    if current is None or current.deleted or current.tenant_id != tenant_id:
+        return None
+    safe = normalise_cidrs(list(cidrs))
+    rec = {
+        "id": current.id,
+        "tenant_id": current.tenant_id,
+        "name": current.name,
+        "roles": sorted(current.roles),
+        "rpm": current.rpm,
+        "created_at": current.created_at,
+        "last_used_at": current.last_used_at,
+        "secret_hash": current.secret_hash,
+        "secret_hint": current.secret_hint,
+        "deleted": False,
+        "expires_at": current.expires_at,
+        "scopes": sorted(current.scopes),
+        "prior_secret_hash": current.prior_secret_hash,
+        "prior_secret_hint": current.prior_secret_hint,
+        "prior_secret_expires_at": current.prior_secret_expires_at,
+        "ip_cidrs": sorted(safe),
+        "ip_updated_at": time.time(),
+    }
+    _append(rec)
+    return _from_record(rec)
