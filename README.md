@@ -10,6 +10,33 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Workspace members and invites
+
+A workspace admin manages the human roster from `/settings/members`: invite a teammate by email with a role (`reader`, `writer`, `admin`), see pending invites with their expiry, change a member's role, and revoke a seat when someone leaves. Invite tokens are returned exactly once and hashed at rest; the recipient trades the token for membership at `POST /members/accept` with no API key required. Role changes and revokes are gated by admin role plus a fresh `X-MFA-Code` once the actor has enrolled TOTP. The roster is strictly per workspace: another tenant's admin cannot see, mutate, or even probe for member ids they do not own.
+
+### Try it (members)
+
+```bash
+# Invite a teammate. Returns the one-shot invite token in `invite_token`.
+curl -X POST http://127.0.0.1:7451/v1/members/invite \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "Content-Type: application/json" \
+  -d '{"email":"alex@acme.com","role":"writer","ttl_hours":72}'
+
+# Recipient accepts (no API key needed; token is the credential).
+curl -X POST http://127.0.0.1:7451/v1/members/accept \
+  -H "Content-Type: application/json" -d '{"token":"inv_..."}'
+
+# List the roster, change a role, revoke a seat.
+curl http://127.0.0.1:7451/v1/members -H "X-API-Key: $CLAWHUM_KEY"
+curl -X PATCH http://127.0.0.1:7451/v1/members/<id> \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "Content-Type: application/json" \
+  -d '{"role":"reader"}'
+curl -X DELETE http://127.0.0.1:7451/v1/members/<id> \
+  -H "X-API-Key: $CLAWHUM_KEY"
+```
+
+Web UI: `http://127.0.0.1:7452/settings/members`.
+
 ## Step-up MFA for admin actions
 
 Destructive admin endpoints (revoke API key, delete user data, mutate the IP allowlist, change the webhook destination allowlist, delete a webhook) accept an optional `X-MFA-Code` header. Any actor (API key or PAT) can enroll a TOTP authenticator from the settings UI; once verified, the gate engages for that actor and the same endpoints reject calls without a fresh six-digit code with `401 WWW-Authenticate: MFA`. A bad code returns `403`. Recovery codes are single-use and shown exactly once at verification time.

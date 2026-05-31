@@ -364,6 +364,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Workspace members */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">workspace members</span>
+            <a
+              href="/settings/members"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            invite teammates by email, assign roles (admin, writer, reader), and revoke seats when people leave. invite tokens are shown once; destructive changes require admin plus MFA.
+          </p>
+        </section>
+
         {/* Workspace IP allowlist */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

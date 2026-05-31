@@ -62,6 +62,16 @@ class Settings(BaseSettings):
             "by pat_max_ttl_days when that cap is enabled."
         ),
     )
+    members_path: Path = Path("./data/members.jsonl")
+    member_invite_ttl_hours: int = Field(
+        default=168,
+        description=(
+            "Lifetime of a pending member invite token in hours. After "
+            "this window the invite cannot be accepted and must be "
+            "re-issued by a workspace admin. 0 disables expiry (not "
+            "recommended; auditors flag dangling invites)."
+        ),
+    )
     ip_allowlist_path: Path = Path("./data/ip_allowlist.jsonl")
     ip_allowlist_enabled: bool = Field(
         default=True,
