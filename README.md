@@ -2,6 +2,27 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace Data Processing Agreement acceptance
+
+No enterprise buyer signs a paid contract before a named, authorised person from their workspace has clicked accept on the vendor's Data Processing Agreement (GDPR Art. 28, CCPA service-provider obligations, SCC regimes). The workspace admin console at [`/admin/dpa`](http://127.0.0.1:7452/admin/dpa) now exposes the current vendor DPA version and URL, shows whether the workspace has accepted it, and records who clicked accept, when, from which IP, and with which user agent. Acceptance requires the admin role plus a fresh MFA step-up, and the mutation flows through the existing tamper-evident audit chain so reviewers get a forensically defensible record without extra plumbing. The client must echo the published version string when accepting, so a stale client cannot bind the workspace to an outdated contract (HTTP 422 `dpa_version_mismatch`). Cross-tenant isolation, role enforcement, version pinning, and withdraw/re-accept are pinned by `tests/integration/test_dpa.py`.
+
+### Try it (DPA acceptance)
+
+UI: <http://127.0.0.1:7452/admin/dpa> (admin role, MFA).
+
+```bash
+# read the current vendor version + your workspace's acceptance state
+curl -s $CLAWHUM_API_URL/v1/dpa -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+
+# accept (echo the version the server publishes)
+curl -s -X POST $CLAWHUM_API_URL/v1/dpa/accept \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" -H 'content-type: application/json' \
+  -d '{"version":"2025-05-01"}'
+
+# withdraw
+curl -s -X DELETE $CLAWHUM_API_URL/v1/dpa -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+```
+
 ## Per-workspace invite domain allowlist
 
 Enterprise procurement routinely requires that a workspace only ever grant seats to corporate identities, so a compromised admin cannot quietly invite a personal Gmail as a backdoor. Each workspace now carries an optional list of allowed email domains. When at least one rule is registered, every seat-granting path (manual `POST /members/invite`, `POST /members/accept`, SSO auto-join, SCIM-side provisioning) routes through the same allowlist and rejects out-of-policy emails with HTTP 422 `invite_domain_not_allowed`. An empty list means no restriction so existing tenants keep working unchanged. Subdomain matching is opt-in per rule (`include_subdomains=true`) and only relaxes the rule downward, so pinning `acme.com` lets `alice@us.acme.com` through but never `evil-acme.com`. Admins manage the list from [`/settings/invite-domains`](http://127.0.0.1:7452/settings/invite-domains) (admin role plus step-up MFA). Cross-tenant isolation, subdomain semantics, and the accept-time re-check are pinned by `tests/integration/test_invite_domains.py`.

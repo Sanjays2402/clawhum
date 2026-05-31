@@ -625,6 +625,19 @@ export default function AdminConsolePage() {
         </Card>
 
         <Card
+          title="data processing agreement"
+          icon={<ShieldCheck size={14} weight="duotone" />}
+          href="/admin/dpa"
+          hrefLabel="review"
+        >
+          <p className="text-xs text-[var(--color-dim)]">
+            Record the workspace acceptance of the vendor DPA. Required
+            by most enterprise procurement and GDPR Article 28 reviews.
+            Admin only, MFA gated, and written to the audit chain.
+          </p>
+        </Card>
+
+        <Card
           title="recent activity"
           icon={<ListMagnifyingGlass size={14} weight="duotone" />}
           href="/settings/audit"

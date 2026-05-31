@@ -29,6 +29,7 @@ from .routes import history as history_routes
 from .routes import history_views as history_views_routes
 from .routes import ip_allowlist as ip_allowlist_routes
 from .routes import invite_domains as invite_domains_routes
+from .routes import dpa as dpa_routes
 from .routes import keys as keys_routes
 from .routes import library as library_routes
 from .routes import match as match_routes
@@ -160,6 +161,7 @@ def create_app() -> FastAPI:
     app.include_router(keys_routes.router)
     app.include_router(ip_allowlist_routes.router)
     app.include_router(invite_domains_routes.router)
+    app.include_router(dpa_routes.router)
     app.include_router(mfa_routes.router)
     app.include_router(members_routes.router)
     app.include_router(sso_routes.router)
@@ -189,6 +191,7 @@ def create_app() -> FastAPI:
     app.include_router(keys_routes.router, prefix="/v1")
     app.include_router(ip_allowlist_routes.router, prefix="/v1")
     app.include_router(invite_domains_routes.router, prefix="/v1")
+    app.include_router(dpa_routes.router, prefix="/v1")
     app.include_router(mfa_routes.router, prefix="/v1")
     app.include_router(members_routes.router, prefix="/v1")
     app.include_router(sso_routes.router, prefix="/v1")
