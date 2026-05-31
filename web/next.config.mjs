@@ -46,6 +46,8 @@ const nextConfig = {
       { source: "/api/sso/config", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/sso/config` },
       { source: "/api/sso/providers", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/sso/providers` },
       { source: "/api/sso/discover", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/sso/discover` },
+      { source: "/api/audit", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/audit` },
+      { source: "/api/audit/export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/audit/export` },
       { source: "/api/v1/privacy/export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/export` },
       { source: "/api/v1/privacy/me", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/me` },
       // Stable v1 public API: forward everything under /api/v1/* to the

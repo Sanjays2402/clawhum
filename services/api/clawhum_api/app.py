@@ -36,6 +36,7 @@ from .routes import mfa as mfa_routes
 from .routes import members as members_routes
 from .routes import sso as sso_routes
 from .routes import retention as retention_routes
+from .routes import audit as audit_routes
 from .state import AppState
 from .tenant import TenantScopeMiddleware
 from .usage import UsageRecorderMiddleware
@@ -128,6 +129,7 @@ def create_app() -> FastAPI:
     app.include_router(members_routes.router)
     app.include_router(sso_routes.router)
     app.include_router(retention_routes.router)
+    app.include_router(audit_routes.router)
     # Stable, version-pinned public API surface. The same routers are
     # mounted again under /v1 so integrators can target a URL we will not
     # break, while existing unversioned routes stay alive for the web UI.
@@ -146,6 +148,7 @@ def create_app() -> FastAPI:
     app.include_router(members_routes.router, prefix="/v1")
     app.include_router(sso_routes.router, prefix="/v1")
     app.include_router(retention_routes.router, prefix="/v1")
+    app.include_router(audit_routes.router, prefix="/v1")
     app.include_router(library_routes.router, prefix="/v1")
     app.include_router(metrics_router)
     register_app_collector(app)
