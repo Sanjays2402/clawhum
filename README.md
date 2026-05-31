@@ -210,6 +210,20 @@ Open `http://127.0.0.1:7452/r/<id>` to see the rendered page with ranked candida
 
 Every share URL also serves a real 1200x630 social preview card at `http://127.0.0.1:7452/r/<id>/opengraph-image`, generated on demand with `next/og`. Paste a `/r/<id>` link into Slack, iMessage, Twitter, or Discord and it renders the top match, artist, score, latency, and three runner-up candidates. The card is read straight off the shared payload, so it stays in sync with whatever was shared and never serves stale data.
 
+### Manage your share links
+
+Every share you create is listed on `http://127.0.0.1:7452/shares`. The page is tenant scoped (signed in with your API key), supports inline search across id, title, artist, filename, and note, and lets you copy a fresh link or revoke any share with one click. Revoked share ids return 404 on `/r/<id>` immediately and disappear from the listing. Behind the scenes:
+
+```bash
+# list your shares
+curl -H "X-API-Key: $CLAWHUM_KEY" http://127.0.0.1:7451/share
+
+# revoke a share (writes a tombstone so future GETs return 404)
+curl -X DELETE -H "X-API-Key: $CLAWHUM_KEY" http://127.0.0.1:7451/share/a1b2c3d4e5f6
+```
+
+A different tenant cannot list or revoke your shares; the API answers 404 to keep existence private.
+
 ## Features
 
 - `POST /match` audio upload with configurable `top_k` and `threshold`, API-key gated.

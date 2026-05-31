@@ -17,6 +17,7 @@ const TABS: { href: string; label: string; hint: string }[] = [
   { href: "/pricing", label: "pricing", hint: "plans + faq" },
   { href: "/settings", label: "settings", hint: "api key + usage" },
   { href: "/webhooks", label: "webhooks", hint: "outbound events" },
+  { href: "/shares", label: "shares", hint: "public links" },
 ];
 
 export default function SiteNav() {

@@ -71,6 +71,27 @@ def _find(share_id: str) -> dict[str, Any] | None:
     return last
 
 
+def _collapse_for_tenant(tenant_id: str) -> dict[str, dict[str, Any]]:
+    """Replay the share log and return the latest record per id for tenant.
+
+    Tombstones (records with deleted=True) win over their predecessors,
+    so revoked shares disappear from the listing and become 404 on read.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for rec in _iter_records():
+        if rec.get("tenant_id") != tenant_id:
+            continue
+        sid = rec.get("id")
+        if not sid:
+            continue
+        out[sid] = rec
+    return out
+
+
+def _is_deleted(rec: dict[str, Any] | None) -> bool:
+    return bool(rec and rec.get("deleted"))
+
+
 class ShareCreateBody(BaseModel):
     query_id: str
     elapsed_ms: int = 0
@@ -84,6 +105,26 @@ class ShareCreateBody(BaseModel):
 class ShareCreateResponse(BaseModel):
     id: str
     url_path: str  # client renders the absolute URL using window.location.origin
+
+
+class ShareListItem(BaseModel):
+    id: str
+    created_at: float
+    query_id: str
+    elapsed_ms: int
+    count: int
+    filename: str | None = None
+    duration_sec: float | None = None
+    note: str | None = None
+    top_title: str | None = None
+    top_artist: str | None = None
+    top_score: float | None = None
+    url_path: str
+
+
+class ShareListResponse(BaseModel):
+    shares: list[ShareListItem]
+    total: int
 
 
 class SharePublicResponse(BaseModel):
@@ -127,12 +168,70 @@ async def create_share(body: ShareCreateBody, request: Request) -> ShareCreateRe
     return ShareCreateResponse(id=share_id, url_path=f"/r/{share_id}")
 
 
+@router.get(
+    "/share",
+    response_model=ShareListResponse,
+    dependencies=[Depends(require_api_key)],
+)
+async def list_shares(request: Request) -> ShareListResponse:
+    tenant_id = getattr(request.state, "tenant_id", "anonymous")
+    collapsed = _collapse_for_tenant(tenant_id)
+    items: list[ShareListItem] = []
+    for sid, rec in collapsed.items():
+        if _is_deleted(rec):
+            continue
+        results = rec.get("results") or []
+        top = results[0] if results else None
+        items.append(
+            ShareListItem(
+                id=sid,
+                created_at=float(rec.get("created_at") or 0.0),
+                query_id=str(rec.get("query_id") or ""),
+                elapsed_ms=int(rec.get("elapsed_ms") or 0),
+                count=int(rec.get("count") or 0),
+                filename=rec.get("filename"),
+                duration_sec=rec.get("duration_sec"),
+                note=rec.get("note"),
+                top_title=(top or {}).get("title"),
+                top_artist=(top or {}).get("artist"),
+                top_score=(top or {}).get("score"),
+                url_path=f"/r/{sid}",
+            )
+        )
+    items.sort(key=lambda x: x.created_at, reverse=True)
+    return ShareListResponse(shares=items, total=len(items))
+
+
+@router.delete("/share/{share_id}", dependencies=[Depends(require_api_key)])
+async def revoke_share(share_id: str, request: Request) -> dict[str, Any]:
+    if not share_id or len(share_id) > 64 or not share_id.isalnum():
+        raise HTTPException(404, "not found")
+    tenant_id = getattr(request.state, "tenant_id", "anonymous")
+    rec = _find(share_id)
+    if rec is None or _is_deleted(rec):
+        raise HTTPException(404, "not found")
+    if rec.get("tenant_id") != tenant_id:
+        # Don't leak existence: report as missing rather than 403.
+        raise HTTPException(404, "not found")
+    tomb = {
+        "id": share_id,
+        "tenant_id": tenant_id,
+        "deleted": True,
+        "updated_at": time.time(),
+    }
+    line = json.dumps(tomb, ensure_ascii=False, separators=(",", ":"))
+    with _WRITE_LOCK:
+        with _store_path().open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    return {"ok": True, "id": share_id}
+
+
 @router.get("/share/{share_id}", response_model=SharePublicResponse)
 async def get_share(share_id: str) -> SharePublicResponse:
     if not share_id or len(share_id) > 64 or not share_id.isalnum():
         raise HTTPException(404, "not found")
     rec = _find(share_id)
-    if rec is None:
+    if rec is None or _is_deleted(rec):
         raise HTTPException(404, "not found")
     return SharePublicResponse(
         id=rec["id"],
