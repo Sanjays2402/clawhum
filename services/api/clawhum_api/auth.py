@@ -311,6 +311,8 @@ def require_mfa():
         x_mfa_code: str = Header(default=""),
     ) -> str:
         from . import mfa  # deferred to avoid circular import at package load
+        from . import mfa_lockout
+        from . import audit
         await require_api_key(request, x_api_key=x_api_key)
         settings = get_settings()
         if not settings.mfa_required_for_admin:
@@ -319,6 +321,21 @@ def require_mfa():
         if not mfa.is_required(actor_id):
             request.state.mfa_used = False
             return x_api_key or "dev"
+        tenant_id = getattr(request.state, "tenant_id", "") or ""
+        # Lockout takes precedence over the MFA check so an attacker
+        # cannot keep observing whether a guess would have worked
+        # while the cooldown is active.
+        pre = mfa_lockout.lock_state(actor_id)
+        if pre.locked:
+            retry = pre.retry_after
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="mfa locked: too many failed attempts",
+                headers={
+                    "Retry-After": str(retry),
+                    "WWW-Authenticate": "MFA",
+                },
+            )
         if not x_mfa_code:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -326,10 +343,41 @@ def require_mfa():
                 headers={"WWW-Authenticate": "MFA"},
             )
         if not mfa.verify(actor_id, x_mfa_code):
+            after = mfa_lockout.record_failure(actor_id, tenant_id=tenant_id)
+            audit.write_event(
+                {
+                    "event": "mfa.failed",
+                    "actor_id": actor_id,
+                    "tenant_id": tenant_id,
+                    "path": request.url.path,
+                    "failures": after.failures,
+                    "locked": after.locked,
+                }
+            )
+            if after.locked:
+                audit.write_event(
+                    {
+                        "event": "mfa.locked",
+                        "actor_id": actor_id,
+                        "tenant_id": tenant_id,
+                        "locked_until": after.locked_until,
+                    }
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="mfa locked: too many failed attempts",
+                    headers={
+                        "Retry-After": str(after.retry_after),
+                        "WWW-Authenticate": "MFA",
+                    },
+                )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="invalid mfa code",
             )
+        # Successful verify clears the failure counter so a user who
+        # mistyped twice before getting it right is not penalised.
+        mfa_lockout.clear(actor_id, tenant_id=tenant_id, reason="success")
         request.state.mfa_used = True
         return x_api_key or "dev"
 

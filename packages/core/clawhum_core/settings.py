@@ -60,6 +60,32 @@ class Settings(BaseSettings):
     pat_path: Path = Path("./data/personal_access_tokens.jsonl")
     pat_ip_history_path: Path = Path("./data/pat_ip_history.jsonl")
     mfa_path: Path = Path("./data/mfa.jsonl")
+    mfa_lockout_path: Path = Path("./data/mfa_lockout.jsonl")
+    mfa_lockout_threshold: int = Field(
+        default=5,
+        description=(
+            "Number of consecutive failed MFA code submissions per actor "
+            "within mfa_lockout_window_seconds that trip the lock. 0 "
+            "disables lockout (not recommended; auditors will flag it)."
+        ),
+    )
+    mfa_lockout_window_seconds: int = Field(
+        default=300,
+        description=(
+            "Sliding window (seconds) over which MFA failures are counted "
+            "toward the lockout threshold. Failures older than this fall "
+            "off the count."
+        ),
+    )
+    mfa_lockout_cooldown_seconds: int = Field(
+        default=900,
+        description=(
+            "How long (seconds) a tripped MFA lock stays in effect before "
+            "it auto-clears. While locked, MFA-gated endpoints return "
+            "HTTP 429 with Retry-After. An admin can clear it sooner via "
+            "the /admin/mfa/lockouts API."
+        ),
+    )
     quota_path: Path = Path("./data/quotas.jsonl")
     residency_path: Path = Path("./data/residency.jsonl")
     region: str = Field(

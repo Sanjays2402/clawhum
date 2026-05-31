@@ -1870,6 +1870,24 @@ curl -X POST http://127.0.0.1:7452/api/webhooks/<hook_id>/resume \
   -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
 ```
 
+## MFA brute-force lockout
+
+A leaked API key plus a few thousand requests is enough to brute force a six digit TOTP unless the server rate limits the MFA verifier. Each actor (the same hashed identifier the audit log already uses) now has a sliding window of consecutive failed MFA submissions. When the count reaches `CLAWHUM_MFA_LOCKOUT_THRESHOLD` (default 5) inside `CLAWHUM_MFA_LOCKOUT_WINDOW_SECONDS` (default 300s), the actor is locked for `CLAWHUM_MFA_LOCKOUT_COOLDOWN_SECONDS` (default 900s). While locked, every MFA-gated endpoint returns HTTP 429 with `Retry-After` and `WWW-Authenticate: MFA`; the destructive action is never executed and the legitimate code is never inspected so an attacker cannot keep observing whether a guess would have worked. A successful TOTP or recovery code clears the counter so a user who mistyped a few digits before getting it right is not penalised. Lockout is per actor: locking one credential never affects siblings in the same workspace. Workspace admins see currently locked actors at [`/admin/mfa-lockouts`](http://127.0.0.1:7452/admin/mfa-lockouts) and can clear an individual lock (for example when a user lost their authenticator and called support); the override is recorded in the tamper-evident audit chain as `mfa.unlocked` alongside the admin who performed it. The full behaviour is pinned by `tests/integration/test_mfa_lockout.py`, which proves the lock trips, blocks even a valid code, isolates per actor across keys in the same workspace, and that admin unlock restores access.
+
+```bash
+# List currently locked actors (admin, MFA enforced).
+curl -s http://127.0.0.1:7452/api/admin/mfa/lockouts \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "X-MFA-Code: 123456"
+
+# Clear a single lock; recorded in the audit chain.
+curl -s -X POST http://127.0.0.1:7452/api/admin/mfa/lockouts/unlock \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "X-MFA-Code: 123456" \
+  -H 'content-type: application/json' \
+  -d '{"actor_id":"key:abcd1234abcd1234","reason":"lost phone"}'
+```
+
 ## Project structure
 
 ```

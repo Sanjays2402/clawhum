@@ -23,6 +23,7 @@ import {
   Lock,
   Broadcast,
   ShieldStar,
+  ShieldWarning,
   ArrowSquareOut,
   Warning,
   Pulse,
@@ -558,6 +559,19 @@ export default function AdminConsolePage() {
               )}
             </div>
           ) : null}
+        </Card>
+
+        <Card
+          title="mfa lockouts"
+          icon={<ShieldWarning size={14} weight="duotone" />}
+          href="/admin/mfa-lockouts"
+          hrefLabel="review"
+        >
+          <p className="text-xs text-[var(--color-dim)]">
+            Actors whose recent MFA submissions have tripped the brute
+            force cooldown. Clearing a lock is logged to the audit
+            chain so any override is attributable.
+          </p>
         </Card>
 
         <Card
