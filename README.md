@@ -10,6 +10,15 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Try it (activity inbox)
+
+`http://127.0.0.1:7452/activity` is a single chronological feed of every saved match and every webhook delivery on your account, tenant-scoped on the server side. New items since your last visit light an unread dot on the nav tab; opening the page clears it. Filter by kind (match or delivery) or by free text. The backend route is `GET /activity?limit=&since=&kind=` and returns `{items, total, latest_at}` so the client can store a cursor without polling individual subsystems.
+
+```bash
+curl -s -H "X-API-Key: $CLAWHUM_API_KEY" \
+  'http://127.0.0.1:7451/activity?limit=20' | jq '.items[] | {kind, title, ok, created_at}'
+```
+
 ## Try it (share from history)
 
 Every row on `http://127.0.0.1:7452/history` now has an inline share button. Clicking it creates a public link by calling `POST /share` with the row's existing match payload, copies `https://<host>/r/<id>` to the clipboard, and toasts the URL with an `open` action so you can verify it in a new tab. The row's display name is sent through as the share note so the public page has context. The shared link is the same `/r/<id>` route that already renders an OpenGraph image, so dropping it into Slack or iMessage previews the top match without any extra round trip. Pure adapters live in `web/lib/share.ts` with unit tests in `web/tests/share.test.ts`.
