@@ -187,6 +187,15 @@ def write_event(event: dict[str, Any], path: Path | None = None) -> None:
             with open(target, "ab") as f:
                 f.write(line.encode("utf-8") + b"\n")
             _last_hash_by_path[key] = digest
+        # Fan out to the per-workspace SIEM forwarder (if configured).
+        # Lives outside the file lock to keep the audit critical
+        # section short; the forwarder itself never raises.
+        try:
+            from . import audit_forwarder
+
+            audit_forwarder.enqueue_event(body)
+        except Exception:  # pragma: no cover - defensive
+            pass
     except Exception as exc:  # pragma: no cover - defensive
         _log.warning("audit_write_failed", error=str(exc))
 

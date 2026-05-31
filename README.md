@@ -2,6 +2,35 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Audit log forwarding to your SIEM
+
+Stream every audit event to a customer-controlled HTTPS sink (Splunk HEC,
+Datadog, Sumo, Panther, generic collector) in near real time. Each delivery
+is signed with HMAC-SHA256 in the `X-ClawHum-Signature` header so the
+receiver can verify authenticity. Failed deliveries retry with capped
+exponential backoff and stay in a per-workspace delivery log for replay.
+Destinations are tenant-scoped: a workspace can never see or send to
+another workspace's sink.
+
+### Try it
+
+UI: <http://localhost:7452/admin/audit-forwarding> (admin role, MFA).
+
+```bash
+# Register a destination (returns the signing secret exactly once).
+curl -sS -X PUT http://localhost:7451/audit-forwarding \
+  -H "X-API-Key: $CLAWHUM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://siem.example.com/ingest"}'
+
+# Fire a test event and view delivery log.
+curl -sS -X POST http://localhost:7451/audit-forwarding/test \
+  -H "X-API-Key: $CLAWHUM_API_KEY" -H "Content-Type: application/json" \
+  -d '{"secret":"awsec_..."}'
+curl -sS http://localhost:7451/audit-forwarding/deliveries \
+  -H "X-API-Key: $CLAWHUM_API_KEY"
+```
+
 ## Force PAT rotation (max-age policy)
 
 Workspace admins can set `max_pat_age_minutes` in the session policy to require every personal access token to be rotated at least every N minutes. Any PAT whose `created_at` exceeds that age is rejected at auth with `HTTP 401 pat_aged_out`, even when its own `expires_at` would still permit it. Rotating the token (`POST /keys/{id}/rotate`) refreshes `created_at` so the new secret satisfies the policy. The `/settings/keys` console badges aging tokens (`rotate soon`, `aged out`) and the rule lives in `tests/integration/test_sessions.py::test_max_pat_age_policy_rejects_aged_tokens`. Same control SOC2 / ISO 27001 auditors expect for credential rotation.

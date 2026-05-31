@@ -251,6 +251,37 @@ class Settings(BaseSettings):
         description="Maximum number of rotated audit log files to retain.",
     )
 
+    # Per-workspace audit log forwarding to a customer-controlled
+    # HTTPS sink (Splunk HEC, Datadog, Sumo, generic webhook). Every
+    # event written to the local audit JSONL is also enqueued for
+    # delivery to the workspace's configured destination, signed with
+    # an HMAC-SHA256 header so the receiver can verify authenticity.
+    # Deliveries are retried with capped exponential backoff and the
+    # last N attempts per workspace are kept on disk for replay.
+    audit_forwarder_path: Path = Path("./data/audit_forwarder.jsonl")
+    audit_forwarder_deliveries_path: Path = Path(
+        "./data/audit_forwarder_deliveries.jsonl"
+    )
+    audit_forwarder_enabled: bool = Field(
+        default=True,
+        description=(
+            "Globally enable per workspace audit log forwarding. Workspaces "
+            "opt in individually by configuring a destination URL."
+        ),
+    )
+    audit_forwarder_max_retries: int = Field(
+        default=5,
+        description="Maximum delivery attempts per event before giving up.",
+    )
+    audit_forwarder_delivery_log_keep: int = Field(
+        default=200,
+        description="Most recent delivery attempts kept per workspace.",
+    )
+    audit_forwarder_timeout_seconds: float = Field(
+        default=5.0,
+        description="HTTP timeout for each forwarder delivery attempt.",
+    )
+
     # Idempotency-Key support for mutating routes. Enterprise integrators
     # retry POST/PUT/PATCH/DELETE on timeouts, and without server-side
     # de-duplication a retry can double-write a row. The middleware

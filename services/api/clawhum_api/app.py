@@ -18,6 +18,7 @@ from .middleware import RequestIDMiddleware, SecurityHeadersMiddleware, SimpleRa
 from .residency import ResidencyMiddleware
 from .routes import activity as activity_routes
 from .routes import audit as audit_routes
+from .routes import audit_forwarder as audit_forwarder_routes
 from .routes import batch as batch_routes
 from .routes import collections as collections_routes
 from .routes import embed_origins as embed_origins_routes
@@ -162,6 +163,7 @@ def create_app() -> FastAPI:
     app.include_router(sso_routes.router)
     app.include_router(retention_routes.router)
     app.include_router(audit_routes.router)
+    app.include_router(audit_forwarder_routes.router)
     app.include_router(quotas_routes.router)
     app.include_router(residency_routes.router)
     app.include_router(scim_routes.router)
@@ -189,6 +191,7 @@ def create_app() -> FastAPI:
     app.include_router(sso_routes.router, prefix="/v1")
     app.include_router(retention_routes.router, prefix="/v1")
     app.include_router(audit_routes.router, prefix="/v1")
+    app.include_router(audit_forwarder_routes.router, prefix="/v1")
     app.include_router(quotas_routes.router, prefix="/v1")
     app.include_router(residency_routes.router, prefix="/v1")
     app.include_router(library_routes.router, prefix="/v1")

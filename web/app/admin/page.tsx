@@ -612,6 +612,19 @@ export default function AdminConsolePage() {
         </Card>
 
         <Card
+          title="audit forwarding"
+          icon={<Broadcast size={14} weight="duotone" />}
+          href="/admin/audit-forwarding"
+          hrefLabel="configure"
+        >
+          <p className="text-xs text-[var(--color-dim)]">
+            Stream this workspace audit log to your own SIEM or HTTPS
+            collector. Events are signed with HMAC-SHA256; failed
+            deliveries retry with backoff and can be replayed.
+          </p>
+        </Card>
+
+        <Card
           title="recent activity"
           icon={<ListMagnifyingGlass size={14} weight="duotone" />}
           href="/settings/audit"
