@@ -4,6 +4,7 @@ import { Inter, IBM_Plex_Mono } from "next/font/google";
 import TransportBar from "@/components/TransportBar";
 import SiteNav from "@/components/SiteNav";
 import ApiKeyProvider from "@/components/ApiKeyProvider";
+import PWAInstaller from "@/components/PWAInstaller";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -22,6 +23,28 @@ const plexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "clawhum / fingerprint matcher",
   description: "Acoustic fingerprint matching. Hum, drop, capture. Inspect chroma bins and match scores.",
+  manifest: "/manifest.webmanifest",
+  applicationName: "clawhum",
+  appleWebApp: {
+    capable: true,
+    title: "clawhum",
+    statusBarStyle: "black-translucent",
+  },
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/icons/pwa-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icons/pwa-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: "/icons/pwa-192.png",
+  },
+};
+
+export const viewport = {
+  themeColor: "#1db954",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover" as const,
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -30,6 +53,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <div className="min-h-screen flex flex-col">
           <ApiKeyProvider />
+          <PWAInstaller />
           <TransportBar />
           <SiteNav />
           <main className="flex-1">{children}</main>
