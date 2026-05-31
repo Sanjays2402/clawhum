@@ -49,6 +49,7 @@ const nextConfig = {
       { source: "/api/members", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/members` },
       { source: "/api/members/invite", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/members/invite` },
       { source: "/api/members/accept", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/members/accept` },
+      { source: "/api/members/:id/resend", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/members/:id/resend` },
       { source: "/api/members/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/members/:id` },
       { source: "/api/sso/config", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/sso/config` },
       { source: "/api/sso/providers", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/sso/providers` },

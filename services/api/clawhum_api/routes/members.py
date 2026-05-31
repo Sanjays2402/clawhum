@@ -6,6 +6,7 @@ Endpoints:
 - POST   /members/accept       accept an invite by token (public, token gated)
 - PATCH  /members/{id}         change a member's role (admin + MFA)
 - DELETE /members/{id}         revoke a member or pending invite (admin + MFA)
+- POST   /members/{id}/resend  rotate the invite token + extend TTL (admin + MFA)
 
 The accept endpoint is intentionally public so a recipient who is not
 yet authenticated against the workspace can claim their seat. The
@@ -160,3 +161,36 @@ async def revoke_member(request: Request, member_id: str) -> None:
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     return None
+
+
+class ResendBody(BaseModel):
+    ttl_hours: int | None = Field(default=None, ge=0, le=24 * 365)
+
+
+@router.post(
+    "/members/{member_id}/resend",
+    response_model=InviteResponse,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_admin_with_mfa())],
+)
+async def resend_member_invite(
+    request: Request, member_id: str, body: ResendBody | None = None,
+) -> dict[str, Any]:
+    """Rotate the invite token for a pending member.
+
+    Returns a brand new one shot ``invite_token`` that supersedes any
+    previous token for this member. The expiry clock is reset to the
+    configured default (or the override in the request body). Refuses
+    to operate on accepted, revoked, or cross-tenant rows.
+    """
+    tenant = _guard_tenant(current_tenant_id(request))
+    ttl_hours = body.ttl_hours if body is not None else None
+    try:
+        member, token = member_store.resend_invite(
+            member_id, tenant_id=tenant, ttl_hours=ttl_hours,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    payload = member.public_dict()
+    payload["invite_token"] = token
+    return payload

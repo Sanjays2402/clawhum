@@ -22,6 +22,7 @@ import {
   Check,
   Trash,
   PencilSimple,
+  ArrowClockwise,
   Warning,
   ArrowLeft,
   Clock,
@@ -189,6 +190,36 @@ export default function MembersPage() {
         return;
       }
       await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function resend(id: string, email: string) {
+    setBusyId(id);
+    setError(null);
+    setCreated(null);
+    try {
+      const r = await fetch(`/api/members/${id}/resend`, {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({}),
+      });
+      if (!r.ok) {
+        const text = await r.text().catch(() => "");
+        let msg = text || r.statusText;
+        try {
+          const j = JSON.parse(text);
+          if (j?.detail) msg = String(j.detail);
+        } catch {}
+        setError(`resend failed (${r.status}): ${msg}`);
+        return;
+      }
+      const inv = (await r.json()) as CreatedInvite;
+      setCreated({ ...inv, email });
+      await load();
+    } catch (e: any) {
+      setError(e?.message || String(e));
     } finally {
       setBusyId(null);
     }
@@ -380,6 +411,19 @@ export default function MembersPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    {m.status === "invited" && (
+                      <button
+                        type="button"
+                        onClick={() => resend(m.id, m.email)}
+                        disabled={busyId === m.id}
+                        aria-label={`resend invite for ${m.email}`}
+                        title="rotate invite token and extend expiry"
+                        className="border border-[var(--color-line)] px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)] hover:border-[var(--color-phosphor)] disabled:opacity-40 inline-flex items-center gap-1"
+                      >
+                        <ArrowClockwise size={11} weight="duotone" />
+                        resend
+                      </button>
+                    )}
                     <select
                       value={m.role}
                       disabled={busyId === m.id}

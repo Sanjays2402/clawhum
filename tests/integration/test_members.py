@@ -185,3 +185,96 @@ def test_dev_tenant_refused(monkeypatch, tmp_path):
         )
         assert r.status_code == 403
         assert "workspace-scoped" in r.json()["detail"]
+
+
+def test_resend_invite_rotates_token_and_invalidates_old(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as c:
+        r = c.post(
+            "/members/invite",
+            json={"email": "carol@acme.test", "role": "writer"},
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 201, r.text
+        member_id = r.json()["id"]
+        old_token = r.json()["invite_token"]
+        old_expires = r.json()["invite_expires_at"]
+
+        # Non-admin rejected.
+        r = c.post(
+            f"/members/{member_id}/resend",
+            json={},
+            headers={"X-API-Key": "acmereader"},
+        )
+        assert r.status_code == 403
+
+        # Admin rotates with a custom TTL override.
+        r = c.post(
+            f"/members/{member_id}/resend",
+            json={"ttl_hours": 48},
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        new_token = body["invite_token"]
+        assert new_token.startswith("inv_")
+        assert new_token != old_token
+        assert body["id"] == member_id
+        assert body["status"] == "invited"
+        assert body["accepted_at"] == 0
+        assert body["invite_expires_at"] != old_expires
+
+        # Old token must no longer accept.
+        r = c.post("/members/accept", json={"token": old_token})
+        assert r.status_code == 400
+
+        # New token accepts cleanly.
+        r = c.post("/members/accept", json={"token": new_token})
+        assert r.status_code == 200
+        assert r.json()["status"] == "active"
+
+        # Resending an already-accepted member fails.
+        r = c.post(
+            f"/members/{member_id}/resend",
+            json={},
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 404
+
+
+def test_resend_invite_cross_tenant_blocked(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as c:
+        r = c.post(
+            "/members/invite",
+            json={"email": "dave@acme.test", "role": "writer"},
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 201
+        acme_id = r.json()["id"]
+
+        # Globex admin must not rotate Acme's invite token.
+        r = c.post(
+            f"/members/{acme_id}/resend",
+            json={},
+            headers={"X-API-Key": "globexkey"},
+        )
+        assert r.status_code == 404
+
+
+def test_resend_invite_revoked_rejected(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as c:
+        r = c.post(
+            "/members/invite",
+            json={"email": "eve@acme.test", "role": "writer"},
+            headers={"X-API-Key": "acmekey"},
+        )
+        member_id = r.json()["id"]
+        assert c.delete(
+            f"/members/{member_id}", headers={"X-API-Key": "acmekey"}
+        ).status_code == 204
+
+        r = c.post(
+            f"/members/{member_id}/resend",
+            json={},
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 404

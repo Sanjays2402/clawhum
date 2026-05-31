@@ -360,6 +360,56 @@ def update_role(member_id: str, *, role: str, tenant_id: str) -> Member:
     return updated
 
 
+def resend_invite(
+    member_id: str,
+    *,
+    tenant_id: str,
+    ttl_hours: int | None = None,
+    now: float | None = None,
+) -> tuple[Member, str]:
+    """Rotate the invite token for a pending member and extend the TTL.
+
+    Enterprise admins routinely need to re-send an invite (the original
+    email was lost, the link expired, the recipient mis-typed it).
+    Revoking and re-inviting works but loses the lifecycle history and
+    forces the admin to retype the email. This helper mints a fresh
+    one shot token bound to the same member id, invalidating the old
+    token, and resets ``invited_at`` and the expiry clock.
+
+    Refuses to operate on accepted, revoked, tombstoned, or
+    cross-tenant rows; raises ``ValueError`` with a uniform message so
+    the API layer cannot leak which case applied.
+    """
+    m = get(member_id)
+    if m is None or m.tenant_id != tenant_id:
+        raise ValueError("pending invite not found")
+    if m.status != STATUS_INVITED:
+        raise ValueError("member is not in invited status")
+
+    settings = get_settings()
+    if ttl_hours is None:
+        ttl_hours = settings.member_invite_ttl_hours
+    now = time.time() if now is None else now
+    expires_at = 0.0 if ttl_hours <= 0 else now + (ttl_hours * 3600.0)
+
+    token = new_invite_token()
+    rotated = Member(
+        id=m.id,
+        tenant_id=m.tenant_id,
+        email=m.email,
+        role=m.role,
+        status=STATUS_INVITED,
+        invited_by=m.invited_by,
+        invited_at=now,
+        accepted_at=0.0,
+        invite_token_hash=hash_token(token),
+        invite_expires_at=expires_at,
+        deleted=False,
+    )
+    _append(asdict(rotated))
+    return rotated, token
+
+
 def revoke(member_id: str, *, tenant_id: str) -> Member:
     """Tombstone a member or pending invite. Idempotent.
 

@@ -304,7 +304,7 @@ Web UI: `http://127.0.0.1:7452/settings/sso`.
 
 ## Workspace members and invites
 
-A workspace admin manages the human roster from `/settings/members`: invite a teammate by email with a role (`reader`, `writer`, `admin`), see pending invites with their expiry, change a member's role, and revoke a seat when someone leaves. Invite tokens are returned exactly once and hashed at rest; the recipient trades the token for membership at `POST /members/accept` with no API key required. Role changes and revokes are gated by admin role plus a fresh `X-MFA-Code` once the actor has enrolled TOTP. The roster is strictly per workspace: another tenant's admin cannot see, mutate, or even probe for member ids they do not own.
+A workspace admin manages the human roster from `/settings/members`: invite a teammate by email with a role (`reader`, `writer`, `admin`), see pending invites with their expiry, resend an expired or lost invite without losing history, change a member's role, and revoke a seat when someone leaves. Invite tokens are returned exactly once and hashed at rest; the recipient trades the token for membership at `POST /members/accept` with no API key required. Role changes, resends, and revokes are gated by admin role plus a fresh `X-MFA-Code` once the actor has enrolled TOTP. Resending rotates the underlying token so the previous link stops working immediately, and refuses to operate on accepted or revoked rows. The roster is strictly per workspace: another tenant's admin cannot see, mutate, or even probe for member ids they do not own.
 
 ### Try it (members)
 
@@ -325,6 +325,11 @@ curl -X PATCH http://127.0.0.1:7451/v1/members/<id> \
   -d '{"role":"reader"}'
 curl -X DELETE http://127.0.0.1:7451/v1/members/<id> \
   -H "X-API-Key: $CLAWHUM_KEY"
+
+# Resend (rotate the invite token + reset expiry). The old token stops working.
+curl -X POST http://127.0.0.1:7451/v1/members/<id>/resend \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "Content-Type: application/json" \
+  -d '{"ttl_hours":48}'
 ```
 
 Web UI: `http://127.0.0.1:7452/settings/members`.
