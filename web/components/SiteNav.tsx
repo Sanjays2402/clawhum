@@ -18,6 +18,7 @@ const TABS: { href: string; label: string; hint: string }[] = [
   { href: "/library", label: "index", hint: "reindex / stats" },
   { href: "/usage", label: "usage", hint: "quota + meter" },
   { href: "/pricing", label: "pricing", hint: "plans + faq" },
+  { href: "/admin", label: "admin", hint: "workspace overview" },
   { href: "/settings", label: "settings", hint: "api key + usage" },
   { href: "/settings/keys", label: "keys", hint: "personal access tokens" },
   { href: "/settings/notifications", label: "notify", hint: "browser alerts" },
