@@ -9,7 +9,7 @@ Next.js 15 App Router UI for the clawhum acoustic fingerprint matcher.
 - SWR for polled data, Recharts for sparklines, canvas for waveforms + spectrograms
 
 ## Pages
-- `/` capture surface (drop file or arm + record), candidates table with per-row spectrogram strip
+- `/` capture surface (drop file or arm + record), candidates table with per-row spectrogram strip. First-time visitors see a 3-step onboarding modal with a one-click sample run.
 - `/matches` local query log (dense table, score color-coded by band, latency in ms)
 - `/matches/[id]` twin time-aligned waveforms (query top, reference bottom), candidate score bars, per-track spectrograms, feedback submit
 - `/catalog` fingerprinted tracks derived from local log, sortable, mini-spectrogram per card
@@ -26,6 +26,26 @@ npm install
 npm run dev     # :7452
 npm run build
 npm test        # exports unit tests via tsx --test
+```
+
+## Onboarding
+First visit pops a welcome modal that explains the three things worth doing
+(run a match, open a candidate, save or share). A `Run a sample now` button
+fetches `/samples/twinkle.wav`, decodes it, and posts it to the same `/match`
+endpoint a live capture would hit, so the user lands on real results in one
+click. Progress lives in `localStorage` under `clawhum.onboarding.v1`; the
+tour can be replayed any time from `/settings > onboarding > replay first-run tour`.
+
+## Try it
+```
+npm run dev          # http://localhost:7452
+```
+Open the landing page in an incognito window and click `run a sample now`.
+For the equivalent shell call:
+```
+curl -s -F audio=@public/samples/twinkle.wav \
+     -F top_k=10 -F threshold=0 \
+     http://127.0.0.1:7451/match | jq '.results[0]'
 ```
 
 ## Export

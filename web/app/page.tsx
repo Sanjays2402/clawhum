@@ -5,6 +5,8 @@ import useSWR from "swr";
 import { useRouter } from "next/navigation";
 import CaptureSurface from "@/components/CaptureSurface";
 import Spectrogram from "@/components/Spectrogram";
+import OnboardingTour from "@/components/OnboardingTour";
+import { markOnboardingStep } from "@/components/OnboardingTour";
 import { swrFetcher, type Stats, type MatchResponse, extractQueryPitch } from "@/lib/api";
 import { downsampleFloat, saveMatch } from "@/lib/history";
 
@@ -58,6 +60,10 @@ export default function Home() {
         query_pitch: pitch ?? undefined,
         results: j.results,
       });
+      // Onboarding progress: ran a match, results rendered, and we saved.
+      markOnboardingStep("tried");
+      markOnboardingStep("viewed");
+      markOnboardingStep("saved");
     } catch (e: any) {
       setErr(e?.message || String(e));
     } finally {
@@ -67,6 +73,29 @@ export default function Home() {
 
   return (
     <div>
+      <OnboardingTour onRunSample={async (file) => {
+        try {
+          const resp = await fetch(file);
+          if (!resp.ok) throw new Error(`sample fetch failed (${resp.status})`);
+          const blob = await resp.blob();
+          // Decode just enough to get a viz waveform + duration. Reuse the
+          // same onAudio path so history + onboarding hooks fire identically
+          // to a live capture.
+          const arrBuf = await blob.arrayBuffer();
+          const Ctor = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
+          const ac = new Ctor();
+          const decoded = await ac.decodeAudioData(arrBuf.slice(0));
+          const ch = decoded.getChannelData(0);
+          const viz = new Float32Array(ch.length);
+          viz.set(ch);
+          await ac.close();
+          // Tag the blob with a filename so the API sees a real name.
+          (blob as any).name = file.split("/").pop() || "sample.wav";
+          await onAudio(blob, viz, decoded.duration);
+        } catch (e: any) {
+          setErr(e?.message || String(e));
+        }
+      }} />
       <section className="px-4 pt-4">
         <CaptureSurface onAudio={onAudio} loading={loading} topK={topK} threshold={threshold} />
       </section>

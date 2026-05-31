@@ -13,6 +13,7 @@ import {
   Warning,
 } from "@phosphor-icons/react/dist/ssr";
 import { getApiKey, maskKey, setApiKey, useApiKey } from "@/lib/apiKey";
+import { resetOnboarding } from "@/components/OnboardingTour";
 
 interface MeResponse {
   tenant_id: string;
@@ -310,6 +311,26 @@ export default function SettingsPage() {
               save an api key above and the snippet will fill in automatically.
             </p>
           )}
+        </section>
+
+        {/* Onboarding controls */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">onboarding</span>
+            <button
+              type="button"
+              onClick={() => {
+                resetOnboarding();
+                window.location.href = "/";
+              }}
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              replay first-run tour
+            </button>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            clears the local checklist and reopens the welcome modal on the landing page.
+          </p>
         </section>
       </div>
     </div>
