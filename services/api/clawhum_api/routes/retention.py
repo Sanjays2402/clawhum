@@ -113,6 +113,18 @@ async def enforce_now(
     ``dry_run=true`` reports what would be removed without rewriting
     any file, matching the convention used elsewhere in the API.
     """
+    from .. import legal_hold as _lh
+    _active = _lh.active_hold(tenant_id)
+    if _active is not None and not dry_run:
+        raise HTTPException(
+            status_code=423,
+            detail={
+                "error": "legal_hold_active",
+                "message": "this workspace is under legal hold; retention purge is frozen",
+                "hold_id": _active.id,
+                "reason": _active.reason,
+            },
+        )
     if dry_run:
         # Count rows that would be removed without touching disk.
         from pathlib import Path

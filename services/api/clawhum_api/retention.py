@@ -267,6 +267,11 @@ def enforce_policy(tenant_id: str, *, now: float | None = None) -> dict[str, int
     removed: dict[str, int] = {c: 0 for c in POLICY_FIELDS}
     if pol.is_empty():
         return removed
+    # Defense in depth: never purge a tenant under legal hold, even if a
+    # caller bypassed the route layer (cron, CLI, internal worker).
+    from . import legal_hold as _lh
+    if _lh.is_on_hold(tenant_id):
+        raise _lh.LegalHoldActive(_lh.active_hold(tenant_id))
     s = get_settings()
     cutoff_now = now if now is not None else time.time()
     for category in POLICY_FIELDS:

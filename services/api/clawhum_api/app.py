@@ -21,6 +21,7 @@ from .routes import audit as audit_routes
 from .routes import batch as batch_routes
 from .routes import collections as collections_routes
 from .routes import embed_origins as embed_origins_routes
+from .routes import legal_hold as legal_hold_routes
 from .routes import feedback as feedback_routes
 from .routes import health as health_routes
 from .routes import history as history_routes
@@ -168,6 +169,7 @@ def create_app() -> FastAPI:
     app.include_router(sessions_routes.router)
     app.include_router(seat_limit_routes.router)
     app.include_router(embed_origins_routes.router)
+    app.include_router(legal_hold_routes.router)
     # Stable, version-pinned public API surface. The same routers are
     # mounted again under /v1 so integrators can target a URL we will not
     # break, while existing unversioned routes stay alive for the web UI.
@@ -195,6 +197,7 @@ def create_app() -> FastAPI:
     app.include_router(sessions_routes.router, prefix="/v1")
     app.include_router(seat_limit_routes.router, prefix="/v1")
     app.include_router(embed_origins_routes.router, prefix="/v1")
+    app.include_router(legal_hold_routes.router, prefix="/v1")
     app.include_router(metrics_router)
     register_app_collector(app)
     return app

@@ -19,7 +19,7 @@ from typing import Any
 
 from clawhum_core.settings import get_settings
 from clawhum_library.feedback import read_feedback
-from fastapi import APIRouter, Depends, Header, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from ..auth import require_api_key, require_mfa, require_roles
@@ -122,6 +122,18 @@ async def delete_my_data(
     """
     actor = actor_id_for(x_api_key or None)
     tenant_id = current_tenant_id(request)
+    from .. import legal_hold as _lh
+    _active = _lh.active_hold(tenant_id)
+    if _active is not None:
+        raise HTTPException(
+            status_code=423,
+            detail={
+                "error": "legal_hold_active",
+                "message": "this workspace is under legal hold; destructive operations are frozen",
+                "hold_id": _active.id,
+                "reason": _active.reason,
+            },
+        )
     from ..dry_run import is_dry_run, preview
     if is_dry_run(request):
         events = collect_events(actor, _audit_path())

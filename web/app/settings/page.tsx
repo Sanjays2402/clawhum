@@ -415,6 +415,22 @@ export default function SettingsPage() {
         {/* Workspace data residency */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">
+            <span className="label-xs">legal hold</span>
+            <a
+              href="/settings/legal-holds"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            freeze destructive operations on this workspace for litigation or regulatory preservation. retention purges, gdpr erasures, and history deletes return http 423 while a hold is active. reads and exports keep working. admin role plus MFA required to place or release.
+          </p>
+        </section>
+
+        {/* Workspace data residency */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
             <span className="label-xs">data residency</span>
             <a
               href="/settings/residency"

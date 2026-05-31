@@ -130,6 +130,84 @@ def _append_delivery(rec: dict[str, Any]) -> None:
             fh.write(line + "\n")
 
 
+def _consecutive_failures_for(hook_id: str, tenant_id: str, since_ts: float) -> int:
+    """Count consecutive failed deliveries for ``hook_id`` from most recent
+    backward, stopping at the first success or at ``since_ts`` (typically the
+    last ``resumed_at`` so a fresh resume starts the budget over).
+    """
+    records = [
+        r for r in _iter_jsonl(_deliveries_path())
+        if r.get("webhook_id") == hook_id and r.get("tenant_id") == tenant_id
+    ]
+    records.sort(key=lambda r: float(r.get("created_at") or 0.0))
+    streak = 0
+    for r in reversed(records):
+        if float(r.get("created_at") or 0.0) < since_ts:
+            break
+        if r.get("ok"):
+            break
+        streak += 1
+    return streak
+
+
+def _maybe_auto_disable(hook: dict[str, Any]) -> dict[str, Any] | None:
+    """After a failed delivery, evaluate the circuit breaker.
+
+    If the consecutive failure streak (since the most recent resume or
+    create) has reached ``webhook_auto_disable_threshold`` and the hook
+    is still active, append a new hook record flipping ``active`` to
+    False with ``auto_disabled_at`` and ``auto_disabled_reason`` set.
+    """
+    s = get_settings()
+    threshold = int(getattr(s, "webhook_auto_disable_threshold", 0) or 0)
+    if threshold <= 0:
+        return None
+    tenant_id = hook.get("tenant_id", "")
+    hook_id = hook["id"]
+    current = _find_hook_any_tenant(hook_id)
+    if current is None or not current.get("active", True):
+        return None
+    boundary = float(current.get("resumed_at") or current.get("created_at") or 0.0)
+    streak = _consecutive_failures_for(hook_id, tenant_id, boundary)
+    if streak < threshold:
+        return None
+    rec = dict(current)
+    rec["active"] = False
+    rec["auto_disabled_at"] = time.time()
+    rec["auto_disabled_reason"] = (
+        f"{streak} consecutive delivery failures (threshold {threshold})"
+    )
+    rec["consecutive_failures"] = streak
+    _append_hook(rec)
+    log.warning(
+        "webhook_auto_disabled",
+        webhook_id=hook_id,
+        tenant_id=tenant_id,
+        consecutive_failures=streak,
+        threshold=threshold,
+    )
+    try:
+        from ..audit import write_event as _audit_write
+        _audit_write({
+            "ts": time.time(),
+            "actor": "system:webhook-circuit-breaker",
+            "tenant_id": tenant_id,
+            "method": "SYSTEM",
+            "path": f"/webhooks/{hook_id}/auto-disable",
+            "status": 200,
+            "action": "webhook.auto_disabled",
+            "target": hook_id,
+            "detail": {
+                "consecutive_failures": streak,
+                "threshold": threshold,
+                "url": current.get("url"),
+            },
+        })
+    except Exception:  # pragma: no cover - audit best effort
+        log.warning("webhook_auto_disable_audit_failed", webhook_id=hook_id)
+    return rec
+
+
 def _public_view(rec: dict[str, Any]) -> dict[str, Any]:
     prev_hint = rec.get("previous_secret_hint") or None
     prev_exp = rec.get("previous_secret_expires_at") or 0.0
@@ -138,6 +216,14 @@ def _public_view(rec: dict[str, Any]) -> dict[str, Any]:
     if prev_hint and prev_exp and prev_exp <= time.time():
         prev_hint = None
         prev_exp = 0.0
+    # Live consecutive failure count since the most recent resume so
+    # operators can see a hook trending toward auto disable before it
+    # actually trips the breaker.
+    boundary = float(rec.get("resumed_at") or rec.get("created_at") or 0.0)
+    try:
+        streak = _consecutive_failures_for(rec["id"], rec.get("tenant_id", ""), boundary)
+    except Exception:  # pragma: no cover - never fail the list call
+        streak = int(rec.get("consecutive_failures") or 0)
     return {
         "id": rec["id"],
         "url": rec["url"],
@@ -150,6 +236,9 @@ def _public_view(rec: dict[str, Any]) -> dict[str, Any]:
         "rotated_at": rec.get("rotated_at") or None,
         "paused_at": rec.get("paused_at") or None,
         "resumed_at": rec.get("resumed_at") or None,
+        "auto_disabled_at": rec.get("auto_disabled_at") or None,
+        "auto_disabled_reason": rec.get("auto_disabled_reason") or None,
+        "consecutive_failures": int(streak),
     }
 
 
@@ -178,6 +267,9 @@ class WebhookListItem(BaseModel):
     rotated_at: float | None = None
     paused_at: float | None = None
     resumed_at: float | None = None
+    auto_disabled_at: float | None = None
+    auto_disabled_reason: str | None = None
+    consecutive_failures: int = 0
 
 
 class RotateSecretBody(BaseModel):
@@ -348,6 +440,11 @@ def _set_active(hook_id: str, tenant_id: str, request: Request, active: bool) ->
     rec["active"] = active
     if active:
         rec["resumed_at"] = now
+        # Clear any prior auto disable so the breaker resets and the UI
+        # stops showing a stale red badge after a manual resume.
+        rec.pop("auto_disabled_at", None)
+        rec.pop("auto_disabled_reason", None)
+        rec["consecutive_failures"] = 0
     else:
         rec["paused_at"] = now
     _append_hook(rec)
@@ -773,6 +870,13 @@ async def _deliver_one(
             )
             if attempt < s.webhook_max_attempts:
                 await asyncio.sleep(min(2 ** (attempt - 1), 8))
+    # All attempts in this dispatch failed. Evaluate the circuit breaker
+    # so a permanently broken receiver does not keep burning retry budget
+    # for every subsequent event.
+    try:
+        _maybe_auto_disable(hook)
+    except Exception:  # pragma: no cover - never let breaker raise
+        log.warning("webhook_auto_disable_check_failed", webhook_id=hook["id"])
     return first_id or _new_id()
 
 

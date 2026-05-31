@@ -444,6 +444,18 @@ async def delete_history(hid: str, request: Request) -> dict[str, Any]:
     rec = _collapse(tenant_id).get(hid)
     if rec is None:
         raise HTTPException(404, "not found")
+    from .. import legal_hold as _lh
+    _active = _lh.active_hold(tenant_id)
+    if _active is not None:
+        raise HTTPException(
+            status_code=423,
+            detail={
+                "error": "legal_hold_active",
+                "message": "this workspace is under legal hold; destructive operations are frozen",
+                "hold_id": _active.id,
+                "reason": _active.reason,
+            },
+        )
     from ..dry_run import is_dry_run, preview
     if is_dry_run(request):
         return preview("history", hid, tenant_id=tenant_id,
