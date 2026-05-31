@@ -34,8 +34,71 @@ from starlette.middleware.base import BaseHTTPMiddleware
 _SKIP_PATHS = {"/health", "/ready", "/metrics"}
 _SKIP_METHODS = {"GET", "HEAD", "OPTIONS"}
 
+# Genesis hash used as ``prev_hash`` for the very first entry in a
+# fresh audit file. Picking a fixed, well-known constant lets a
+# verifier distinguish "file starts at the beginning of history" from
+# "someone truncated the head of the file" (the latter would leave the
+# first surviving entry pointing at a hash no preceding line produced).
+AUDIT_GENESIS_HASH = "0" * 64
+
 _lock = threading.Lock()
 _log = get_logger("clawhum.audit")
+
+# Cache of the last entry hash per file path so consecutive writes can
+# extend the hash chain without re-reading the file from disk. Reset
+# on rotation and on process boot (when the cache is naturally empty).
+_last_hash_by_path: dict[str, str] = {}
+
+
+def hash_entry(prev_hash: str, body: dict[str, Any]) -> str:
+    """Return the sha256 hex digest of ``prev_hash || canonical(body)``.
+
+    ``body`` is serialised with ``sort_keys=True`` and the most compact
+    separators so verifiers can recompute the same digest from a stored
+    JSONL line by removing the existing ``entry_hash`` field and
+    re-serialising the remainder. The digest is keyed by ``prev_hash``
+    (genesis or a prior entry) so any reordering, deletion, or edit
+    breaks the chain at the affected entry and every entry after it.
+    """
+    payload = json.dumps(body, separators=(",", ":"), sort_keys=True)
+    h = hashlib.sha256()
+    h.update(prev_hash.encode("ascii"))
+    h.update(b"|")
+    h.update(payload.encode("utf-8"))
+    return h.hexdigest()
+
+
+def _read_last_hash(path: Path) -> str:
+    """Return the ``entry_hash`` of the last well-formed line in ``path``.
+
+    Used to seed the in-memory cache on first write after process boot
+    so the chain continues from where the previous run left off. If the
+    file is missing, empty, or the trailing line is malformed (which
+    can only happen if an operator hand-edited it) the genesis hash is
+    returned and the next entry starts a fresh chain segment.
+    """
+    try:
+        with open(path, "rb") as f:
+            tail = f.read()
+    except FileNotFoundError:
+        return AUDIT_GENESIS_HASH
+    if not tail:
+        return AUDIT_GENESIS_HASH
+    # Walk from the end to find the last non-empty line. The file is
+    # bounded by audit_max_bytes so reading it whole on boot is fine.
+    for raw in reversed(tail.splitlines()):
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+            digest = row.get("entry_hash")
+            if isinstance(digest, str) and len(digest) == 64:
+                return digest
+        except (json.JSONDecodeError, AttributeError):
+            continue
+        break
+    return AUDIT_GENESIS_HASH
 
 
 def _actor_id(api_key: str | None) -> str:
@@ -89,24 +152,49 @@ def rotate_if_needed(
 
 
 def write_event(event: dict[str, Any], path: Path | None = None) -> None:
-    """Append a single audit event as a JSON line. Best-effort, never raises."""
+    """Append a single audit event as a JSON line. Best-effort, never raises.
+
+    The persisted record is the caller-provided ``event`` plus two
+    integrity fields: ``prev_hash`` (the entry hash of the previous
+    line, or the genesis hash for a fresh file) and ``entry_hash``
+    (sha256 of ``prev_hash || canonical(event_with_prev_hash)``). A
+    verifier walks the file, recomputes each digest, and confirms the
+    chain is intact. Tampering with any earlier line breaks every
+    subsequent hash so deletes and edits are detectable after the fact.
+    """
     settings = get_settings()
     target = path or settings.audit_log_path
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(event, separators=(",", ":"), sort_keys=True)
-        # Open in append+binary mode to keep writes atomic on POSIX for
-        # lines under PIPE_BUF. Good enough for single-process uvicorn.
         with _lock:
-            rotate_if_needed(
+            rotated = rotate_if_needed(
                 target,
                 max_bytes=settings.audit_max_bytes,
                 backup_count=settings.audit_backup_count,
             )
+            key = str(target.resolve()) if target.exists() or rotated else str(target)
+            if rotated or key not in _last_hash_by_path:
+                # Rotation produced a fresh empty file so the next
+                # entry seeds a new chain segment starting at genesis.
+                # On cache miss after boot, recover the prior tail.
+                _last_hash_by_path[key] = AUDIT_GENESIS_HASH if rotated else _read_last_hash(target)
+            prev_hash = _last_hash_by_path[key]
+            body = dict(event)
+            body["prev_hash"] = prev_hash
+            digest = hash_entry(prev_hash, body)
+            body["entry_hash"] = digest
+            line = json.dumps(body, separators=(",", ":"), sort_keys=True)
             with open(target, "ab") as f:
                 f.write(line.encode("utf-8") + b"\n")
+            _last_hash_by_path[key] = digest
     except Exception as exc:  # pragma: no cover - defensive
         _log.warning("audit_write_failed", error=str(exc))
+
+
+def _reset_chain_cache() -> None:
+    """Drop the cached last-hash table. Tests call this between runs."""
+    with _lock:
+        _last_hash_by_path.clear()
 
 
 class AuditLogMiddleware(BaseHTTPMiddleware):

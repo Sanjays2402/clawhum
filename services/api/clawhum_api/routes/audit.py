@@ -339,3 +339,58 @@ async def export_audit(
         media_type="text/csv; charset=utf-8",
         headers=headers,
     )
+
+
+# ----------------------------------------------------------------------
+# Tamper-evidence verification.
+#
+# Every audit line carries a prev_hash and entry_hash field so a
+# verifier can walk the file, recompute each digest, and prove no
+# entry was edited, deleted, or reordered after the fact. Exposed as
+# a JSON endpoint so a procurement reviewer or SIEM can hit it on a
+# schedule and alert when the chain breaks.
+# ----------------------------------------------------------------------
+
+
+class _ChainFileOut(BaseModel):
+    path: str
+    entries: int
+    valid: int
+    ok: bool
+    first_bad_line: int | None
+    reason: str | None
+    head_prev_hash: str | None
+    tail_entry_hash: str | None
+
+
+class _ChainVerifyOut(BaseModel):
+    ok: bool
+    files: list[_ChainFileOut]
+
+
+@router.get(
+    "/verify",
+    response_model=_ChainVerifyOut,
+    dependencies=[Depends(require_roles("admin"))],
+)
+async def verify_audit_chain(
+    include_rotated: bool = Query(default=True, description="Walk rotated siblings too."),
+) -> _ChainVerifyOut:
+    """Re-derive every entry's hash and report whether the chain holds.
+
+    Reads only. Tenant-agnostic because the audit file is a single
+    immutable record per replica, and the verification result reveals
+    only counts plus the file path the operator already configured.
+    Admin-gated so a member cannot probe for tampering activity.
+    """
+    from .. import audit_verify
+
+    settings = get_settings()
+    result = audit_verify.verify_chain(
+        Path(settings.audit_log_path),
+        include_rotated=include_rotated,
+    )
+    return _ChainVerifyOut(
+        ok=result.ok,
+        files=[_ChainFileOut(**f.to_dict()) for f in result.files],
+    )
