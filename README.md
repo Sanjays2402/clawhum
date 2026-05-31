@@ -10,6 +10,30 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Workspace data retention policy
+
+Every workspace admin can cap how long ClawHum keeps history, feedback, audit log, and webhook delivery records, then enforce that cap on demand. Days values are per category; `0` means keep forever, so existing customers see no behaviour change until they opt in. With a TTL set, expired rows are filtered out of reads immediately (the `/history` endpoint hides them even before a sweep runs) and a `POST /retention/enforce` rewrites each JSONL store atomically, deleting only rows that belong to the calling tenant. `?dry_run=true` reports the row counts that would be removed without touching disk. Reads and writes require the `admin` role; writes also require a fresh `X-MFA-Code` once the actor has enrolled TOTP. Cross-tenant isolation is enforced both at the storage scope (every row carries `tenant_id`) and at the sweep, which double checks each row before deleting.
+
+### Try it (workspace retention)
+
+```bash
+# Read the current policy (admin only). Defaults are all-zero.
+curl http://127.0.0.1:7451/v1/retention -H "X-API-Key: $CLAWHUM_KEY"
+
+# Set a 30 day TTL on history and a 365 day TTL on audit log.
+curl -X PUT http://127.0.0.1:7451/v1/retention \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "X-MFA-Code: 123456" -H "Content-Type: application/json" \
+  -d '{"history_days":30,"feedback_days":0,"audit_days":365,"webhook_deliveries_days":90}'
+
+# Preview what an enforcement sweep would delete (no writes).
+curl -X POST 'http://127.0.0.1:7451/v1/retention/enforce?dry_run=true' \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "X-MFA-Code: 123456"
+
+# Run the sweep for real.
+curl -X POST http://127.0.0.1:7451/v1/retention/enforce \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "X-MFA-Code: 123456"
+```
+
 ## Workspace single sign on (OIDC)
 
 A workspace admin wires an OIDC provider at `/settings/sso`: Okta, Microsoft Entra ID, Google Workspace, Auth0, Keycloak, or any generic OIDC. The record stores the issuer, client id, client secret, the email domain that maps to the workspace, and an enforce toggle. When enforce is on, `/me` reports `sso_enforced=true` so the sign-in screen can hide password and magic-link paths for users in that email domain. The public `GET /sso/discover?email=` endpoint lets an unauthenticated login form decide where to send a user without leaking which other domains are customers; nothing-interesting is returned for unknown domains. Two workspaces cannot silently claim the same email domain; the API rejects the second writer with 400. Reads mask the client secret; only admin role can read or write, and mutations require a fresh `X-MFA-Code` once the actor has enrolled TOTP. Every write flows through the global audit log.

@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import require_api_key
 from ..schemas import MatchResult
+from .. import retention
 
 router = APIRouter(tags=["history"])
 
@@ -83,11 +84,21 @@ def _collapse(tenant_id: str) -> dict[str, dict[str, Any]]:
     full updated row; the newest one wins.
     """
     by_id: dict[str, dict[str, Any]] = {}
-    for rec in _iter_records():
-        if rec.get("tenant_id") != tenant_id:
-            continue
+    own_rows = [r for r in _iter_records() if r.get("tenant_id") == tenant_id]
+    # Apply per-workspace retention TTL so expired rows are hidden from
+    # reads immediately, even before an enforce sweep rewrites disk.
+    # Tombstones are kept so deletes still take effect on PATCH replays.
+    visible = retention.filter_expired(own_rows, "history", tenant_id)
+    visible_ids = {id(r) for r in visible}
+    for rec in own_rows:
         rid = rec.get("id")
         if not isinstance(rid, str):
+            continue
+        if rec.get("deleted"):
+            by_id[rid] = rec
+            continue
+        if id(rec) not in visible_ids:
+            # Expired under retention policy; treat as deleted for reads.
             continue
         by_id[rid] = rec
     # drop tombstones
