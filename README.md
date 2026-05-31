@@ -65,6 +65,36 @@ curl 'http://127.0.0.1:7451/v1/audit/export?format=csv&method=DELETE&dry_run=exc
   -H "X-API-Key: $CLAWHUM_KEY" -o audit-deletes-24h.csv
 ```
 
+## SCIM 2.0 user provisioning
+
+Enterprise identity providers (Okta, Azure AD, Google Workspace) require SCIM so joiners and leavers in their directory flow into ClawHum without manual tickets. Endpoints live under `/scim/v2` (and the version-pinned mirror at `/v1/scim/v2`) and cover the surface real IdPs exercise: `ServiceProviderConfig`, `Schemas`, `ResourceTypes`, `Users` list with the `userName eq` filter, `POST /Users` to provision, `GET/PUT/PATCH /Users/{id}` for updates and de-provisioning via `active=false`, and `DELETE /Users/{id}` for hard tombstones. A custom enterprise extension (`urn:clawhum:scim:schemas:extension:2.0:User`) carries the workspace role (`reader`, `writer`, `admin`); unknown roles return `400` so misconfiguration is loud. Authentication is a per-workspace static bearer token minted by an admin at `/settings/scim` with step-up MFA; the plaintext is shown exactly once and only the SHA-256 hash is persisted to an append-only JSONL log (rotation tombstones the prior hash). Every SCIM mutation lands through the same `member_store` the human admin console reads, so the audit log, RBAC, and `/members` view stay the single source of truth. Tenant isolation is enforced by resolving the bearer to a tenant id and scoping every list, fetch, and mutation to that workspace, so a token minted for tenant A cannot read or mutate tenant B's roster. Coverage in `tests/integration/test_scim.py` pins the bearer enforcement, cross-tenant 404s on read and mutate, and the full create -> patch role -> patch active=false lifecycle.
+
+### Try it (SCIM provisioning)
+
+```bash
+# Mint a SCIM bearer (admin role + MFA if enrolled).
+curl -s -X POST http://127.0.0.1:7451/admin/scim/token \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" | jq
+
+# Probe the spec discovery endpoint the way Okta does.
+curl -s http://127.0.0.1:7451/scim/v2/ServiceProviderConfig \
+  -H "Authorization: Bearer $SCIM_TOKEN" | jq
+
+# Provision a user with the writer role.
+curl -s -X POST http://127.0.0.1:7451/scim/v2/Users \
+  -H "Authorization: Bearer $SCIM_TOKEN" \
+  -H 'content-type: application/scim+json' \
+  -d '{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"alice@acme.test","active":true,"urn:clawhum:scim:schemas:extension:2.0:User":{"role":"writer"}}' | jq
+
+# De-provision via PATCH active=false (what Azure AD sends on termination).
+curl -s -X PATCH http://127.0.0.1:7451/scim/v2/Users/$ID \
+  -H "Authorization: Bearer $SCIM_TOKEN" \
+  -H 'content-type: application/scim+json' \
+  -d '{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"active","value":false}]}' | jq
+```
+
+The admin UI lives at [`/settings/scim`](http://127.0.0.1:7452/settings/scim).
+
 ## Fine-grained PAT scopes
 
 Roles (`reader`, `writer`, `admin`) decide what a human operator can do in the dashboard. Scopes are the contract a machine token signs. `POST /keys` now accepts a `scopes` array drawn from `read:matches`, `write:matches`, `read:library`, `write:library`, `read:keys`, `write:keys`, and `admin`, so a CI bot that only needs `/match` gets a token that cannot rewrite the library or rotate other keys if it leaks. Scopes requested above the caller's role ceiling are silently clamped at mint, unknown scopes are dropped, and an empty list keeps the legacy behaviour of inheriting every scope the role permits. `GET /keys/policy` advertises both the full canonical set and the subset the caller may grant so the `/settings/keys` UI renders checkboxes a `reader` cannot misuse. Every protected route declares its required scope via `require_scopes(...)`, returning `403` with the missing scope list when a narrowly scoped PAT reaches outside its lane. Coverage in `tests/integration/test_pat_scopes.py` pins the mint-time clamp, the runtime denial, and the legacy no-scopes path.

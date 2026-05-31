@@ -27,6 +27,7 @@ import {
   Warning,
   Pulse,
   GlobeHemisphereWest,
+  CloudArrowUp,
 } from "@phosphor-icons/react/dist/ssr";
 import { getApiKey } from "@/lib/apiKey";
 
@@ -580,6 +581,19 @@ export default function AdminConsolePage() {
           <p className="text-xs text-[var(--color-dim)]">
             HMAC signed outbound deliveries with retries and per
             workspace destination allowlist.
+          </p>
+        </Card>
+
+        <Card
+          title="scim provisioning"
+          icon={<CloudArrowUp size={14} weight="duotone" />}
+          href="/settings/scim"
+          hrefLabel="manage"
+        >
+          <p className="text-xs text-[var(--color-dim)]">
+            SCIM 2.0 endpoint for Okta, Azure AD, and Google Workspace.
+            Mint one bearer token per workspace and your identity
+            provider can sync joiners and leavers automatically.
           </p>
         </Card>
 

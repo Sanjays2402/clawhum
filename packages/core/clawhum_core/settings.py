@@ -82,6 +82,18 @@ class Settings(BaseSettings):
             "recommended; auditors flag dangling invites)."
         ),
     )
+    scim_tokens_path: Path = Path("./data/scim_tokens.jsonl")
+    scim_enabled: bool = Field(
+        default=True,
+        description=(
+            "When true, the SCIM 2.0 /scim/v2 endpoints are mounted and "
+            "identity providers (Okta, Azure AD, Google Workspace) can "
+            "provision and de-provision workspace members using a "
+            "per-tenant bearer token. Mutations still write to the same "
+            "member_store and audit log as the human admin console so a "
+            "single source of truth is preserved."
+        ),
+    )
     ip_allowlist_path: Path = Path("./data/ip_allowlist.jsonl")
     ip_allowlist_enabled: bool = Field(
         default=True,
