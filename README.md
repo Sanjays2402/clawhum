@@ -109,6 +109,8 @@ curl -sI -H "x-api-key: $CLAWHUM_ADMIN_KEY" http://127.0.0.1:7451/library/tracks
 
 Every mutating call already lands in the workspace audit log via middleware. `GET /audit` lets a workspace admin search that log without shell access to the JSONL files. Filters: free-text `q`, `actor`, HTTP `method`, `path` prefix, status range `status_min`/`status_max`, time window `since`/`until` (unix seconds), and `dry_run=only|exclude|any` to separate previews from real mutations. Results are newest first, paginated with `limit`+`offset`, and strictly scoped to the caller's tenant. `GET /audit/export?format=csv|json` returns the matching rows as a download for compliance reviewers (SOC2 CC7.2, ISO 27001 A.12.4, GDPR Art. 30). Reads require the `admin` role; the underlying file is never exposed. Reads walk rotated siblings (`audit.jsonl.1`...) so coverage stays complete across log rotation.
 
+Every line is part of a sha256 hash chain: each entry carries `prev_hash` (the prior entry's digest, or the well-known genesis hash on a fresh file) and `entry_hash` (sha256 of `prev_hash || canonical_json(entry_without_entry_hash)`). `GET /audit/verify` walks the active file plus every rotated sibling, recomputes each digest, and reports the first broken line with the reason (`entry_hash mismatch` when a field was edited, `prev_hash mismatch` when an entry was deleted or reordered). A procurement reviewer or SIEM can hit it on a schedule and alert on tamper. The same panel is exposed in the dashboard at `/settings/audit` so an admin can self-serve a chain check before exporting evidence. Coverage in `tests/integration/test_audit_chain.py` pins the clean-chain case, single-field edit detection, deletion detection, and the admin-only role gate.
+
 ### Try it (audit search)
 
 ```bash
@@ -118,6 +120,9 @@ curl 'http://127.0.0.1:7451/v1/audit?limit=25' -H "X-API-Key: $CLAWHUM_KEY"
 # All real (non-preview) DELETEs in the last 24h, as CSV.
 curl 'http://127.0.0.1:7451/v1/audit/export?format=csv&method=DELETE&dry_run=exclude&since='$(($(date +%s)-86400)) \
   -H "X-API-Key: $CLAWHUM_KEY" -o audit-deletes-24h.csv
+
+# Confirm the audit log has not been edited, truncated, or reordered.
+curl http://127.0.0.1:7451/v1/audit/verify -H "X-API-Key: $CLAWHUM_KEY" | jq .
 ```
 
 ## SCIM 2.0 user provisioning

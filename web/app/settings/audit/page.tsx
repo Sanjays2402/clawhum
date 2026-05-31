@@ -21,6 +21,8 @@ import {
   MagnifyingGlass,
   ShieldCheck,
   Warning,
+  Check,
+  LinkSimpleBreak,
 } from "@phosphor-icons/react/dist/ssr";
 import { getApiKey, useApiKey } from "@/lib/apiKey";
 
@@ -56,6 +58,28 @@ type State =
   | { kind: "error"; status: number; message: string };
 
 const PAGE_SIZE = 50;
+
+interface ChainFile {
+  path: string;
+  entries: number;
+  valid: number;
+  ok: boolean;
+  first_bad_line: number | null;
+  reason: string | null;
+  head_prev_hash: string | null;
+  tail_entry_hash: string | null;
+}
+
+interface VerifyResp {
+  ok: boolean;
+  files: ChainFile[];
+}
+
+type ChainState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "ok"; data: VerifyResp; at: number }
+  | { kind: "error"; status: number; message: string };
 const METHODS = ["", "POST", "PUT", "PATCH", "DELETE"] as const;
 const DRY_RUN_OPTIONS = [
   { value: "any", label: "any" },
@@ -184,6 +208,24 @@ export default function AuditLogPage() {
     [load],
   );
 
+  const [chain, setChain] = useState<ChainState>({ kind: "idle" });
+
+  const verify = useCallback(async () => {
+    setChain({ kind: "loading" });
+    try {
+      const r = await fetch("/api/audit/verify", { headers: authHeaders(), cache: "no-store" });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => "");
+        setChain({ kind: "error", status: r.status, message: txt || r.statusText });
+        return;
+      }
+      const data = (await r.json()) as VerifyResp;
+      setChain({ kind: "ok", data, at: Date.now() });
+    } catch (e: any) {
+      setChain({ kind: "error", status: 0, message: e?.message || String(e) });
+    }
+  }, []);
+
   const exportAs = useCallback(
     (format: "csv" | "json") => {
       // Build URL without offset/limit so the download contains everything
@@ -260,6 +302,15 @@ export default function AuditLogPage() {
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={() => void verify()}
+              className="inline-flex items-center gap-1 border border-[var(--color-line)] px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+              title="recompute every entry's hash chain to confirm the log was not edited or truncated"
+            >
+              <ShieldCheck weight="duotone" size={12} />
+              verify chain
+            </button>
+            <button
+              type="button"
               onClick={() => void load()}
               className="inline-flex items-center gap-1 border border-[var(--color-line)] px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
             >
@@ -292,6 +343,44 @@ export default function AuditLogPage() {
           ip, and request id. rows are scoped to your tenant on the server; you can never see another
           workspace. exports respect the active filters and are capped per request to protect memory.
         </p>
+
+        {chain.kind === "loading" && (
+          <div className="panel rounded-[2px] p-3 font-mono text-[11px] text-[var(--color-muted)] flex items-center gap-2">
+            <ArrowsClockwise weight="duotone" size={12} className="animate-spin" />
+            verifying hash chain
+          </div>
+        )}
+        {chain.kind === "error" && (
+          <div className="panel rounded-[2px] border border-[var(--color-warn,#a55)] p-3 font-mono text-[11px] text-[var(--color-warn,#a55)] flex items-center gap-2">
+            <Warning weight="duotone" size={12} />
+            chain verify failed: {chain.status} {chain.message}
+          </div>
+        )}
+        {chain.kind === "ok" && (
+          <div
+            className={`panel rounded-[2px] p-3 font-mono text-[11px] flex flex-wrap items-center gap-3 ${chain.data.ok ? "text-[var(--color-phosphor)]" : "border border-[var(--color-warn,#a55)] text-[var(--color-warn,#a55)]"}`}
+          >
+            {chain.data.ok ? (
+              <>
+                <Check weight="duotone" size={14} />
+                <span>chain ok</span>
+              </>
+            ) : (
+              <>
+                <LinkSimpleBreak weight="duotone" size={14} />
+                <span>chain broken</span>
+              </>
+            )}
+            {chain.data.files.map((f) => (
+              <span key={f.path} className="text-[var(--color-dim)]">
+                {f.path.split("/").slice(-1)[0]}: {f.valid}/{f.entries} valid
+                {f.first_bad_line !== null && (
+                  <span className="text-[var(--color-warn,#a55)]"> line {f.first_bad_line} {f.reason}</span>
+                )}
+              </span>
+            ))}
+          </div>
+        )}
 
         <form
           onSubmit={onSubmit}
