@@ -476,6 +476,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Workspace invite domain allowlist */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">invite domains</span>
+            <a
+              href="/settings/invite-domains"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            pin which email domains can hold a seat. applies to manual invites, sso auto join, and scim provisioning. admin role plus MFA required.
+          </p>
+        </section>
+
         {/* Workspace embed origin allowlist */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

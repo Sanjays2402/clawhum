@@ -125,6 +125,16 @@ async def invite_member(request: Request, body: InviteBody) -> dict[str, Any]:
             },
         )
     except ValueError as exc:
+        from .. import invite_domains as _invd
+        if isinstance(exc, _invd.InviteDomainNotAllowedError):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "invite_domain_not_allowed",
+                    "message": str(exc),
+                    "email": exc.email,
+                },
+            )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     payload = member.public_dict()
     payload["invite_token"] = token

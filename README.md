@@ -2,6 +2,27 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace invite domain allowlist
+
+Enterprise procurement routinely requires that a workspace only ever grant seats to corporate identities, so a compromised admin cannot quietly invite a personal Gmail as a backdoor. Each workspace now carries an optional list of allowed email domains. When at least one rule is registered, every seat-granting path (manual `POST /members/invite`, `POST /members/accept`, SSO auto-join, SCIM-side provisioning) routes through the same allowlist and rejects out-of-policy emails with HTTP 422 `invite_domain_not_allowed`. An empty list means no restriction so existing tenants keep working unchanged. Subdomain matching is opt-in per rule (`include_subdomains=true`) and only relaxes the rule downward, so pinning `acme.com` lets `alice@us.acme.com` through but never `evil-acme.com`. Admins manage the list from [`/settings/invite-domains`](http://127.0.0.1:7452/settings/invite-domains) (admin role plus step-up MFA). Cross-tenant isolation, subdomain semantics, and the accept-time re-check are pinned by `tests/integration/test_invite_domains.py`.
+
+### Try it (invite domain allowlist)
+
+```sh
+export CLAWHUM_API_URL=http://127.0.0.1:7451
+
+# Pin the workspace to @acme.com (admin role + fresh TOTP required).
+curl -s -X POST $CLAWHUM_API_URL/v1/invite-domains \
+  -H 'X-API-Key: opskey' -H 'X-MFA-Code: 123456' \
+  -H 'content-type: application/json' \
+  -d '{"domain": "acme.com", "include_subdomains": true, "label": "corp"}'
+
+# Out-of-policy invites are rejected with HTTP 422.
+curl -s -X POST $CLAWHUM_API_URL/v1/members/invite \
+  -H 'X-API-Key: opskey' -H 'content-type: application/json' \
+  -d '{"email": "someone@gmail.com", "role": "member"}'
+```
+
 ## MFA step-up session (sudo mode)
 
 Once MFA is enrolled, every destructive admin call requires a fresh `X-MFA-Code`. That gate is correct but the UX of retyping a TOTP for every click pushes admins to disable MFA in practice. Sudo mode lets an admin exchange one TOTP for a short-lived `X-MFA-Session` token (default 5 minutes, server-capped to `mfa_session_max_ttl_seconds`, hard ceiling 1h) that stands in for the code on subsequent calls. The token is HMAC-SHA256 signed by a machine-local secret in the data directory, cryptographically bound to `(tenant_id, actor_id)` so a leaked token cannot replay against any other actor, and tied to a per-actor revocation epoch that is bumped on MFA disable, force-logout-all, or an explicit revoke. Issuance and revoke flow through the tamper-evident audit log. Cross-actor rejection, expiry, epoch revocation, and the `ttl=0` kill-switch are pinned by `tests/integration/test_mfa_session.py`. The workspace UI lives at `http://127.0.0.1:7452/settings/security/sudo`.

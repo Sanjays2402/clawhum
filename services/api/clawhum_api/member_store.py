@@ -240,6 +240,12 @@ def invite(
     if find_active_by_email(tenant_id, email) is not None:
         raise ValueError("email already invited or member of workspace")
 
+    # Per-workspace invite domain allowlist. Empty rule set is a no op
+    # so existing tenants keep working unchanged. Lazy import avoids a
+    # circular dependency at module load.
+    from . import invite_domains
+    invite_domains.assert_allowed(tenant_id, email)
+
     # Seat license check. Lazy import avoids a circular import:
     # seat_limit_store imports member_store.count_for_tenant.
     from . import seat_limit_store
@@ -298,6 +304,11 @@ def create_active(
     existing = find_active_by_email(tenant_id, email)
     if existing is not None:
         return existing
+    # Per-workspace invite domain allowlist also gates SSO auto-join so
+    # an admin cannot accidentally pre-authorise the wrong identity
+    # source. Empty rule set is a no op.
+    from . import invite_domains
+    invite_domains.assert_allowed(tenant_id, email)
     # Seat license check applies to fresh SSO auto-join seats. Existing
     # rows are exempt because they already hold a seat.
     from . import seat_limit_store
@@ -324,6 +335,11 @@ def accept(token: str, *, now: float | None = None) -> Member:
     m = lookup_by_token(token)
     if m is None:
         raise ValueError("invalid or expired invite token")
+    # Re-check the invite domain allowlist at accept time so a policy
+    # tightened after the invite was issued is still enforced. Empty
+    # rule set remains a no op for existing tenants.
+    from . import invite_domains
+    invite_domains.assert_allowed(m.tenant_id, m.email)
     now = time.time() if now is None else now
     accepted = Member(
         id=m.id,

@@ -44,6 +44,8 @@ const nextConfig = {
       { source: "/api/ip-allowlist/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/ip-allowlist/:id` },
       { source: "/api/embed-origins", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/embed-origins` },
       { source: "/api/embed-origins/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/embed-origins/:id` },
+      { source: "/api/invite-domains", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/invite-domains` },
+      { source: "/api/invite-domains/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/invite-domains/:id` },
       { source: "/api/sessions", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/sessions` },
       { source: "/api/sessions/policy", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/sessions/policy` },
       { source: "/api/sessions/revoke-all", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/sessions/revoke-all` },
