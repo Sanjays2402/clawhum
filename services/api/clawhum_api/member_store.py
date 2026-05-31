@@ -333,8 +333,38 @@ def accept(token: str, *, now: float | None = None) -> Member:
     return accepted
 
 
+class LastAdminError(ValueError):
+    """Raised when an operation would remove the last admin member.
+
+    Enterprise buyers reject any workspace model that can be orphaned
+    (no admin left, no human can rotate keys or invite anyone). Routes
+    surface this as HTTP 409 Conflict so the UI can show a specific
+    "promote someone else to admin first" message rather than the
+    generic 400 used for invalid input.
+    """
+
+
+def _active_admin_ids(tenant_id: str) -> list[str]:
+    """Ids of members who currently hold admin and have accepted their seat.
+
+    Pending invites do not count: an unaccepted invite cannot rotate a
+    key or invite anyone, so it does not protect against lockout. The
+    list is used by the last-admin guard in revoke and update_role.
+    """
+    return [
+        m.id for m in list_for_tenant(tenant_id)
+        if m.status == STATUS_ACTIVE and m.role == "admin"
+    ]
+
+
 def update_role(member_id: str, *, role: str, tenant_id: str) -> Member:
-    """Change a member's role. Refuses cross tenant moves."""
+    """Change a member's role. Refuses cross tenant moves.
+
+    Raises ``LastAdminError`` when the change would demote the only
+    remaining active admin member of the workspace, which would lock
+    the tenant out of every admin-gated route (invites, key rotation,
+    SSO config, residency).
+    """
     role = (role or "").strip().lower()
     if role not in ROLES:
         raise ValueError(f"invalid role: {role}")
@@ -343,6 +373,15 @@ def update_role(member_id: str, *, role: str, tenant_id: str) -> Member:
         raise ValueError("member not found")
     if m.status == STATUS_REVOKED:
         raise ValueError("cannot change role of revoked member")
+    if (
+        m.status == STATUS_ACTIVE
+        and m.role == "admin"
+        and role != "admin"
+        and _active_admin_ids(tenant_id) == [m.id]
+    ):
+        raise LastAdminError(
+            "cannot demote the last admin: promote another active member to admin first"
+        )
     updated = Member(
         id=m.id,
         tenant_id=m.tenant_id,
@@ -416,10 +455,22 @@ def revoke(member_id: str, *, tenant_id: str) -> Member:
     The row is appended with ``deleted=True`` so the on disk log stays
     immutable and auditors can replay the full lifecycle. List queries
     skip tombstones.
+
+    Raises ``LastAdminError`` when the target is the only remaining
+    active admin member of the workspace. Pending invites and revoked
+    rows are always safe to remove and bypass the guard.
     """
     m = get(member_id)
     if m is None or m.tenant_id != tenant_id:
         raise ValueError("member not found")
+    if (
+        m.status == STATUS_ACTIVE
+        and m.role == "admin"
+        and _active_admin_ids(tenant_id) == [m.id]
+    ):
+        raise LastAdminError(
+            "cannot revoke the last admin: promote another active member to admin first"
+        )
     tomb = Member(
         id=m.id,
         tenant_id=m.tenant_id,

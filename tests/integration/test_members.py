@@ -278,3 +278,87 @@ def test_resend_invite_revoked_rejected(monkeypatch, tmp_path):
             headers={"X-API-Key": "acmekey"},
         )
         assert r.status_code == 404
+
+
+def test_last_admin_cannot_be_demoted_or_revoked(monkeypatch, tmp_path):
+    """The workspace must never end up with zero active admin members.
+
+    Invite two members (an admin and a writer), accept both, and verify:
+      * demoting the only admin returns 409
+      * revoking the only admin returns 409
+      * once a second admin exists, the original admin can be demoted
+        and the new admin can revoke them
+      * the guard is per-tenant; another workspace's admin count is
+        irrelevant to this workspace.
+    """
+    with _client(monkeypatch, tmp_path) as c:
+        # Invite + accept first admin (alice) in acme.
+        r = c.post(
+            "/members/invite",
+            json={"email": "alice@acme.test", "role": "admin"},
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 201, r.text
+        alice_id = r.json()["id"]
+        alice_token = r.json()["invite_token"]
+        assert c.post("/members/accept", json={"token": alice_token}).status_code == 200
+
+        # Invite + accept a writer (bob) in acme; pending invites must
+        # not count toward the admin total.
+        r = c.post(
+            "/members/invite",
+            json={"email": "bob@acme.test", "role": "writer"},
+            headers={"X-API-Key": "acmekey"},
+        )
+        bob_id = r.json()["id"]
+        assert c.post(
+            "/members/accept", json={"token": r.json()["invite_token"]}
+        ).status_code == 200
+
+        # Also leave a pending admin invite around to prove pending
+        # invites are not counted as protection against lockout.
+        r = c.post(
+            "/members/invite",
+            json={"email": "ghost@acme.test", "role": "admin"},
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 201
+
+        # Demoting the only active admin must be refused with 409.
+        r = c.patch(
+            f"/members/{alice_id}",
+            json={"role": "writer"},
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 409, r.text
+        assert "last admin" in r.json()["detail"].lower()
+
+        # Revoking the only active admin must also be refused with 409.
+        r = c.delete(
+            f"/members/{alice_id}",
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 409
+
+        # Globex has zero active admin members; demoting acme's admin
+        # is still refused regardless of any other tenant's state.
+        # Promote bob to admin first, then alice can be demoted.
+        r = c.patch(
+            f"/members/{bob_id}",
+            json={"role": "admin"},
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 200
+        r = c.patch(
+            f"/members/{alice_id}",
+            json={"role": "writer"},
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 200
+
+        # Now bob is the only admin; revoking him must fail again.
+        r = c.delete(
+            f"/members/{bob_id}",
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 409

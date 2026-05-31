@@ -144,6 +144,8 @@ async def update_member_role(
     tenant = _guard_tenant(current_tenant_id(request))
     try:
         member = member_store.update_role(member_id, role=body.role, tenant_id=tenant)
+    except member_store.LastAdminError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return member.public_dict()
@@ -158,6 +160,8 @@ async def revoke_member(request: Request, member_id: str) -> None:
     tenant = _guard_tenant(current_tenant_id(request))
     try:
         member_store.revoke(member_id, tenant_id=tenant)
+    except member_store.LastAdminError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     return None
