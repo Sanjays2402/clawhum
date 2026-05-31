@@ -14,7 +14,7 @@ import {
   MagnifyingGlass,
   Check,
 } from "@phosphor-icons/react/dist/ssr";
-import { useApiKey } from "@/lib/apiKey";
+import { useApiKey, getApiKey } from "@/lib/apiKey";
 import { toast } from "@/lib/toast";
 
 interface ShareItem {
@@ -65,7 +65,10 @@ export default function SharesPage() {
     setLoading(true);
     setErr(null);
     try {
-      const r = await fetch("/api/share", { cache: "no-store" });
+      const headers: Record<string, string> = {};
+      const k = getApiKey();
+      if (k) headers["X-API-Key"] = k;
+      const r = await fetch("/api/share", { headers, cache: "no-store" });
       if (r.status === 401) {
         setErr("api key required. set one on the settings page.");
         setData(null);
@@ -131,8 +134,12 @@ export default function SharesPage() {
       if (!confirm(`revoke share ${id}? the public link will stop working.`)) return;
       setBusyId(id);
       try {
+        const headers: Record<string, string> = {};
+        const k = getApiKey();
+        if (k) headers["X-API-Key"] = k;
         const r = await fetch(`/api/share/${encodeURIComponent(id)}`, {
           method: "DELETE",
+          headers,
         });
         if (!r.ok) {
           const body = await r.text();
