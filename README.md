@@ -10,6 +10,21 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Audit log search and export
+
+Every mutating call already lands in the workspace audit log via middleware. `GET /audit` lets a workspace admin search that log without shell access to the JSONL files. Filters: free-text `q`, `actor`, HTTP `method`, `path` prefix, status range `status_min`/`status_max`, time window `since`/`until` (unix seconds), and `dry_run=only|exclude|any` to separate previews from real mutations. Results are newest first, paginated with `limit`+`offset`, and strictly scoped to the caller's tenant. `GET /audit/export?format=csv|json` returns the matching rows as a download for compliance reviewers (SOC2 CC7.2, ISO 27001 A.12.4, GDPR Art. 30). Reads require the `admin` role; the underlying file is never exposed. Reads walk rotated siblings (`audit.jsonl.1`...) so coverage stays complete across log rotation.
+
+### Try it (audit search)
+
+```bash
+# Show the last 25 admin actions in the calling workspace.
+curl 'http://127.0.0.1:7451/v1/audit?limit=25' -H "X-API-Key: $CLAWHUM_KEY"
+
+# All real (non-preview) DELETEs in the last 24h, as CSV.
+curl 'http://127.0.0.1:7451/v1/audit/export?format=csv&method=DELETE&dry_run=exclude&since='$(($(date +%s)-86400)) \
+  -H "X-API-Key: $CLAWHUM_KEY" -o audit-deletes-24h.csv
+```
+
 ## Bulk personal-access-token revocation
 
 When a personal access token leaks, you do not want to revoke 47 tokens one by one. `POST /keys/revoke-all` tombstones every PAT in the calling workspace in a single call, with cross-tenant isolation guaranteed by the store layer. By default the token that authenticated the request is preserved so the operator running incident response stays signed in; pass `{"include_self": true}` to revoke that one too. The endpoint requires the `writer` role and a fresh `X-MFA-Code` once the actor has enrolled TOTP. `?dry_run=true` returns the ids that would be revoked without writing. Every call flows through the global audit log, so reviewers can later see who pulled the plug, when, from which IP, and how many credentials were invalidated. The `/settings/keys` page exposes the same control behind a confirm dialog.
@@ -29,6 +44,23 @@ curl -X POST http://127.0.0.1:7451/v1/keys/revoke-all \
 ```
 
 UI: open http://127.0.0.1:7452/settings/keys and click `revoke all`.
+
+
+## Workspace audit log search and export
+
+Every mutating API call to a workspace already flows through `AuditLogMiddleware`, which appends a tenant scoped event (actor digest, method, path, status, client ip, request id, dry_run flag, duration) to a rotating JSONL store. Admins now get a first class read surface for that store: `GET /audit` returns a paginated, filterable view (search by actor, method, path prefix, status range, time window, dry-run only or excluded) and `GET /audit/export?format=csv|json` downloads everything matching the same filters for compliance review. Reads are tenant scoped on the server, walk every rotated sibling (`audit.jsonl.1`, `.2`, ...) so the view is complete across rotations, and return 403 to non admins. A workspace UI lives at `http://127.0.0.1:7452/settings/audit` with a search form, paginated table, and one click CSV/JSON download (the download uses an authed fetch then triggers a Blob save so the api key never lands in a query string). Cross tenant isolation is covered by `tests/integration/test_audit_query.py`, which seeds events for two workspaces and asserts each admin sees only their own rows on both the list and the export endpoints.
+
+### Try it (workspace audit log)
+
+```bash
+export CLAWHUM_KEY=sk_admin_yourkey
+curl 'http://127.0.0.1:7451/v1/audit?method=DELETE&status_min=400&limit=20' \
+  -H "X-API-Key: $CLAWHUM_KEY"
+curl 'http://127.0.0.1:7451/v1/audit/export?format=csv' \
+  -H "X-API-Key: $CLAWHUM_KEY" -o clawhum-audit.csv
+```
+
+UI: open http://127.0.0.1:7452/settings/audit and use the filters plus the `csv` / `json` download buttons.
 
 
 ## Workspace data retention policy
