@@ -415,6 +415,22 @@ export default function SettingsPage() {
         {/* Workspace data residency */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">
+            <span className="label-xs">workspace closure</span>
+            <a
+              href="/settings/workspace-closure"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            schedule a wind-down for this workspace. during the grace window every mutating request returns http 423 so customer data is preserved read only for export. after the deadline non-export reads return http 410. cancel any time before the deadline. admin role plus MFA required.
+          </p>
+        </section>
+
+        {/* Workspace data residency */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
             <span className="label-xs">legal hold</span>
             <a
               href="/settings/legal-holds"

@@ -8,6 +8,8 @@ GDPR Article 17 (right to erasure), CCPA §1798.105, and almost every enterprise
 
 ### Try it (workspace closure)
 
+UI: open [`/settings/workspace-closure`](http://127.0.0.1:7452/settings/workspace-closure) for the admin panel (status, countdown, schedule with grace presets, type-to-confirm, cancel). API:
+
 ```bash
 # schedule a closure with a 24h grace window (admin + MFA)
 curl -sS -X POST http://127.0.0.1:7451/workspace/closure \
