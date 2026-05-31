@@ -34,6 +34,26 @@ async def require_api_key(
         if pat_store.looks_like_pat(x_api_key):
             pat = pat_store.lookup_by_secret(x_api_key)
             if pat is not None:
+                # Per-workspace force-rotation policy: reject any PAT
+                # whose created_at exceeds max_pat_age_minutes with a
+                # deterministic 401 detail so SDKs can route the error
+                # to a "rotate this token" runbook. The token is not
+                # auto-revoked: the owner has to mint a fresh secret
+                # via rotate, which preserves the existing audit trail.
+                _policy = session_store.get_policy(
+                    pat.tenant_id or ANON_TENANT_ID
+                )
+                if session_store.pat_aged_out(
+                    created_at=pat.created_at, policy=_policy
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail=(
+                            "pat_aged_out: this personal access token "
+                            "exceeds the workspace max age policy; "
+                            "rotate it from /settings/keys"
+                        ),
+                    )
                 request.state.api_key_name = f"pat:{pat.name}"
                 request.state.api_key_roles = pat.roles
                 request.state.api_key_scopes = pat.effective_scopes()

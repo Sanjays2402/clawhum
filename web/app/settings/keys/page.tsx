@@ -44,6 +44,9 @@ interface KeyRow {
   prior_secret_expires_at?: number;
   rotation_active?: boolean;
   ip_cidrs?: string[];
+  max_age_minutes?: number;
+  age_seconds_remaining?: number | null;
+  aged_out?: boolean;
 }
 
 interface CreatedKey extends KeyRow {
@@ -718,6 +721,25 @@ export default function KeysPage() {
                         <ShieldCheck size={10} weight="bold" /> rotating
                       </span>
                     )}
+                    {row.aged_out && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded border border-red-500/50 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider text-red-500"
+                        title="This token exceeds the workspace max-age policy and is rejected with HTTP 401. Rotate to issue a fresh secret."
+                      >
+                        <Warning size={10} weight="bold" /> aged out
+                      </span>
+                    )}
+                    {!row.aged_out &&
+                      typeof row.age_seconds_remaining === "number" &&
+                      row.age_seconds_remaining > 0 &&
+                      row.age_seconds_remaining < 7 * 24 * 3600 && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider text-amber-500"
+                          title="This token will be rejected by the workspace max-age policy soon. Rotate before then."
+                        >
+                          <Warning size={10} weight="bold" /> rotate soon
+                        </span>
+                      )}
                   </div>
                   <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--color-muted)] font-mono uppercase tracking-wider">
                     <span>roles: {row.roles.join(", ") || "reader"}</span>

@@ -82,6 +82,11 @@ class KeyView(BaseModel):
     prior_secret_expires_at: float = 0.0
     rotation_active: bool = False
     ip_cidrs: list[str] = Field(default_factory=list)
+    # Force-rotation policy state (populated from active workspace
+    # SessionPolicy on read). 0 / None mean the policy is unset.
+    max_age_minutes: int = 0
+    age_seconds_remaining: int | None = None
+    aged_out: bool = False
 
 
 class KeyCreateResponse(KeyView):

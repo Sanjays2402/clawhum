@@ -100,6 +100,13 @@ class SessionPolicy:
     # tighter cap measured in minutes that overrides the global default
     # when minting new PATs in this workspace.
     max_pat_lifetime_minutes: int = 0
+    # 0 means "never force rotation"; positive integer is the maximum
+    # number of minutes a personal access token may live since its
+    # ``created_at`` before the auth layer rejects it with HTTP 401 and
+    # forces the owner to rotate. SOC2 / ISO 27001 "credentials must
+    # be rotated at least every N days" control, enforced even on PATs
+    # that were minted with a longer (or zero) ``expires_at``.
+    max_pat_age_minutes: int = 0
     updated_at: float = 0.0
 
     def to_dict(self) -> dict:
@@ -190,6 +197,7 @@ def _load_policies_locked() -> dict[str, SessionPolicy]:
                     idle_timeout_minutes=max(0, int(rec.get("idle_timeout_minutes", 0) or 0)),
                     absolute_max_minutes=max(0, int(rec.get("absolute_max_minutes", 0) or 0)),
                     max_pat_lifetime_minutes=max(0, int(rec.get("max_pat_lifetime_minutes", 0) or 0)),
+                    max_pat_age_minutes=max(0, int(rec.get("max_pat_age_minutes", 0) or 0)),
                     updated_at=float(rec.get("updated_at", 0.0) or 0.0),
                 )
     _POLICY_CACHE = out
@@ -220,6 +228,7 @@ def set_policy(
     idle_timeout_minutes: int,
     absolute_max_minutes: int,
     max_pat_lifetime_minutes: int,
+    max_pat_age_minutes: int = 0,
 ) -> SessionPolicy:
     if not tenant_id:
         raise ValueError("tenant_id required")
@@ -229,6 +238,7 @@ def set_policy(
     idle = max(0, min(int(idle_timeout_minutes or 0), cap))
     absolute = max(0, min(int(absolute_max_minutes or 0), cap))
     pat_cap = max(0, min(int(max_pat_lifetime_minutes or 0), cap))
+    pat_age = max(0, min(int(max_pat_age_minutes or 0), cap))
     if absolute and idle and idle > absolute:
         raise ValueError("idle_timeout_minutes cannot exceed absolute_max_minutes")
     policy = SessionPolicy(
@@ -236,6 +246,7 @@ def set_policy(
         idle_timeout_minutes=idle,
         absolute_max_minutes=absolute,
         max_pat_lifetime_minutes=pat_cap,
+        max_pat_age_minutes=pat_age,
         updated_at=time.time(),
     )
     with _LOCK:
@@ -421,6 +432,39 @@ def reset_cache_for_tests() -> None:
         _SESSIONS_CACHE_PATH = None
         _POLICY_CACHE = None
         _POLICY_CACHE_PATH = None
+
+
+def pat_age_seconds_remaining(
+    *,
+    created_at: float,
+    policy: SessionPolicy,
+    now: float | None = None,
+) -> float | None:
+    """Seconds left before ``created_at`` ages out under ``policy``.
+
+    Returns ``None`` when the workspace has not set ``max_pat_age_minutes``
+    (no forced rotation). Returns a negative number when the PAT is
+    already aged out. The auth layer treats <= 0 as a hard reject; the
+    UI treats 0 < value < grace_window as a "rotate soon" badge.
+    """
+    if policy.max_pat_age_minutes <= 0:
+        return None
+    now = time.time() if now is None else now
+    age = now - max(0.0, float(created_at))
+    return policy.max_pat_age_minutes * 60 - age
+
+
+def pat_aged_out(
+    *,
+    created_at: float,
+    policy: SessionPolicy,
+    now: float | None = None,
+) -> bool:
+    """True when a PAT minted at ``created_at`` exceeds the workspace max age."""
+    remaining = pat_age_seconds_remaining(
+        created_at=created_at, policy=policy, now=now
+    )
+    return remaining is not None and remaining <= 0
 
 
 def cap_pat_expiry(tenant_id: str, requested_expires_at: float, now: float | None = None) -> float:

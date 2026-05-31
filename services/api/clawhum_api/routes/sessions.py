@@ -52,6 +52,7 @@ class PolicyOut(BaseModel):
     idle_timeout_minutes: int
     absolute_max_minutes: int
     max_pat_lifetime_minutes: int
+    max_pat_age_minutes: int
     updated_at: float
 
 
@@ -59,6 +60,7 @@ class PolicyIn(BaseModel):
     idle_timeout_minutes: int = Field(ge=0, le=60 * 24 * 365 * 5)
     absolute_max_minutes: int = Field(ge=0, le=60 * 24 * 365 * 5)
     max_pat_lifetime_minutes: int = Field(ge=0, le=60 * 24 * 365 * 5)
+    max_pat_age_minutes: int = Field(default=0, ge=0, le=60 * 24 * 365 * 5)
 
 
 class RevokeAllBody(BaseModel):
@@ -100,6 +102,7 @@ def _to_policy_out(p: session_store.SessionPolicy) -> PolicyOut:
         idle_timeout_minutes=p.idle_timeout_minutes,
         absolute_max_minutes=p.absolute_max_minutes,
         max_pat_lifetime_minutes=p.max_pat_lifetime_minutes,
+        max_pat_age_minutes=p.max_pat_age_minutes,
         updated_at=p.updated_at,
     )
 
@@ -143,6 +146,7 @@ async def put_policy(body: PolicyIn, tenant_id: str = Depends(current_tenant)) -
             idle_timeout_minutes=body.idle_timeout_minutes,
             absolute_max_minutes=body.absolute_max_minutes,
             max_pat_lifetime_minutes=body.max_pat_lifetime_minutes,
+            max_pat_age_minutes=body.max_pat_age_minutes,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

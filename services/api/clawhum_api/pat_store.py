@@ -365,7 +365,12 @@ def rotate(
         "name": current.name,
         "roles": sorted(current.roles),
         "rpm": current.rpm,
-        "created_at": current.created_at,
+        # created_at is reset on rotation so the workspace
+        # max_pat_age_minutes force-rotation policy treats a freshly
+        # rotated token as freshly minted. Without this, rotating
+        # would not satisfy a SOC2 "rotate every N days" control
+        # because the new secret would inherit the old age.
+        "created_at": now,
         "last_used_at": current.last_used_at,
         "secret_hash": hash_secret(new_secret),
         "secret_hint": new_secret[-4:],
@@ -502,6 +507,19 @@ def touch_last_used(
 
 
 def public_view(p: PAT) -> dict[str, Any]:
+    # Surface workspace force-rotation policy state for this PAT so
+    # /settings/keys can badge tokens that are about to age out or
+    # already rejected by auth. Computed on read, never stored.
+    try:
+        from . import sessions as _sessions
+        _policy = _sessions.get_policy(p.tenant_id or "")
+        _remaining = _sessions.pat_age_seconds_remaining(
+            created_at=p.created_at, policy=_policy
+        )
+    except Exception:
+        _policy = None
+        _remaining = None
+    _aged = _remaining is not None and _remaining <= 0
     return {
         "id": p.id,
         "name": p.name,
@@ -520,6 +538,13 @@ def public_view(p: PAT) -> dict[str, Any]:
         "prior_secret_expires_at": p.prior_secret_expires_at,
         "rotation_active": p.prior_secret_active(),
         "ip_cidrs": sorted(p.ip_cidrs),
+        "max_age_minutes": (
+            _policy.max_pat_age_minutes if _policy is not None else 0
+        ),
+        "age_seconds_remaining": (
+            None if _remaining is None else max(int(_remaining), -1)
+        ),
+        "aged_out": _aged,
     }
 
 

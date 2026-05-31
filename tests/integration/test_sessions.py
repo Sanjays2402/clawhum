@@ -168,3 +168,99 @@ def test_workspace_policy_caps_pat_lifetime(monkeypatch, tmp_path):
     import time as _t
     horizon = _t.time() + 60 * 60 + 5  # cap + small clock slack
     assert 0 < body["expires_at"] <= horizon, body
+
+
+def test_max_pat_age_policy_rejects_aged_tokens(monkeypatch, tmp_path):
+    """A PAT older than the workspace ``max_pat_age_minutes`` is
+    rejected at auth with HTTP 401 and a deterministic detail string,
+    even when its own ``expires_at`` would still permit it. Rotating
+    the token resets the clock so the rotated secret authenticates.
+    """
+    c = _client(monkeypatch, tmp_path, "alpha:sk_admin:9999:admin:acme")
+    hdr = {"X-API-Key": "sk_admin", **_HDR_UA}
+
+    pat_resp = c.post(
+        "/keys",
+        json={"name": "old-ci", "roles": ["reader"], "expires_in_days": 365},
+        headers=hdr,
+    )
+    assert pat_resp.status_code == 200, pat_resp.text
+    pat_secret = pat_resp.json()["secret"]
+    pat_id = pat_resp.json()["id"]
+
+    # Backdate created_at by appending a record with an older timestamp.
+    # The PAT store is an append-only JSONL last-writer-wins log.
+    from clawhum_api import pat_store
+    rec = pat_store.lookup_by_secret(pat_secret)
+    assert rec is not None
+    aged_created = rec.created_at - 2 * 3600
+    p = pat_store._path()  # type: ignore[attr-defined]
+    import json
+    p.write_text(
+        p.read_text()
+        + json.dumps(
+            {
+                "id": rec.id,
+                "name": rec.name,
+                "tenant_id": rec.tenant_id,
+                "roles": sorted(rec.roles),
+                "rpm": rec.rpm,
+                "secret_hash": rec.secret_hash,
+                "secret_hint": rec.secret_hint,
+                "scopes": sorted(rec.scopes),
+                "expires_at": rec.expires_at,
+                "ip_cidrs": sorted(rec.ip_cidrs),
+                "last_used_at": rec.last_used_at,
+                "last_used_ip": rec.last_used_ip,
+                "last_used_ua": rec.last_used_ua,
+                "prior_secret_hash": rec.prior_secret_hash,
+                "prior_secret_hint": rec.prior_secret_hint,
+                "prior_secret_expires_at": rec.prior_secret_expires_at,
+                "created_at": aged_created,
+            }
+        )
+        + "\n",
+    )
+
+    # Pre-policy the aged token still works (no max_pat_age set).
+    pre = c.get("/me", headers={"X-API-Key": pat_secret, **_HDR_UA})
+    assert pre.status_code == 200, pre.text
+
+    # Set workspace policy: force-rotate after 60 minutes.
+    r = c.put(
+        "/sessions/policy",
+        json={
+            "idle_timeout_minutes": 0,
+            "absolute_max_minutes": 0,
+            "max_pat_lifetime_minutes": 0,
+            "max_pat_age_minutes": 60,
+        },
+        headers=hdr,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["max_pat_age_minutes"] == 60
+
+    post = c.get("/me", headers={"X-API-Key": pat_secret, **_HDR_UA})
+    assert post.status_code == 401, post.text
+    assert "pat_aged_out" in post.json().get("detail", ""), post.json()
+
+    # Admin API key (not a PAT) is unaffected by the PAT max-age rule.
+    assert c.get("/me", headers=hdr).status_code == 200
+
+    # /keys listing surfaces the aged_out flag for the UI badge.
+    listing = c.get("/keys", headers=hdr)
+    assert listing.status_code == 200, listing.text
+    rows = listing.json()
+    aged_rows = [row for row in rows if row["id"] == pat_id]
+    assert aged_rows and aged_rows[0]["aged_out"] is True
+    assert aged_rows[0]["max_age_minutes"] == 60
+
+    # Rotation refreshes created_at so the new secret authenticates.
+    rot = c.post(
+        f"/keys/{pat_id}/rotate",
+        json={"grace_minutes": 0},
+        headers=hdr,
+    )
+    assert rot.status_code == 200, rot.text
+    new_secret = rot.json()["secret"]
+    assert c.get("/me", headers={"X-API-Key": new_secret, **_HDR_UA}).status_code == 200
