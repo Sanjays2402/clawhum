@@ -1546,6 +1546,24 @@ before it ever runs in cluster. Findings from Trivy and Bandit appear
 under the repository's Security tab, and the SPDX SBOM artifact can be
 fed into downstream license and dependency review tooling.
 
+## Pause and resume webhook deliveries
+
+ClawHum is a hum-to-track search service with workspace-scoped enterprise controls. Admins can now suspend a webhook's outbound deliveries without deleting it or rotating its receiver-side secret, then resume when the incident is over. Calling `POST /webhooks/{id}/pause` flips the endpoint to inactive: the dispatcher skips it on every event, no HTTP request leaves the box, and the hook stays listed with its full id, URL, events, secret hint, and delivery history intact. `POST /webhooks/{id}/resume` re-enables it. Both routes require the `admin` role and, when the actor has enrolled TOTP, a fresh `X-MFA-Code`. State changes are recorded in the workspace audit log, support dry-run via `X-Dry-Run: true`, and are strictly tenant-scoped: a key from another workspace gets `404` rather than disclosing the hook's existence.
+
+Manage pause and resume from the workspace UI at [`/webhooks`](http://127.0.0.1:7452/webhooks), or from the API:
+
+### Try it (pause a webhook)
+
+```bash
+# Suspend deliveries during an incident; config and history are preserved.
+curl -X POST http://127.0.0.1:7452/api/webhooks/<hook_id>/pause \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+
+# Re-enable when ready.
+curl -X POST http://127.0.0.1:7452/api/webhooks/<hook_id>/resume \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+```
+
 ## Project structure
 
 ```

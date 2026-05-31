@@ -148,6 +148,8 @@ def _public_view(rec: dict[str, Any]) -> dict[str, Any]:
         "previous_secret_hint": prev_hint,
         "previous_secret_expires_at": prev_exp or None,
         "rotated_at": rec.get("rotated_at") or None,
+        "paused_at": rec.get("paused_at") or None,
+        "resumed_at": rec.get("resumed_at") or None,
     }
 
 
@@ -174,6 +176,8 @@ class WebhookListItem(BaseModel):
     previous_secret_hint: str | None = None
     previous_secret_expires_at: float | None = None
     rotated_at: float | None = None
+    paused_at: float | None = None
+    resumed_at: float | None = None
 
 
 class RotateSecretBody(BaseModel):
@@ -300,6 +304,100 @@ async def delete_webhook(
     }
     _append_hook(tomb)
     return {"ok": True, "id": hook_id}
+
+
+class PauseResponse(BaseModel):
+    id: str
+    active: bool
+    paused_at: float | None = None
+    resumed_at: float | None = None
+
+
+def _set_active(hook_id: str, tenant_id: str, request: Request, active: bool) -> dict[str, Any]:
+    """Toggle a webhook's active flag via a new append-only record.
+
+    Inactive webhooks are skipped by the dispatcher (see ``deliver_event``)
+    while preserving id, URL, events, secret hash, and delivery history,
+    so an admin can suspend an endpoint during an incident without losing
+    its config or rotating its receiver-side secret.
+    """
+    if not hook_id.isalnum() or len(hook_id) > 32:
+        raise HTTPException(404, "not found")
+    current = {r["id"]: r for r in _live_hooks(tenant_id)}
+    hook = current.get(hook_id)
+    if hook is None:
+        raise HTTPException(404, "not found")
+    if bool(hook.get("active", True)) == active:
+        # Idempotent: report current state without writing a new record.
+        return {
+            "id": hook_id,
+            "active": active,
+            "paused_at": hook.get("paused_at"),
+            "resumed_at": hook.get("resumed_at"),
+        }
+    from ..dry_run import is_dry_run, preview
+    if is_dry_run(request):
+        return preview(
+            "webhook_pause" if not active else "webhook_resume",
+            hook_id,
+            tenant_id=tenant_id,
+            url=hook["url"],
+        )
+    now = time.time()
+    rec = dict(hook)
+    rec["active"] = active
+    if active:
+        rec["resumed_at"] = now
+    else:
+        rec["paused_at"] = now
+    _append_hook(rec)
+    return {
+        "id": hook_id,
+        "active": active,
+        "paused_at": rec.get("paused_at"),
+        "resumed_at": rec.get("resumed_at"),
+    }
+
+
+@router.post(
+    "/webhooks/{hook_id}/pause",
+    response_model=PauseResponse,
+    dependencies=[
+        Depends(require_api_key),
+        Depends(require_roles("admin")),
+        Depends(require_mfa()),
+    ],
+)
+async def pause_webhook(
+    hook_id: str,
+    request: Request,
+    tenant_id: str = Depends(current_tenant),
+) -> dict[str, Any]:
+    """Suspend deliveries to a webhook without deleting it.
+
+    Inactive hooks stay listed and keep their delivery history; the
+    dispatcher (``deliver_event``) filters them out so no outbound
+    request is made until ``/resume`` is called.
+    """
+    return _set_active(hook_id, tenant_id, request, active=False)
+
+
+@router.post(
+    "/webhooks/{hook_id}/resume",
+    response_model=PauseResponse,
+    dependencies=[
+        Depends(require_api_key),
+        Depends(require_roles("admin")),
+        Depends(require_mfa()),
+    ],
+)
+async def resume_webhook(
+    hook_id: str,
+    request: Request,
+    tenant_id: str = Depends(current_tenant),
+) -> dict[str, Any]:
+    """Re-enable deliveries to a previously paused webhook."""
+    return _set_active(hook_id, tenant_id, request, active=True)
 
 
 @router.post(

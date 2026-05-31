@@ -15,6 +15,8 @@ import {
   XCircle,
   ClockClockwise,
   Warning,
+  Pause,
+  Play,
 } from "@phosphor-icons/react/dist/ssr";
 
 interface WebhookItem {
@@ -27,6 +29,8 @@ interface WebhookItem {
   previous_secret_hint?: string | null;
   previous_secret_expires_at?: number | null;
   rotated_at?: number | null;
+  paused_at?: number | null;
+  resumed_at?: number | null;
 }
 
 interface RotateResponse {
@@ -132,6 +136,31 @@ export default function WebhooksPage() {
       alert(`delete failed: ${e?.message || String(e)}`);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function setPaused(id: string, paused: boolean) {
+    const verb = paused ? "pause" : "resume";
+    const tag = `${verb}:${id}`;
+    setActionBusy(tag);
+    setActionMsg(null);
+    try {
+      const r = await fetch(`/api/webhooks/${id}/${verb}`, { method: "POST" });
+      if (!r.ok) {
+        const txt = await r.text();
+        throw new Error(`http ${r.status}${txt ? `: ${txt.slice(0, 200)}` : ""}`);
+      }
+      setActionMsg({
+        kind: "ok",
+        text: paused
+          ? "webhook paused. deliveries are suspended until you resume it."
+          : "webhook resumed. deliveries will fire on the next matching event.",
+      });
+      await reload();
+    } catch (e: any) {
+      setActionMsg({ kind: "err", text: `${verb} failed: ${e?.message || String(e)}` });
+    } finally {
+      setActionBusy(prev => (prev === tag ? null : prev));
     }
   }
 
@@ -397,6 +426,12 @@ export default function WebhooksPage() {
                     <div className="mt-1 font-mono text-[10px] text-[var(--color-dim)] uppercase tracking-widest">
                       id {w.id} · created {fmtTs(w.created_at * 1000)} · events {w.events.join(",")} · secret {w.secret_hint}
                     </div>
+                    {!w.active && (
+                      <div className="mt-1 font-mono text-[10px] text-[var(--color-amber)] uppercase tracking-widest inline-flex items-center gap-1">
+                        <Pause size={10} weight="duotone" />
+                        paused{w.paused_at ? ` at ${fmtTs(w.paused_at * 1000)}` : ""}. deliveries suspended.
+                      </div>
+                    )}
                     {w.previous_secret_hint && w.previous_secret_expires_at && (
                       <div className="mt-1 font-mono text-[10px] text-[var(--color-amber)] uppercase tracking-widest inline-flex items-center gap-1">
                         <Key size={10} weight="duotone" />
@@ -426,6 +461,18 @@ export default function WebhooksPage() {
                       title="Generate a new signing secret with an optional overlap window"
                     >
                       <Key size={12} weight="duotone" /> rotate
+                    </button>
+                    <button
+                      onClick={() => setPaused(w.id, w.active)}
+                      disabled={actionBusy === `pause:${w.id}` || actionBusy === `resume:${w.id}`}
+                      className="border border-[var(--color-line)] px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-panel)] disabled:opacity-30 inline-flex items-center gap-1"
+                      title={w.active ? "Suspend deliveries without deleting this endpoint" : "Re-enable deliveries"}
+                    >
+                      {w.active ? (
+                        <><Pause size={12} weight="duotone" /> {actionBusy === `pause:${w.id}` ? "pausing" : "pause"}</>
+                      ) : (
+                        <><Play size={12} weight="duotone" /> {actionBusy === `resume:${w.id}` ? "resuming" : "resume"}</>
+                      )}
                     </button>
                     <button
                       onClick={() => remove(w.id)}
