@@ -428,6 +428,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Workspace data retention */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">data retention</span>
+            <a
+              href="/settings/retention"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            cap how long history, feedback, audit, and webhook delivery rows live in this workspace. reads filter expired rows immediately; enforce hard deletes them. preview with dry run first. admin role plus MFA required to change or sweep.
+          </p>
+        </section>
+
         {/* Workspace data residency */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

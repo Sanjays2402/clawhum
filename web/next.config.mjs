@@ -68,6 +68,8 @@ const nextConfig = {
       { source: "/api/legal-holds", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/legal-holds` },
       { source: "/api/legal-holds/status", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/legal-holds/status` },
       { source: "/api/legal-holds/:id/release", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/legal-holds/:id/release` },
+      { source: "/api/retention", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/retention` },
+      { source: "/api/retention/enforce", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/retention/enforce` },
       { source: "/api/admin/scim/token", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/admin/scim/token` },
       { source: "/api/v1/privacy/export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/export` },
       { source: "/api/v1/privacy/workspace-export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/workspace-export` },

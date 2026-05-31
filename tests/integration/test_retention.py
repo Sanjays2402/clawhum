@@ -150,3 +150,20 @@ def test_non_admin_cannot_read_or_change(monkeypatch, tmp_path):
         headers={"X-API-Key": "sk_member"},
     )
     assert w.status_code == 403
+
+
+def test_dry_run_preview_returns_all_ui_categories(monkeypatch, tmp_path):
+    """Pin the JSON shape consumed by /settings/retention preview UI.
+
+    The page renders one row per category from the ``removed`` map, so
+    every category key must be present even when the per-category TTL
+    is zero. Empty policy must report all zeros without 5xxing.
+    """
+    c = _client(monkeypatch, tmp_path, "ops:sk_admin:9999:admin:acme")
+    r = c.post("/retention/enforce?dry_run=true", headers={"X-API-Key": "sk_admin"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert set(body["removed"].keys()) == {"history", "feedback", "audit", "webhook_deliveries"}
+    assert all(v == 0 for v in body["removed"].values())
+    assert body["tenant_id"] == "acme"
+    assert isinstance(body["ran_at"], (int, float))

@@ -4,6 +4,28 @@ Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local
 
 ![landing](docs/screenshots/landing.png)
 
+## Data retention policy UI
+
+Enterprise contracts pin a maximum lifetime on every category of stored data, but a CLI-only retention API forces ops teams to script what should be a one-click setting. Each workspace now has a [`/settings/retention`](http://127.0.0.1:7452/settings/retention) console that reads the live policy, edits per-category TTLs for match history, feedback, audit log, and webhook deliveries, previews a sweep with `dry_run=true` (no rows touched, counts only), and runs a real enforce with admin role plus a fresh TOTP code. Reads filter expired rows immediately so the policy takes effect before disk is rewritten. The dry-run preview returns the same `{removed: {history, feedback, audit, webhook_deliveries}}` shape as a real enforce so the UI can render the impact before the destructive button is pressed, and a confirm dialog gates the irreversible call. Cross-tenant isolation, admin-only access, and the dry-run preview shape are pinned by `tests/integration/test_retention.py`.
+
+### Try it (retention)
+
+```bash
+# View the active policy for your workspace.
+curl -s -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  http://127.0.0.1:7451/retention | jq
+
+# Preview a sweep without touching disk.
+curl -s -X POST -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  'http://127.0.0.1:7451/retention/enforce?dry_run=true' | jq
+
+# Set a 90 day history TTL (admin + MFA).
+curl -s -X PUT -H "X-API-Key: $CLAWHUM_ADMIN_KEY" -H "X-MFA-Code: 123456" \
+  -H 'Content-Type: application/json' \
+  -d '{"history_days":90,"feedback_days":365,"audit_days":2555,"webhook_deliveries_days":30}' \
+  http://127.0.0.1:7451/retention | jq
+```
+
 ## Per-token source IP history
 
 Every successful authentication with a personal access token records the resolved source IP, with first and last seen timestamps, an incrementing count, and the most recent user agent. Workspace admins can list the distinct IP timeline for any token they own to triage a suspected credential leak. Cross workspace lookups return 404, never 403, so token ids cannot be enumerated across tenants.
