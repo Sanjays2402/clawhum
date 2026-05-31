@@ -31,6 +31,7 @@ from .routes import webhooks as webhooks_routes
 from .routes import activity as activity_routes
 from .routes import collections as collections_routes
 from .routes import keys as keys_routes
+from .routes import ip_allowlist as ip_allowlist_routes
 from .state import AppState
 from .tenant import TenantScopeMiddleware
 from .usage import UsageRecorderMiddleware
@@ -46,6 +47,8 @@ async def _lifespan(app: FastAPI):
     from .api_keys import get_registry, reset_registry_cache
     reset_registry_cache()
     registry = get_registry()
+    from . import ip_allowlist as _ip_allowlist
+    _ip_allowlist.reset_cache()
     app.state.clawhum = AppState.boot(prefer_clap=False)  # default to fallback at startup; reindex can flip
     log.info("clawhum_boot", version=__version__,
              tracks=len(app.state.clawhum.tracks),
@@ -114,6 +117,7 @@ def create_app() -> FastAPI:
     app.include_router(activity_routes.router)
     app.include_router(collections_routes.router)
     app.include_router(keys_routes.router)
+    app.include_router(ip_allowlist_routes.router)
     # Stable, version-pinned public API surface. The same routers are
     # mounted again under /v1 so integrators can target a URL we will not
     # break, while existing unversioned routes stay alive for the web UI.
@@ -127,6 +131,7 @@ def create_app() -> FastAPI:
     app.include_router(usage_routes.router, prefix="/v1")
     app.include_router(webhooks_routes.router, prefix="/v1")
     app.include_router(keys_routes.router, prefix="/v1")
+    app.include_router(ip_allowlist_routes.router, prefix="/v1")
     app.include_router(library_routes.router, prefix="/v1")
     app.include_router(metrics_router)
     register_app_collector(app)

@@ -32,6 +32,23 @@ curl -H "X-API-Key: $CLAWHUM_API_KEY" \
   "http://127.0.0.1:7451/v1/tracks?q=bach&sort=duration&order=desc&limit=10"
 ```
 
+## Try it (workspace IP allowlist)
+
+Lock workspace API access to a list of trusted CIDR ranges. Admins manage the rules at `http://127.0.0.1:7452/settings/ip-allowlist`; the API enforces them on every authenticated request from that workspace. An empty rule set means "no restriction" so the feature is strictly opt-in, and rules are tenant-scoped so two workspaces sharing the same deployment cannot see or affect each other's lists.
+
+```bash
+# add a rule (admin key required)
+curl -X POST http://127.0.0.1:7451/v1/ip-allowlist \
+  -H "X-API-Key: $CLAWHUM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"cidr": "10.0.0.0/8", "label": "office vpn"}'
+
+# list current rules and see the IP the API observed for you
+curl -H "X-API-Key: $CLAWHUM_API_KEY" http://127.0.0.1:7451/v1/ip-allowlist
+```
+
+When the calling IP does not match any rule the API returns `403 ip <addr> not in workspace allowlist`. Enforcement honors the first hop in `X-Forwarded-For` when present, so make sure your ingress strips untrusted client headers before they reach the API.
+
 ## Try it (browser notifications)
 
 `http://127.0.0.1:7452/settings/notifications` registers the browser `Notification` permission for the tab, then opts you into one or more event kinds: a saved match landing in history, or a webhook attempt out of `/v1/hooks`. A background poller hits `/api/activity` every 30 seconds, diffs against a per-device cursor, and fires a real OS-level notification for anything new whose kind you turned on. Optional 250 ms WebAudio cue. Recent firings are logged in-app so you can audit what the engine actually delivered.

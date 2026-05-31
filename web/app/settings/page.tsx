@@ -316,6 +316,22 @@ export default function SettingsPage() {
 
         <PrivacySection />
 
+        {/* Workspace IP allowlist */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">workspace ip allowlist</span>
+            <a
+              href="/settings/ip-allowlist"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            restrict workspace api access to a list of trusted cidr ranges. admin role required.
+          </p>
+        </section>
+
         {/* Onboarding controls */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

@@ -35,6 +35,15 @@ class Settings(BaseSettings):
     usage_path: Path = Path("./data/usage.jsonl")
     webhooks_path: Path = Path("./data/webhooks.jsonl")
     pat_path: Path = Path("./data/personal_access_tokens.jsonl")
+    ip_allowlist_path: Path = Path("./data/ip_allowlist.jsonl")
+    ip_allowlist_enabled: bool = Field(
+        default=True,
+        description=(
+            "When true, tenants with at least one IP allowlist rule must "
+            "originate requests from a matching CIDR. Empty rule sets are "
+            "always allowed so the feature is opt-in per tenant."
+        ),
+    )
     webhook_deliveries_path: Path = Path("./data/webhook_deliveries.jsonl")
     webhook_timeout_sec: float = 5.0
     webhook_max_attempts: int = 3
