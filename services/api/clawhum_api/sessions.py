@@ -107,6 +107,13 @@ class SessionPolicy:
     # be rotated at least every N days" control, enforced even on PATs
     # that were minted with a longer (or zero) ``expires_at``.
     max_pat_age_minutes: int = 0
+    # 0 means "no idle revocation"; positive integer is the maximum
+    # number of minutes a personal access token may sit unused
+    # (measured from ``last_used_at``, or ``created_at`` if never
+    # used) before the auth layer rejects it with HTTP 401 and forces
+    # the owner to delete or rotate. SOC2 CC6.1 / ISO 27001 A.9.2.6
+    # "deactivate unused credentials" control.
+    max_pat_idle_minutes: int = 0
     updated_at: float = 0.0
 
     def to_dict(self) -> dict:
@@ -198,6 +205,7 @@ def _load_policies_locked() -> dict[str, SessionPolicy]:
                     absolute_max_minutes=max(0, int(rec.get("absolute_max_minutes", 0) or 0)),
                     max_pat_lifetime_minutes=max(0, int(rec.get("max_pat_lifetime_minutes", 0) or 0)),
                     max_pat_age_minutes=max(0, int(rec.get("max_pat_age_minutes", 0) or 0)),
+                    max_pat_idle_minutes=max(0, int(rec.get("max_pat_idle_minutes", 0) or 0)),
                     updated_at=float(rec.get("updated_at", 0.0) or 0.0),
                 )
     _POLICY_CACHE = out
@@ -229,6 +237,7 @@ def set_policy(
     absolute_max_minutes: int,
     max_pat_lifetime_minutes: int,
     max_pat_age_minutes: int = 0,
+    max_pat_idle_minutes: int = 0,
 ) -> SessionPolicy:
     if not tenant_id:
         raise ValueError("tenant_id required")
@@ -239,6 +248,7 @@ def set_policy(
     absolute = max(0, min(int(absolute_max_minutes or 0), cap))
     pat_cap = max(0, min(int(max_pat_lifetime_minutes or 0), cap))
     pat_age = max(0, min(int(max_pat_age_minutes or 0), cap))
+    pat_idle = max(0, min(int(max_pat_idle_minutes or 0), cap))
     if absolute and idle and idle > absolute:
         raise ValueError("idle_timeout_minutes cannot exceed absolute_max_minutes")
     policy = SessionPolicy(
@@ -247,6 +257,7 @@ def set_policy(
         absolute_max_minutes=absolute,
         max_pat_lifetime_minutes=pat_cap,
         max_pat_age_minutes=pat_age,
+        max_pat_idle_minutes=pat_idle,
         updated_at=time.time(),
     )
     with _LOCK:
@@ -463,6 +474,49 @@ def pat_aged_out(
     """True when a PAT minted at ``created_at`` exceeds the workspace max age."""
     remaining = pat_age_seconds_remaining(
         created_at=created_at, policy=policy, now=now
+    )
+    return remaining is not None and remaining <= 0
+
+
+def pat_idle_seconds_remaining(
+    *,
+    last_used_at: float,
+    created_at: float,
+    policy: SessionPolicy,
+    now: float | None = None,
+) -> float | None:
+    """Seconds left before this PAT trips the workspace idle policy.
+
+    Returns ``None`` when the workspace has not set
+    ``max_pat_idle_minutes`` (no idle revocation). For tokens that have
+    never been used, the clock runs from ``created_at`` so a token
+    that is minted and then forgotten still gets revoked. A negative
+    return means the token is already idle-revoked; the auth layer
+    treats <= 0 as a hard reject.
+    """
+    if policy.max_pat_idle_minutes <= 0:
+        return None
+    now = time.time() if now is None else now
+    anchor = float(last_used_at) if last_used_at and last_used_at > 0 else float(created_at)
+    if anchor <= 0:
+        anchor = now
+    idle_for = now - anchor
+    return policy.max_pat_idle_minutes * 60 - idle_for
+
+
+def pat_idle_revoked(
+    *,
+    last_used_at: float,
+    created_at: float,
+    policy: SessionPolicy,
+    now: float | None = None,
+) -> bool:
+    """True when this PAT is past the workspace idle window."""
+    remaining = pat_idle_seconds_remaining(
+        last_used_at=last_used_at,
+        created_at=created_at,
+        policy=policy,
+        now=now,
     )
     return remaining is not None and remaining <= 0
 

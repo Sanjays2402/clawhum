@@ -146,6 +146,24 @@ curl -X PUT http://127.0.0.1:8000/sessions/policy \
 curl -i http://127.0.0.1:8000/me -H "X-API-Key: pat_<aged_secret>"
 ```
 
+## Revoke idle PATs (max-idle policy)
+
+SOC2 CC6.1 and ISO 27001 A.9.2.6 both require that unused credentials are deactivated within a defined window. Workspace admins can set `max_pat_idle_minutes` in the session policy to auto-revoke any personal access token whose `last_used_at` (or `created_at`, if it has never been used) is older than N minutes. Idle tokens are rejected at auth with `HTTP 401 pat_idle_revoked` and the `/settings/keys` console badges them (`idle soon`, `idle revoked`). The owner can mint a replacement to satisfy the policy; the existing token is not silently resurrected by a probe. Coverage: `tests/integration/test_sessions.py::test_max_pat_idle_policy_revokes_unused_tokens`.
+
+### Try it (revoke idle PATs)
+
+```bash
+# Revoke any PAT that has gone unused for 30 days.
+curl -X PUT http://127.0.0.1:8000/sessions/policy \
+  -H "X-API-Key: sk_admin" -H "Content-Type: application/json" \
+  -d '{"idle_timeout_minutes":0,"absolute_max_minutes":0,"max_pat_lifetime_minutes":0,"max_pat_age_minutes":0,"max_pat_idle_minutes":43200}'
+
+# Stale PATs return 401 with detail starting with "pat_idle_revoked".
+curl -i http://127.0.0.1:8000/me -H "X-API-Key: pat_<stale_secret>"
+```
+
+Local UI: <http://127.0.0.1:3000/settings/sessions>.
+
 ![landing](docs/screenshots/landing.png)
 
 ## Webhook egress IP disclosure

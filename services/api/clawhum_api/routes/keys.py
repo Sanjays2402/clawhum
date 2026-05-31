@@ -87,6 +87,10 @@ class KeyView(BaseModel):
     max_age_minutes: int = 0
     age_seconds_remaining: int | None = None
     aged_out: bool = False
+    # Idle / unused credential revocation policy state.
+    max_idle_minutes: int = 0
+    idle_seconds_remaining: int | None = None
+    idle_revoked: bool = False
 
 
 class KeyCreateResponse(KeyView):

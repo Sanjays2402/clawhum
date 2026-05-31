@@ -55,6 +55,7 @@ interface PolicyRow {
   absolute_max_minutes: number;
   max_pat_lifetime_minutes: number;
   max_pat_age_minutes: number;
+  max_pat_idle_minutes: number;
   updated_at: number;
 }
 
@@ -96,7 +97,7 @@ export default function SessionsPage() {
   const [mfa, setMfa] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [banner, setBanner] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
-  const [draft, setDraft] = useState({ idle: 0, absolute: 0, patCap: 0, patAge: 0 });
+  const [draft, setDraft] = useState({ idle: 0, absolute: 0, patCap: 0, patAge: 0, patIdle: 0 });
 
   const refreshList = useCallback(async () => {
     setList({ kind: "loading" });
@@ -128,6 +129,7 @@ export default function SessionsPage() {
         absolute: data.absolute_max_minutes,
         patCap: data.max_pat_lifetime_minutes,
         patAge: data.max_pat_age_minutes,
+        patIdle: data.max_pat_idle_minutes,
       });
     } catch (e: unknown) {
       setPolicy({ kind: "error", status: 0, message: e instanceof Error ? e.message : "network error" });
@@ -155,6 +157,7 @@ export default function SessionsPage() {
           absolute_max_minutes: Math.max(0, Math.floor(draft.absolute)),
           max_pat_lifetime_minutes: Math.max(0, Math.floor(draft.patCap)),
           max_pat_age_minutes: Math.max(0, Math.floor(draft.patAge)),
+          max_pat_idle_minutes: Math.max(0, Math.floor(draft.patIdle)),
         }),
       });
       if (!r.ok) {
@@ -277,7 +280,7 @@ export default function SessionsPage() {
               <span>Could not load policy: {policy.message}</span>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-5">
               <label className="block">
                 <span className="text-xs font-medium text-neutral-700">
                   Idle timeout (minutes)
@@ -346,7 +349,24 @@ export default function SessionsPage() {
                   0 = never force rotation. Aged tokens return HTTP 401.
                 </span>
               </label>
-              <div className="sm:col-span-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <label className="block">
+                <span className="text-xs font-medium text-neutral-700">
+                  Revoke PAT if unused for (minutes)
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  value={draft.patIdle}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, patIdle: Number(e.target.value) }))
+                  }
+                  className="mt-1 block w-full rounded-md border border-neutral-200 px-2.5 py-1.5 text-sm focus:border-neutral-400 focus:outline-none"
+                />
+                <span className="mt-1 block text-[11px] text-neutral-500">
+                  0 = never revoke. Idle tokens return HTTP 401.
+                </span>
+              </label>
+              <div className="sm:col-span-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                 <label className="block sm:max-w-xs">
                   <span className="text-xs font-medium text-neutral-700">
                     MFA code (if enrolled)

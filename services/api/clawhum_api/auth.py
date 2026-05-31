@@ -54,6 +54,24 @@ async def require_api_key(
                             "rotate it from /settings/keys"
                         ),
                     )
+                if session_store.pat_idle_revoked(
+                    last_used_at=pat.last_used_at,
+                    created_at=pat.created_at,
+                    policy=_policy,
+                ):
+                    # Idle / unused credential revocation. SOC2 CC6.1
+                    # "deactivate unused credentials" control. Token
+                    # is not auto-deleted: the owner has to mint a
+                    # replacement (which preserves the audit trail).
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail=(
+                            "pat_idle_revoked: this personal access "
+                            "token has been unused longer than the "
+                            "workspace idle policy allows; mint a new "
+                            "token from /settings/keys"
+                        ),
+                    )
                 request.state.api_key_name = f"pat:{pat.name}"
                 request.state.api_key_roles = pat.roles
                 request.state.api_key_scopes = pat.effective_scopes()

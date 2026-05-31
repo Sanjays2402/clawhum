@@ -47,6 +47,9 @@ interface KeyRow {
   max_age_minutes?: number;
   age_seconds_remaining?: number | null;
   aged_out?: boolean;
+  max_idle_minutes?: number;
+  idle_seconds_remaining?: number | null;
+  idle_revoked?: boolean;
 }
 
 interface CreatedKey extends KeyRow {
@@ -729,6 +732,25 @@ export default function KeysPage() {
                         <Warning size={10} weight="bold" /> aged out
                       </span>
                     )}
+                    {row.idle_revoked && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded border border-red-500/50 bg-red-500/10 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider text-red-500"
+                        title="This token has been unused longer than the workspace idle policy allows and is rejected with HTTP 401. Mint a new token or delete this one."
+                      >
+                        <Warning size={10} weight="bold" /> idle revoked
+                      </span>
+                    )}
+                    {!row.idle_revoked &&
+                      typeof row.idle_seconds_remaining === "number" &&
+                      row.idle_seconds_remaining > 0 &&
+                      row.idle_seconds_remaining < 24 * 3600 && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider text-amber-500"
+                          title="This token is approaching the workspace idle-revocation cutoff. Use it or rotate it."
+                        >
+                          <Warning size={10} weight="bold" /> idle soon
+                        </span>
+                      )}
                     {!row.aged_out &&
                       typeof row.age_seconds_remaining === "number" &&
                       row.age_seconds_remaining > 0 &&

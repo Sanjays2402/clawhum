@@ -540,10 +540,17 @@ def public_view(p: PAT) -> dict[str, Any]:
         _remaining = _sessions.pat_age_seconds_remaining(
             created_at=p.created_at, policy=_policy
         )
+        _idle_remaining = _sessions.pat_idle_seconds_remaining(
+            last_used_at=p.last_used_at,
+            created_at=p.created_at,
+            policy=_policy,
+        )
     except Exception:
         _policy = None
         _remaining = None
+        _idle_remaining = None
     _aged = _remaining is not None and _remaining <= 0
+    _idle_revoked = _idle_remaining is not None and _idle_remaining <= 0
     return {
         "id": p.id,
         "name": p.name,
@@ -569,6 +576,13 @@ def public_view(p: PAT) -> dict[str, Any]:
             None if _remaining is None else max(int(_remaining), -1)
         ),
         "aged_out": _aged,
+        "max_idle_minutes": (
+            _policy.max_pat_idle_minutes if _policy is not None else 0
+        ),
+        "idle_seconds_remaining": (
+            None if _idle_remaining is None else max(int(_idle_remaining), -1)
+        ),
+        "idle_revoked": _idle_revoked,
     }
 
 

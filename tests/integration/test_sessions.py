@@ -264,3 +264,134 @@ def test_max_pat_age_policy_rejects_aged_tokens(monkeypatch, tmp_path):
     assert rot.status_code == 200, rot.text
     new_secret = rot.json()["secret"]
     assert c.get("/me", headers={"X-API-Key": new_secret, **_HDR_UA}).status_code == 200
+
+
+def test_max_pat_idle_policy_revokes_unused_tokens(monkeypatch, tmp_path):
+    """A PAT whose ``last_used_at`` is older than the workspace
+    ``max_pat_idle_minutes`` is rejected at auth with HTTP 401 and a
+    deterministic ``pat_idle_revoked`` detail. A token that has never
+    been used falls back to ``created_at``; tokens that are actively
+    in use stay authenticated. Cross-tenant isolation: tenant B's
+    idle policy does not affect tenant A's tokens.
+    """
+    c = _client(
+        monkeypatch,
+        tmp_path,
+        "alpha:sk_admin_a:9999:admin:acme,beta:sk_admin_b:9999:admin:globex",
+    )
+    hdr_a = {"X-API-Key": "sk_admin_a", **_HDR_UA}
+    hdr_b = {"X-API-Key": "sk_admin_b", **_HDR_UA}
+
+    # Mint two PATs in tenant acme: one we will exercise as "active",
+    # one we will leave alone (and then backdate) as "idle".
+    active_resp = c.post(
+        "/keys",
+        json={"name": "active-ci", "roles": ["reader"], "expires_in_days": 365},
+        headers=hdr_a,
+    )
+    assert active_resp.status_code == 200, active_resp.text
+    active_secret = active_resp.json()["secret"]
+
+    idle_resp = c.post(
+        "/keys",
+        json={"name": "stale-ci", "roles": ["reader"], "expires_in_days": 365},
+        headers=hdr_a,
+    )
+    assert idle_resp.status_code == 200, idle_resp.text
+    idle_secret = idle_resp.json()["secret"]
+    idle_id = idle_resp.json()["id"]
+
+    # Mint a PAT in tenant globex so we can prove the idle policy
+    # change in tenant acme does not bleed across.
+    other_resp = c.post(
+        "/keys",
+        json={"name": "globex-ci", "roles": ["reader"], "expires_in_days": 365},
+        headers=hdr_b,
+    )
+    assert other_resp.status_code == 200, other_resp.text
+    other_secret = other_resp.json()["secret"]
+
+    # Backdate the idle PAT so both created_at and (absent)
+    # last_used_at look very old, simulating a token nobody has
+    # touched in over a day. The PAT store is append-only JSONL.
+    from clawhum_api import pat_store
+    rec = pat_store.lookup_by_secret(idle_secret)
+    assert rec is not None
+    aged_created = rec.created_at - 25 * 3600
+    p = pat_store._path()  # type: ignore[attr-defined]
+    import json as _json
+    p.write_text(
+        p.read_text()
+        + _json.dumps(
+            {
+                "id": rec.id,
+                "name": rec.name,
+                "tenant_id": rec.tenant_id,
+                "roles": sorted(rec.roles),
+                "rpm": rec.rpm,
+                "secret_hash": rec.secret_hash,
+                "secret_hint": rec.secret_hint,
+                "scopes": sorted(rec.scopes),
+                "expires_at": rec.expires_at,
+                "ip_cidrs": sorted(rec.ip_cidrs),
+                "last_used_at": 0.0,
+                "last_used_ip": rec.last_used_ip,
+                "last_used_ua": rec.last_used_ua,
+                "prior_secret_hash": rec.prior_secret_hash,
+                "prior_secret_hint": rec.prior_secret_hint,
+                "prior_secret_expires_at": rec.prior_secret_expires_at,
+                "created_at": aged_created,
+            }
+        )
+        + "\n",
+    )
+
+    # Pre-policy both tokens work.
+    assert c.get("/me", headers={"X-API-Key": active_secret, **_HDR_UA}).status_code == 200
+    # Do NOT exercise the idle_secret here: that would bump its
+    # last_used_at to now and defeat the backdate.
+
+    # Set acme idle policy: 24h. The backdated token is 25h stale.
+    r = c.put(
+        "/sessions/policy",
+        json={
+            "idle_timeout_minutes": 0,
+            "absolute_max_minutes": 0,
+            "max_pat_lifetime_minutes": 0,
+            "max_pat_age_minutes": 0,
+            "max_pat_idle_minutes": 24 * 60,
+        },
+        headers=hdr_a,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["max_pat_idle_minutes"] == 24 * 60
+
+    # Active token still authenticates (its last_used_at was just bumped).
+    ok = c.get("/me", headers={"X-API-Key": active_secret, **_HDR_UA})
+    assert ok.status_code == 200, ok.text
+
+    # Stale token is now revoked with the deterministic detail.
+    bad = c.get("/me", headers={"X-API-Key": idle_secret, **_HDR_UA})
+    assert bad.status_code == 401, bad.text
+    assert "pat_idle_revoked" in bad.json().get("detail", ""), bad.json()
+
+    # Admin X-API-Key (not a PAT) is unaffected.
+    assert c.get("/me", headers=hdr_a).status_code == 200
+
+    # Cross-tenant isolation: tenant B PAT keeps working because B
+    # never set an idle policy.
+    assert c.get("/me", headers={"X-API-Key": other_secret, **_HDR_UA}).status_code == 200
+
+    # /keys listing surfaces idle_revoked + max_idle_minutes for the UI badge.
+    listing = c.get("/keys", headers=hdr_a)
+    assert listing.status_code == 200, listing.text
+    rows = listing.json()
+    stale_rows = [row for row in rows if row["id"] == idle_id]
+    assert stale_rows
+    assert stale_rows[0]["idle_revoked"] is True
+    assert stale_rows[0]["max_idle_minutes"] == 24 * 60
+
+    # Tenant B's /sessions/policy still reports zero idle.
+    rb = c.get("/sessions/policy", headers=hdr_b)
+    assert rb.status_code == 200
+    assert rb.json()["max_pat_idle_minutes"] == 0
