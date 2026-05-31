@@ -10,6 +10,15 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Try it (in-app notifications)
+
+ClawHum now has a global toast notification system so you find out the moment a long-running action finishes, even if you switched tabs. A match completion toasts the top hit with a one-click `open details` action that jumps straight to `/matches/<query_id>`. Batch jobs toast `batch complete` with the ok/failed counts as soon as the server returns. Share links toast the copied URL with an `open` action. Errors stick around longer than successes so they survive a glance away from the screen. The toast region is rendered with an ARIA live region so screen readers announce it, and the stack caps at 5 so the UI never gets buried. The whole thing is dependency free and lives in `web/lib/toast.ts` plus `web/components/Toaster.tsx`, mounted once in the root layout.
+
+```bash
+# unit tests for the toast store
+cd web && npx tsx --test tests/toast.test.ts
+```
+
 ## Try it (pricing page)
 
 ClawHum now ships a real pricing page at `http://127.0.0.1:7452/pricing` with three tiers (Free, Studio, Label), monthly quotas, a feature matrix, and an accessible FAQ. The free plan CTA drops users straight into the capture page. Paid CTAs open Stripe Payment Links when `NEXT_PUBLIC_STRIPE_LINK_STUDIO` / `NEXT_PUBLIC_STRIPE_LINK_LABEL` are set at build time, and fall back to a real `mailto:` so customers can always reach you. The existing usage page "upgrade" buttons now route here instead of dead ending in settings.

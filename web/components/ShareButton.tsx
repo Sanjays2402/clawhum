@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ShareNetwork, Check, Copy, Warning } from "@phosphor-icons/react/dist/ssr";
 import type { StoredMatch } from "@/lib/history";
+import { toast } from "@/lib/toast";
 
 type State =
   | { kind: "idle" }
@@ -43,8 +44,14 @@ export default function ShareButton({ match }: Props) {
         typeof window !== "undefined" ? `${window.location.origin}${path}` : path;
       await copyToClipboard(url);
       setState({ kind: "ready", url, copied: true });
+      toast.success("share link copied", {
+        description: url,
+        action: { label: "open", onClick: () => window.open(url, "_blank", "noopener,noreferrer") },
+      });
     } catch (e: any) {
-      setState({ kind: "error", message: e?.message || String(e) });
+      const msg = e?.message || String(e);
+      setState({ kind: "error", message: msg });
+      toast.error("share failed", { description: msg.slice(0, 200) });
     }
   }
 
@@ -52,6 +59,7 @@ export default function ShareButton({ match }: Props) {
     if (state.kind !== "ready") return;
     await copyToClipboard(state.url);
     setState({ ...state, copied: true });
+    toast.info("link copied", { description: state.url, durationMs: 2500 });
     setTimeout(() => {
       setState((s) => (s.kind === "ready" ? { ...s, copied: false } : s));
     }, 1400);

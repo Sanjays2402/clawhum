@@ -29,6 +29,7 @@ import {
   ArrowsClockwise,
 } from "@phosphor-icons/react/dist/ssr";
 import { API_BASE } from "@/lib/api";
+import { toast } from "@/lib/toast";
 
 interface BatchMatch {
   track_id: string;
@@ -119,12 +120,20 @@ export default function BatchPage() {
           a.click();
           a.remove();
           URL.revokeObjectURL(url);
+          toast.success("batch csv downloaded", {
+            description: `${file.name} / ${fmtBytes(file.size)}`,
+          });
         } else {
           const j = (await r.json()) as BatchResponse;
           setResult(j);
+          toast.success("batch complete", {
+            description: `${j.ok}/${j.count} ok, ${j.failed} failed`,
+          });
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        toast.error("batch failed", { description: msg.slice(0, 200) });
       } finally {
         setLoading(false);
       }

@@ -5,6 +5,7 @@ import TransportBar from "@/components/TransportBar";
 import SiteNav from "@/components/SiteNav";
 import ApiKeyProvider from "@/components/ApiKeyProvider";
 import PWAInstaller from "@/components/PWAInstaller";
+import Toaster from "@/components/Toaster";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -54,6 +55,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div className="min-h-screen flex flex-col">
           <ApiKeyProvider />
           <PWAInstaller />
+          <Toaster />
           <TransportBar />
           <SiteNav />
           <main className="flex-1">{children}</main>

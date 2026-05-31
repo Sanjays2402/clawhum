@@ -9,6 +9,7 @@ import OnboardingTour from "@/components/OnboardingTour";
 import { markOnboardingStep } from "@/components/OnboardingTour";
 import { swrFetcher, type Stats, type MatchResponse, extractQueryPitch } from "@/lib/api";
 import { downsampleFloat, saveMatch } from "@/lib/history";
+import { toast } from "@/lib/toast";
 
 export default function Home() {
   const router = useRouter();
@@ -64,8 +65,23 @@ export default function Home() {
       markOnboardingStep("tried");
       markOnboardingStep("viewed");
       markOnboardingStep("saved");
+      const top = j.results[0];
+      toast.success(
+        top ? `match: ${top.title}` : "match complete",
+        {
+          description: top
+            ? `${top.artist} / score ${top.score.toFixed(2)} / ${j.elapsed_ms}ms`
+            : `no candidates above threshold / ${j.elapsed_ms}ms`,
+          action: {
+            label: "open details",
+            onClick: () => router.push(`/matches/${j.query_id}`),
+          },
+        },
+      );
     } catch (e: any) {
-      setErr(e?.message || String(e));
+      const msg = e?.message || String(e);
+      setErr(msg);
+      toast.error("match failed", { description: msg.slice(0, 200) });
     } finally {
       setLoading(false);
     }
