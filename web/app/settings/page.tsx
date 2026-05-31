@@ -14,6 +14,7 @@ import {
 } from "@phosphor-icons/react/dist/ssr";
 import { getApiKey, maskKey, setApiKey, useApiKey } from "@/lib/apiKey";
 import { resetOnboarding } from "@/components/OnboardingTour";
+import PrivacySection from "@/components/PrivacySection";
 
 interface MeResponse {
   tenant_id: string;
@@ -312,6 +313,8 @@ export default function SettingsPage() {
             </p>
           )}
         </section>
+
+        <PrivacySection />
 
         {/* Onboarding controls */}
         <section className="panel rounded-[2px] p-4 space-y-2">

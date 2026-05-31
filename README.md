@@ -10,6 +10,20 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Try it (privacy controls in settings)
+
+ClawHum now exposes the GDPR data lifecycle endpoints directly inside `http://127.0.0.1:7452/settings` under a new "privacy & data" panel. `download json` calls `GET /v1/privacy/export` with the saved API key, summarises the audit and feedback row counts inline, and saves a timestamped `clawhum-export-YYYYMMDD-HHMMSS.json` to the browser. `erase my data` asks the user to type `ERASE` to confirm, then issues `DELETE /v1/privacy/me`, redacts every audit event and feedback row tied to the caller's actor id, and reports the counts back in the UI. Loading, error, and success states each have their own rendered shape and the destructive button stays disabled until the confirmation token matches. Pure helpers live in `web/lib/privacy.ts` with unit tests in `web/tests/privacy.test.ts`.
+
+```bash
+# export every audit + feedback row tied to your key
+curl -s -H "X-API-Key: $CLAWHUM_API_KEY" \
+  http://127.0.0.1:7451/v1/privacy/export | jq '.audit_event_count, .feedback_row_count'
+
+# redact them (cannot be undone)
+curl -s -X DELETE -H "X-API-Key: $CLAWHUM_API_KEY" \
+  http://127.0.0.1:7451/v1/privacy/me
+```
+
 ## Try it (in-app notifications)
 
 ClawHum now has a global toast notification system so you find out the moment a long-running action finishes, even if you switched tabs. A match completion toasts the top hit with a one-click `open details` action that jumps straight to `/matches/<query_id>`. Batch jobs toast `batch complete` with the ok/failed counts as soon as the server returns. Share links toast the copied URL with an `open` action. Errors stick around longer than successes so they survive a glance away from the screen. The toast region is rendered with an ARIA live region so screen readers announce it, and the stack caps at 5 so the UI never gets buried. The whole thing is dependency free and lives in `web/lib/toast.ts` plus `web/components/Toaster.tsx`, mounted once in the root layout.
