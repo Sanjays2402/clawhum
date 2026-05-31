@@ -433,6 +433,10 @@ async def delete_history(hid: str, request: Request) -> dict[str, Any]:
     rec = _collapse(tenant_id).get(hid)
     if rec is None:
         raise HTTPException(404, "not found")
+    from ..dry_run import is_dry_run, preview
+    if is_dry_run(request):
+        return preview("history", hid, tenant_id=tenant_id,
+                       query=rec.get("query"), starred=bool(rec.get("starred")))
     tomb = {
         "id": hid,
         "tenant_id": tenant_id,

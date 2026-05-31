@@ -10,6 +10,25 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Try it (sandbox dry-run for destructive calls)
+
+Every `DELETE` endpoint now accepts `?dry_run=true` (or the header `X-Dry-Run: 1`). The server runs the full auth, tenant scoping, and RBAC stack, then returns a structured preview of what would be removed without mutating storage. Audit log entries record `dry_run: true` so reviewers can tell previews apart from real mutations. A workspace UI lives at `/settings/sandbox` for interactive previews.
+
+```bash
+# Preview deleting a saved history row. Nothing is removed.
+curl -X DELETE "http://127.0.0.1:7452/api/history/<hid>?dry_run=true" \
+  -H "X-API-Key: $CLAWHUM_API_KEY"
+# => {"dry_run": true,
+#     "would_delete": {"kind": "history", "id": "<hid>", "query": "...", "starred": false},
+#     "tenant_id": "tenant-a"}
+
+# Same contract on the privacy erasure endpoint, with a warning attached.
+curl -X DELETE "http://127.0.0.1:7452/api/v1/privacy/me?dry_run=true" \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+```
+
+Supported resources: `/history/{id}`, `/collections/{id}`, `/history/views/{id}`, `/share/{id}`, `/webhooks/{id}`, `/keys/{id}`, `/ip-allowlist/{id}`, `/v1/privacy/me`. Cross-tenant previews still return 404, never a leak.
+
 ## Try it (embed a shared match anywhere)
 
 Every public `/r/<id>` share now ships an embeddable iframe view at `/r/<id>/embed`. The share page exposes a copy-ready snippet with width and height controls, and the page itself advertises the iframe via an oEmbed 1.0 discovery link, so pasting the share URL into WordPress, Notion, Slack, or any oEmbed-aware editor auto-renders a clawhum card. Read-only, no auth, safe to load cross origin.

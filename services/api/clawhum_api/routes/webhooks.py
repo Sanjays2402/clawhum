@@ -242,6 +242,7 @@ async def list_webhooks(
 )
 async def delete_webhook(
     hook_id: str,
+    request: Request,
     tenant_id: str = Depends(current_tenant),
 ) -> dict[str, Any]:
     if not hook_id.isalnum() or len(hook_id) > 32:
@@ -249,6 +250,11 @@ async def delete_webhook(
     current = {r["id"]: r for r in _live_hooks(tenant_id)}
     if hook_id not in current:
         raise HTTPException(404, "not found")
+    from ..dry_run import is_dry_run, preview
+    if is_dry_run(request):
+        return preview("webhook", hook_id, tenant_id=tenant_id,
+                       url=current[hook_id]["url"],
+                       events=current[hook_id].get("events", []))
     tomb = {
         "id": hook_id,
         "tenant_id": tenant_id,

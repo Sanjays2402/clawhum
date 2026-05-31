@@ -319,6 +319,22 @@ export default function SettingsPage() {
         {/* Workspace IP allowlist */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">
+            <span className="label-xs">sandbox / dry run</span>
+            <a
+              href="/settings/sandbox"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              open
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            preview any destructive call before it runs. every DELETE endpoint accepts ?dry_run=true and returns what would be removed without touching storage.
+          </p>
+        </section>
+
+        {/* Workspace IP allowlist */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
             <span className="label-xs">workspace ip allowlist</span>
             <a
               href="/settings/ip-allowlist"

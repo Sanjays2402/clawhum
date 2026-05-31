@@ -97,6 +97,13 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
 )
 async def revoke_key(key_id: str, request: Request) -> dict[str, Any]:
     tenant = current_tenant_id(request)
+    from ..dry_run import is_dry_run, preview
+    if is_dry_run(request):
+        existing = next((p for p in pat_store.live_for_tenant(tenant) if p.id == key_id), None)
+        if existing is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="key not found")
+        return preview("api_key", key_id, tenant_id=tenant,
+                       name=existing.name, roles=sorted(existing.roles))
     ok = pat_store.revoke(tenant_id=tenant, pat_id=key_id)
     if not ok:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="key not found")

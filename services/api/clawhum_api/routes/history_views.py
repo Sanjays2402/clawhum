@@ -233,13 +233,18 @@ async def patch_view(view_id: str, body: ViewPatchBody, request: Request) -> Vie
     "/history/views/{view_id}",
     dependencies=[Depends(require_api_key)],
 )
-async def delete_view(view_id: str, request: Request) -> dict[str, bool]:
+async def delete_view(view_id: str, request: Request) -> dict[str, Any]:
     if not _valid_id(view_id):
         raise HTTPException(400, "invalid id")
     tenant_id = getattr(request.state, "tenant_id", "anonymous")
     rows = _collapse(tenant_id)
     if view_id not in rows:
         raise HTTPException(404, "view not found")
+    from ..dry_run import is_dry_run, preview
+    if is_dry_run(request):
+        rec = rows[view_id]
+        return preview("history_view", view_id, tenant_id=tenant_id,
+                       name=rec.get("name"))
     tombstone = {
         "id": view_id,
         "tenant_id": tenant_id,

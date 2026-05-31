@@ -243,6 +243,11 @@ async def delete_collection(cid: str, request: Request) -> dict[str, Any]:
         raise HTTPException(404, "not found")
     if rec.get("tenant_id") != tenant_id:
         raise HTTPException(404, "not found")
+    from ..dry_run import is_dry_run, preview
+    if is_dry_run(request):
+        return preview("collection", cid, tenant_id=tenant_id,
+                       title=rec.get("title"),
+                       item_count=len(rec.get("items") or []))
     tomb = {
         "id": cid,
         "tenant_id": tenant_id,

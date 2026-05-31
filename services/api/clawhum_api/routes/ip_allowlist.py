@@ -76,12 +76,17 @@ async def create_rule(body: RuleCreate, tenant_id: str = Depends(current_tenant)
 
 @router.delete(
     "/{rule_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_roles("admin"))],
 )
-async def delete_rule(rule_id: str, tenant_id: str = Depends(current_tenant)) -> None:
-    if not ip_allowlist.delete_rule(tenant_id, rule_id):
-        # Treat unknown ids as not-found rather than leaking whether the
-        # id exists in some other tenant.
+async def delete_rule(rule_id: str, request: Request, tenant_id: str = Depends(current_tenant)):
+    from ..dry_run import is_dry_run, preview
+    from fastapi.responses import JSONResponse, Response
+    existing = next((r for r in ip_allowlist.list_rules(tenant_id) if r.id == rule_id), None)
+    if existing is None:
         raise HTTPException(status_code=404, detail="rule not found")
-    return None
+    if is_dry_run(request):
+        return JSONResponse(preview("ip_allowlist_rule", rule_id, tenant_id=tenant_id,
+                                    cidr=existing.cidr, label=existing.label))
+    if not ip_allowlist.delete_rule(tenant_id, rule_id):
+        raise HTTPException(status_code=404, detail="rule not found")
+    return Response(status_code=204)

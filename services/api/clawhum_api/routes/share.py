@@ -269,6 +269,10 @@ async def revoke_share(share_id: str, request: Request) -> dict[str, Any]:
     if rec.get("tenant_id") != tenant_id:
         # Don't leak existence: report as missing rather than 403.
         raise HTTPException(404, "not found")
+    from ..dry_run import is_dry_run, preview
+    if is_dry_run(request):
+        return preview("share", share_id, tenant_id=tenant_id,
+                       url_path=f"/r/{share_id}")
     tomb = {
         "id": share_id,
         "tenant_id": tenant_id,

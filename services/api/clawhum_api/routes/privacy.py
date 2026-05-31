@@ -81,6 +81,20 @@ async def delete_my_data(
     """
     actor = actor_id_for(x_api_key or None)
     tenant_id = current_tenant_id(request)
+    from ..dry_run import is_dry_run, preview
+    if is_dry_run(request):
+        events = collect_events(actor, _audit_path())
+        feedback_rows = scope_rows(
+            read_feedback(get_settings().feedback_path), tenant_id
+        )
+        return JSONResponse(preview(
+            "privacy_erasure", None,
+            tenant_id=tenant_id,
+            actor=actor,
+            would_redact_audit_events=len(events),
+            would_redact_feedback_rows=len(feedback_rows),
+            warnings=["This is irreversible. Re-run without dry_run to apply."],
+        ))
     count = redact_actor(actor, _audit_path())
     feedback_redacted = redact_tenant_feedback(tenant_id, get_settings().feedback_path)
     return JSONResponse({

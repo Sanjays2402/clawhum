@@ -144,6 +144,7 @@ class AuditLogMiddleware(BaseHTTPMiddleware):
                     "client_ip": request.client.host if request.client else None,
                     "user_agent": request.headers.get("user-agent"),
                     "duration_ms": round((time.time() - started) * 1000, 2),
+                    "dry_run": bool(getattr(request.state, "dry_run", False)),
                 }
                 # Honor a test override path if the app set one.
                 override = os.environ.get("CLAWHUM_AUDIT_LOG_PATH")
