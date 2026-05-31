@@ -367,6 +367,32 @@ curl -X POST http://127.0.0.1:7452/api/webhooks/<hook_id>/rotate-secret \
 
 The webhook list (`GET /webhooks`) exposes `secret_hint`, `previous_secret_hint`, `previous_secret_expires_at`, and `rotated_at` so operators can see at a glance which endpoints are mid-rotation and when the overlap window closes.
 
+## Pause and resume webhook deliveries
+
+ClawHum is a hum-to-track search service with workspace-scoped enterprise controls. Webhook endpoints can be paused without deleting them, so an admin can stop outbound deliveries during a receiver-side incident, debug a misbehaving subscriber, or freeze traffic while rolling a downstream change, then resume later with the original id, URL, signing secret, and full delivery history intact. The dispatcher skips paused hooks, so `/webhooks/{id}/deliveries` shows no new rows while the endpoint is paused. Pause and resume require the `admin` role plus a fresh `X-MFA-Code` when the actor has enrolled TOTP, every mutation is recorded in the workspace audit log, and the routes are tenant scoped (a key from another workspace gets `404`, never `403`, to avoid id enumeration).
+
+Manage pause state from the workspace UI at `/webhooks`, or from the API.
+
+### Try it (pause and resume a webhook)
+
+```bash
+# Suspend deliveries to a webhook (admin role, MFA if enrolled).
+curl -X POST http://127.0.0.1:7452/api/webhooks/<hook_id>/pause \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+# => {"id":"<hook_id>","active":false,"paused_at":1780248962.81,"resumed_at":null}
+
+# Confirm the dispatcher is skipping it (delivery log stays empty for new events).
+curl http://127.0.0.1:7452/api/webhooks/<hook_id>/deliveries \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+
+# Resume when the receiver is healthy again.
+curl -X POST http://127.0.0.1:7452/api/webhooks/<hook_id>/resume \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+# => {"id":"<hook_id>","active":true,"paused_at":1780248962.81,"resumed_at":1780249120.44}
+```
+
+Both endpoints are idempotent: calling `pause` on an already-paused hook (or `resume` on a live one) returns the current state without writing a new record. The webhook list now exposes `paused_at` and `resumed_at` alongside `active` so the admin UI can show a clear suspended badge.
+
 ## Try it (sandbox dry-run for destructive calls)
 
 Every `DELETE` endpoint now accepts `?dry_run=true` (or the header `X-Dry-Run: 1`). The server runs the full auth, tenant scoping, and RBAC stack, then returns a structured preview of what would be removed without mutating storage. Audit log entries record `dry_run: true` so reviewers can tell previews apart from real mutations. A workspace UI lives at `/settings/sandbox` for interactive previews.
