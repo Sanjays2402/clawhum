@@ -10,6 +10,20 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ## Try it
 
+The query log at `/matches` is now a full local CRM for your hums: every capture is saved in the browser, and you can search, filter, tag, rename, and delete entries without leaving the page. Open `http://127.0.0.1:7452/matches` after a few captures and try:
+
+- Free-text search across query id, custom name, filename, track title, artist, and tag.
+- Time-range presets (24h / 7d / 30d / all time) and a minimum best-score slider.
+- Tag chips with frequency counts, click to ANY-of filter.
+- Sort by newest, oldest, score, or latency.
+- Inline rename and tag editor on every row (keyboard: enter to save, escape to cancel).
+- Per-row delete plus pagination (25 per page).
+- CSV / JSON export honours the current filter set, so you can hand a teammate exactly the slice they asked for.
+
+The pure filter / sort / tag helpers live in `web/lib/history.ts` and are covered by `web/tests/history.test.ts` (run `pnpm test` from `web/`).
+
+## Try it (share)
+
 Share any match result with one click. Open any item in `/matches`, hit *share* in the top strip, and a public read-only URL is copied to your clipboard. The link works in an incognito window without an API key:
 
 ```bash
