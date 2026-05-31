@@ -169,6 +169,7 @@ class Settings(BaseSettings):
     ip_allowlist_path: Path = Path("./data/ip_allowlist.jsonl")
     embed_origins_path: Path = Path("./data/embed_origins.jsonl")
     security_contacts_path: Path = Path("./data/security_contacts.jsonl")
+    dsar_requests_path: Path = Path("./data/dsar_requests.jsonl")
     invite_domains_path: Path = Path("./data/invite_domains.jsonl")
     scope_policy_path: Path = Path("./data/scope_policy.jsonl")
     dpa_acceptances_path: Path = Path("./data/dpa_acceptances.jsonl")

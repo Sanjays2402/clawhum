@@ -134,6 +134,21 @@ curl -sS -X POST http://127.0.0.1:7451/security-contacts \
 curl -sS http://127.0.0.1:7451/security-contacts -H 'X-API-Key: sk_admin'
 ```
 
+## Per-workspace Data Subject Access Request tracker
+
+GDPR Art. 15, 17, and 20, plus CCPA section 1798.100, all require the controller to respond to data subject requests within a statutory window (30 days in the EU, 45 days in California). Procurement reviews ask "how do you intake, log, and prove timely response to DSARs?" and without a system of record the only honest answer is "we cannot." Each workspace can now file and track requests at [`/settings/dsar`](http://127.0.0.1:7452/settings/dsar). Each request carries the subject email, a kind from `access`, `erasure`, `portability`, or `rectification`, a configurable due date (default 30 days), and a full history of every state transition with actor, prior status, new status, and free-text note. The queue surfaces overdue items at the top so privacy ops sees the clock before the regulator does. Status transitions are enforced (`received` then `in_progress` then `completed` or `rejected`), rejection requires a non-empty justification, and a terminal request cannot be reopened (HTTP 409) so the audit trail stays honest. The tracker is tenant scoped end to end: an admin in tenant A cannot list, file into, or advance tenant B's requests even when guessing the request id (HTTP 404). Mutations require the admin role plus MFA, support `?dry_run=true`, and flow through the existing tamper-evident audit chain. Cross-tenant isolation, RBAC, validation, and the no-reopen invariant are pinned by `tests/integration/test_dsar.py`.
+
+### Try it (DSAR)
+
+```bash
+curl -sS -X POST http://127.0.0.1:7451/dsar \
+  -H 'X-API-Key: sk_admin' \
+  -H 'Content-Type: application/json' \
+  -d '{"subject_email":"jane@example.com","kind":"access","note":"forwarded from privacy@"}'
+
+curl -sS 'http://127.0.0.1:7451/dsar?status=received' -H 'X-API-Key: sk_admin'
+```
+
 ## Per-workspace Data Processing Agreement acceptance
 
 No enterprise buyer signs a paid contract before a named, authorised person from their workspace has clicked accept on the vendor's Data Processing Agreement (GDPR Art. 28, CCPA service-provider obligations, SCC regimes). The workspace admin console at [`/admin/dpa`](http://127.0.0.1:7452/admin/dpa) now exposes the current vendor DPA version and URL, shows whether the workspace has accepted it, and records who clicked accept, when, from which IP, and with which user agent. Acceptance requires the admin role plus a fresh MFA step-up, and the mutation flows through the existing tamper-evident audit chain so reviewers get a forensically defensible record without extra plumbing. The client must echo the published version string when accepting, so a stale client cannot bind the workspace to an outdated contract (HTTP 422 `dpa_version_mismatch`). Cross-tenant isolation, role enforcement, version pinning, and withdraw/re-accept are pinned by `tests/integration/test_dpa.py`.

@@ -556,6 +556,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Data subject access requests */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">data subject requests</span>
+            <a
+              href="/settings/dsar"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            intake and tracking for GDPR article 15 / 17 / 20 and CCPA section 1798.100 requests. each request gets a statutory due date and overdue items rise to the top of the queue. every state change is tenant scoped and audit logged. admin role plus MFA required.
+          </p>
+        </section>
+
         {/* Per-workspace vendor support access grants */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">
