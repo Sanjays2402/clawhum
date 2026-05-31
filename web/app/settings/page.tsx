@@ -412,6 +412,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Workspace audit log */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">audit log</span>
+            <a
+              href="/settings/audit"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              open
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            search and export every mutating request your workspace made. filter by actor, method, path, status, and time window. csv and json downloads for compliance review. admin role required, tenant scoped server side.
+          </p>
+        </section>
+
         {/* Webhook destination policy */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">
