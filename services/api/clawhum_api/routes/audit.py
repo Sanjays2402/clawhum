@@ -62,6 +62,8 @@ class AuditEvent(BaseModel):
     ts: float
     actor: str
     api_key_name: str | None = None
+    pat_id: str | None = None
+    session_id: str | None = None
     tenant_id: str | None = None
     roles: list[str] = Field(default_factory=list)
     method: str
@@ -149,11 +151,15 @@ def _apply_filters(
     since: float,
     until: float,
     dry_run: str,
+    pat_id: str = "",
+    session_id: str = "",
 ) -> list[dict[str, Any]]:
     needle = q.strip().lower()
     a = actor.strip().lower()
     m = method.strip().upper()
     pp = path_prefix.strip()
+    pid = pat_id.strip()
+    sid = session_id.strip()
     out: list[dict[str, Any]] = []
     for r in rows:
         if since and float(r.get("ts") or 0.0) < since:
@@ -165,6 +171,10 @@ def _apply_filters(
         if m and m != str(r.get("method") or "").upper():
             continue
         if pp and not str(r.get("path") or "").startswith(pp):
+            continue
+        if pid and str(r.get("pat_id") or "") != pid:
+            continue
+        if sid and str(r.get("session_id") or "") != sid:
             continue
         try:
             st = int(r.get("status") or 0)
@@ -180,7 +190,7 @@ def _apply_filters(
             continue
         if needle:
             haystack = " ".join(
-                str(r.get(k) or "") for k in ("actor", "api_key_name", "path", "method", "request_id", "user_agent")
+                str(r.get(k) or "") for k in ("actor", "api_key_name", "pat_id", "session_id", "path", "method", "request_id", "user_agent")
             ).lower()
             if needle not in haystack:
                 continue
@@ -193,6 +203,8 @@ def _to_event(r: dict[str, Any]) -> AuditEvent:
         ts=float(r.get("ts") or 0.0),
         actor=str(r.get("actor") or "anonymous"),
         api_key_name=r.get("api_key_name"),
+        pat_id=r.get("pat_id"),
+        session_id=r.get("session_id"),
         tenant_id=r.get("tenant_id"),
         roles=list(r.get("roles") or []),
         method=str(r.get("method") or ""),
@@ -223,6 +235,8 @@ async def list_audit(
     since: float = Query(default=0.0, ge=0.0),
     until: float = Query(default=0.0, ge=0.0),
     dry_run: str = Query(default="any", pattern="^(any|only|exclude)$"),
+    pat_id: str = Query(default="", max_length=120),
+    session_id: str = Query(default="", max_length=120),
     limit: int = Query(default=_DEFAULT_LIMIT, ge=1, le=_MAX_LIMIT),
     offset: int = Query(default=0, ge=0),
     tenant_id: str = Depends(current_tenant),
@@ -244,6 +258,8 @@ async def list_audit(
         since=since,
         until=until,
         dry_run=dry_run,
+        pat_id=pat_id,
+        session_id=session_id,
     )
     total = len(filtered)
     page = filtered[offset : offset + limit]
@@ -272,6 +288,8 @@ async def export_audit(
     since: float = Query(default=0.0, ge=0.0),
     until: float = Query(default=0.0, ge=0.0),
     dry_run: str = Query(default="any", pattern="^(any|only|exclude)$"),
+    pat_id: str = Query(default="", max_length=120),
+    session_id: str = Query(default="", max_length=120),
     tenant_id: str = Depends(current_tenant),
 ) -> Response:
     """Download the caller's full audit log matching the filters.
@@ -292,6 +310,8 @@ async def export_audit(
         since=since,
         until=until,
         dry_run=dry_run,
+        pat_id=pat_id,
+        session_id=session_id,
     )
     truncated = len(filtered) > _EXPORT_MAX
     if truncated:
@@ -316,7 +336,7 @@ async def export_audit(
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow([
-        "ts_iso", "ts", "actor", "api_key_name", "tenant_id", "roles",
+        "ts_iso", "ts", "actor", "api_key_name", "pat_id", "session_id", "tenant_id", "roles",
         "method", "path", "status", "duration_ms", "client_ip",
         "user_agent", "request_id", "trace_id", "dry_run",
     ])
@@ -325,6 +345,7 @@ async def export_audit(
         ts_iso = datetime.fromtimestamp(ts, timezone.utc).isoformat() if ts else ""
         w.writerow([
             ts_iso, ts, r.get("actor") or "", r.get("api_key_name") or "",
+            r.get("pat_id") or "", r.get("session_id") or "",
             r.get("tenant_id") or "", ",".join(r.get("roles") or []),
             r.get("method") or "", r.get("path") or "",
             int(r.get("status") or 0),

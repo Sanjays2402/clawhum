@@ -255,6 +255,8 @@ Every mutating call already lands in the workspace audit log via middleware. `GE
 
 Every line is part of a sha256 hash chain: each entry carries `prev_hash` (the prior entry's digest, or the well-known genesis hash on a fresh file) and `entry_hash` (sha256 of `prev_hash || canonical_json(entry_without_entry_hash)`). `GET /audit/verify` walks the active file plus every rotated sibling, recomputes each digest, and reports the first broken line with the reason (`entry_hash mismatch` when a field was edited, `prev_hash mismatch` when an entry was deleted or reordered). A procurement reviewer or SIEM can hit it on a schedule and alert on tamper. The same panel is exposed in the dashboard at `/settings/audit` so an admin can self-serve a chain check before exporting evidence. Coverage in `tests/integration/test_audit_chain.py` pins the clean-chain case, single-field edit detection, deletion detection, and the admin-only role gate.
 
+Every audit row now also carries the durable `pat_id` of the personal access token (when the caller authenticated with a PAT) and the `session_id` of the request. Both are exposed as filter query params (`?pat_id=pat_xxx`, `?session_id=sess_yyy`) on `GET /audit` and `GET /audit/export`, and as columns in the CSV export. The `/settings/audit` page surfaces them as inline filter inputs and renders the PAT id as a one-click filter chip so an incident responder can pivot from a leaked token straight to the full timeline of what it did, even after the token has been renamed or revoked. Cross-tenant isolation of the new filters is pinned by `tests/integration/test_audit_pat_filter.py`.
+
 ### Try it (audit search)
 
 ```bash

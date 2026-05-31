@@ -30,6 +30,8 @@ interface AuditEvent {
   ts: number;
   actor: string;
   api_key_name: string | null;
+  pat_id: string | null;
+  session_id: string | null;
   tenant_id: string | null;
   roles: string[];
   method: string;
@@ -131,6 +133,8 @@ export default function AuditLogPage() {
   const [since, setSince] = useState("");
   const [until, setUntil] = useState("");
   const [dryRun, setDryRun] = useState<string>("any");
+  const [patId, setPatId] = useState("");
+  const [sessionId, setSessionId] = useState("");
   const [offset, setOffset] = useState(0);
 
   const buildQuery = useCallback(
@@ -151,6 +155,8 @@ export default function AuditLogPage() {
         if (u > 0) params.set("until", String(u));
       }
       if (dryRun && dryRun !== "any") params.set("dry_run", dryRun);
+      if (patId) params.set("pat_id", patId);
+      if (sessionId) params.set("session_id", sessionId);
       params.set("limit", String(PAGE_SIZE));
       params.set("offset", String(offset));
       if (extra) {
@@ -160,7 +166,7 @@ export default function AuditLogPage() {
       }
       return params.toString();
     },
-    [q, actor, method, pathPrefix, statusMin, statusMax, since, until, dryRun, offset],
+    [q, actor, method, pathPrefix, statusMin, statusMax, since, until, dryRun, patId, sessionId, offset],
   );
 
   const load = useCallback(async () => {
@@ -246,6 +252,8 @@ export default function AuditLogPage() {
         if (u > 0) params.set("until", String(u));
       }
       if (dryRun && dryRun !== "any") params.set("dry_run", dryRun);
+      if (patId) params.set("pat_id", patId);
+      if (sessionId) params.set("session_id", sessionId);
       params.set("format", format);
       // Fetch with auth header, then trigger a download from the blob so
       // we never need to embed the api key in a query string.
@@ -274,7 +282,7 @@ export default function AuditLogPage() {
         }
       })();
     },
-    [q, actor, method, pathPrefix, statusMin, statusMax, since, until, dryRun],
+    [q, actor, method, pathPrefix, statusMin, statusMax, since, until, dryRun, patId, sessionId],
   );
 
   const ready = state.kind === "ready" ? state.data : null;
@@ -484,6 +492,24 @@ export default function AuditLogPage() {
               ))}
             </select>
           </label>
+          <label className="flex flex-col gap-1">
+            <span className="label-xs">pat id</span>
+            <input
+              value={patId}
+              onChange={(e) => setPatId(e.target.value)}
+              placeholder="pat_xxxxxxxxxxxx"
+              className="border border-[var(--color-line)] bg-transparent px-2 py-1.5 font-mono text-[12px] outline-none placeholder:text-[var(--color-dim)]"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="label-xs">session id</span>
+            <input
+              value={sessionId}
+              onChange={(e) => setSessionId(e.target.value)}
+              placeholder="sess_..."
+              className="border border-[var(--color-line)] bg-transparent px-2 py-1.5 font-mono text-[12px] outline-none placeholder:text-[var(--color-dim)]"
+            />
+          </label>
           <div className="flex items-end gap-2 md:col-span-2">
             <button
               type="submit"
@@ -503,6 +529,8 @@ export default function AuditLogPage() {
                 setSince("");
                 setUntil("");
                 setDryRun("any");
+                setPatId("");
+                setSessionId("");
                 setOffset(0);
               }}
               className="border border-[var(--color-line)] px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
@@ -546,6 +574,7 @@ export default function AuditLogPage() {
                     <tr className="border-b border-[var(--color-line)]">
                       <th className="px-3 py-2">when</th>
                       <th className="px-3 py-2">actor</th>
+                      <th className="px-3 py-2 hidden xl:table-cell">pat / session</th>
                       <th className="px-3 py-2">method</th>
                       <th className="px-3 py-2">path</th>
                       <th className="px-3 py-2">status</th>
@@ -574,6 +603,20 @@ export default function AuditLogPage() {
                               dry
                             </span>
                           ) : null}
+                        </td>
+                        <td className="px-3 py-2 hidden xl:table-cell whitespace-nowrap text-[var(--color-dim)]">
+                          {e.pat_id ? (
+                            <button
+                              type="button"
+                              onClick={() => { setPatId(e.pat_id || ""); setOffset(0); }}
+                              className="underline decoration-dotted hover:text-[var(--color-phosphor)]"
+                              title="filter by this PAT"
+                            >
+                              {e.pat_id}
+                            </button>
+                          ) : (
+                            <span className="text-[var(--color-dim)]">{e.session_id ? e.session_id.slice(0, 12) : ""}</span>
+                          )}
                         </td>
                         <td className="px-3 py-2 whitespace-nowrap">
                           <span
