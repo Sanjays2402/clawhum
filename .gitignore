@@ -34,3 +34,4 @@ models/
 .idea/
 .vscode/
 data/usage.jsonl
+data/webhook_allowlist.jsonl

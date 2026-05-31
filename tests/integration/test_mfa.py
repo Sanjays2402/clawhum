@@ -146,3 +146,51 @@ def test_mfa_disable_requires_code(monkeypatch, tmp_path):
 
         r = c.get("/mfa/status", headers={"X-API-Key": "opskey"})
         assert r.json()["enrolled"] is False
+
+
+def test_mfa_gates_webhook_destination_allowlist(monkeypatch, tmp_path):
+    """PUT /webhooks/destination-allowlist must require step-up once enrolled.
+
+    This is the canary for the wider wiring: the dependency must be
+    applied to every destructive admin endpoint, not just the keys API.
+    Adding a new admin mutation without ``require_mfa()`` would break
+    the gate for the rest, so this test is the regression net.
+    """
+    with _client(monkeypatch, tmp_path) as c:
+        # Before enrollment the call succeeds with the admin role alone.
+        r = c.put(
+            "/webhooks/destination-allowlist",
+            json={"hosts": ["hooks.example.com"]},
+            headers={"X-API-Key": "opskey"},
+        )
+        assert r.status_code == 200, r.text
+
+        # Enroll + verify.
+        r = c.post("/mfa/enroll", headers={"X-API-Key": "opskey"})
+        assert r.status_code == 200
+        secret = r.json()["secret"]
+        from clawhum_api.mfa import totp
+        r = c.post(
+            "/mfa/verify",
+            json={"code": totp(secret)},
+            headers={"X-API-Key": "opskey"},
+        )
+        assert r.status_code == 200
+
+        # Same call without a code: 401 + WWW-Authenticate: MFA.
+        r = c.put(
+            "/webhooks/destination-allowlist",
+            json={"hosts": ["hooks.example.com"]},
+            headers={"X-API-Key": "opskey"},
+        )
+        assert r.status_code == 401, r.text
+        assert r.headers.get("www-authenticate") == "MFA"
+
+        # With a fresh TOTP it passes.
+        r = c.put(
+            "/webhooks/destination-allowlist",
+            json={"hosts": ["hooks.example.com"]},
+            headers={"X-API-Key": "opskey", "X-MFA-Code": totp(secret)},
+        )
+        assert r.status_code == 200, r.text
+
