@@ -92,6 +92,31 @@ curl http://127.0.0.1:7451/me -H 'x-api-key: dev'
 
 Backed by `tests/integration/test_me.py` (open mode, valid key, and 401 on missing key in key-required mode).
 
+## Try it (batch)
+
+Upload a `.zip` of audio clips and get one results file back. The whole archive runs through the same matcher as single-shot `/match`, with per-clip top-k matches, per-clip errors that do not fail the batch, and both JSON and CSV output. Visit `http://127.0.0.1:7452/batch`, drop a zip, and pick the format you want, or call it directly:
+
+```bash
+# zip up a folder of hums
+zip -j hums.zip ./recordings/*.wav
+
+# JSON output (inline results)
+curl -X POST http://127.0.0.1:7451/batch \
+     -H 'x-api-key: dev' \
+     -F 'archive=@hums.zip' \
+     -F 'top_k=3' \
+     -F 'format=json'
+
+# CSV download (one row per match, attachment headers set)
+curl -X POST http://127.0.0.1:7451/batch \
+     -H 'x-api-key: dev' \
+     -F 'archive=@hums.zip' \
+     -F 'format=csv' \
+     -o results.csv
+```
+
+Caps: 200 MiB per archive, 100 clips per batch, 50 MiB per clip. Bad codecs and oversize entries surface as per-row `error` fields so a single broken file does not fail the rest of the run.
+
 ## Try it (share)
 
 Share any match result with one click. Open any item in `/matches`, hit *share* in the top strip, and a public read-only URL is copied to your clipboard. The link works in an incognito window without an API key:

@@ -7,6 +7,7 @@ const TABS: { href: string; label: string; hint: string }[] = [
   { href: "/", label: "capture", hint: "record + match" },
   { href: "/demo", label: "demo", hint: "try a sample" },
   { href: "/matches", label: "matches", hint: "query log" },
+  { href: "/batch", label: "batch", hint: "zip in, csv out" },
   { href: "/history", label: "history", hint: "cloud, synced" },
   { href: "/insights", label: "insights", hint: "local analytics" },
   { href: "/catalog", label: "catalog", hint: "fingerprinted tracks" },
