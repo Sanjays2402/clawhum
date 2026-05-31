@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from .. import member_store
+from .. import seat_limit_store
 from ..api_keys import ROLES, ANON_TENANT_ID, DEV_TENANT_ID
 from ..auth import require_admin_with_mfa, require_roles
 from ..tenant import current_tenant_id
@@ -112,6 +113,16 @@ async def invite_member(request: Request, body: InviteBody) -> dict[str, Any]:
             role=body.role,
             invited_by=actor,
             ttl_hours=body.ttl_hours,
+        )
+    except seat_limit_store.SeatLimitExceededError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail={
+                "error": "seat_limit_exceeded",
+                "message": str(exc),
+                "current": exc.current,
+                "limit": exc.limit,
+            },
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))

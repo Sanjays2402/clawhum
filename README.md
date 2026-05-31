@@ -4,6 +4,23 @@ Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local
 
 ![landing](docs/screenshots/landing.png)
 
+## Workspace seat license
+
+Enterprise contracts price by seats, so the platform has to refuse seat N+1 instead of silently overflowing the contracted count. Each workspace now has an optional seat cap covering active plus pending members. Admins set it from [`/settings/seat-limit`](http://127.0.0.1:7452/settings/seat-limit) (admin role plus a fresh TOTP code). A cap of 0 means unlimited and is the default, so workspaces without a contract attached keep working unchanged. Once the cap is reached, `POST /members/invite` and SSO domain auto-join both return HTTP 402 Payment Required with a structured body `{error: seat_limit_exceeded, current, limit}` so the UI can render an upgrade affordance instead of a generic failure. Revoked members release their seat; re-activating an existing tombstoned row does not consume a fresh seat. The cap is strictly per workspace and isolation is pinned by `tests/integration/test_seat_limit.py`.
+
+### Try it (seat license)
+
+```bash
+# View the current cap and usage.
+curl -s -H "X-API-Key: $CLAWHUM_API_KEY" \
+  http://127.0.0.1:7451/workspace/seat-limit | jq
+
+# Set a 50-seat cap (admin + MFA).
+curl -s -X PUT -H "X-API-Key: $CLAWHUM_API_KEY" -H "X-MFA-Code: 123456" \
+  -H 'Content-Type: application/json' -d '{"limit": 50}' \
+  http://127.0.0.1:7451/workspace/seat-limit | jq
+```
+
 ## Per-token last-used forensics
 
 When a personal access token leaks, the first incident-response question is "where was it last used from?" Each PAT now records the resolved client IP (X-Forwarded-For aware) and a length-bounded User-Agent on every successful authentication, surfaced in the same `/keys` response that already powers the settings table. The web UI at [`/settings/keys`](http://127.0.0.1:7452/settings/keys) renders `used: 3m ago from 203.0.113.42` inline with a hover tooltip carrying the full User-Agent so an operator can spot a token being driven from an unexpected host or library without grepping the audit log. Breadcrumbs are tenant-scoped: a sibling workspace listing its own keys can never see another tenant's IPs. The User-Agent is stripped of control bytes and capped at 200 characters so a hostile client cannot bloat the append-only PAT log. Cross-tenant isolation and the IP/UA capture are pinned by `tests/integration/test_pat_last_used_forensics.py`.

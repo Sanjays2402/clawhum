@@ -93,6 +93,7 @@ class Settings(BaseSettings):
         ),
     )
     members_path: Path = Path("./data/members.jsonl")
+    seat_limits_path: Path = Path("./data/seat_limits.jsonl")
     member_invite_ttl_hours: int = Field(
         default=168,
         description=(

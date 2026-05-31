@@ -240,6 +240,11 @@ def invite(
     if find_active_by_email(tenant_id, email) is not None:
         raise ValueError("email already invited or member of workspace")
 
+    # Seat license check. Lazy import avoids a circular import:
+    # seat_limit_store imports member_store.count_for_tenant.
+    from . import seat_limit_store
+    seat_limit_store.check_capacity(tenant_id)
+
     settings = get_settings()
     if ttl_hours is None:
         ttl_hours = settings.member_invite_ttl_hours
@@ -293,6 +298,10 @@ def create_active(
     existing = find_active_by_email(tenant_id, email)
     if existing is not None:
         return existing
+    # Seat license check applies to fresh SSO auto-join seats. Existing
+    # rows are exempt because they already hold a seat.
+    from . import seat_limit_store
+    seat_limit_store.check_capacity(tenant_id)
     now = time.time() if now is None else now
     member = Member(
         id=_new_id(),

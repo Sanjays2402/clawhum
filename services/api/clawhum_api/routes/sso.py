@@ -28,7 +28,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from .. import member_store, sso_store
+from .. import member_store, sso_store, seat_limit_store
 from ..api_keys import ANON_TENANT_ID, DEV_TENANT_ID
 from ..auth import require_admin_with_mfa, require_roles
 from ..tenant import current_tenant
@@ -251,6 +251,16 @@ async def auto_join(body: AutoJoinBody, request: Request) -> AutoJoinResponse:
             email=email,
             role=rec.auto_join_role,
             invited_by="sso-auto-join",
+        )
+    except seat_limit_store.SeatLimitExceededError as exc:
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "error": "seat_limit_exceeded",
+                "message": str(exc),
+                "current": exc.current,
+                "limit": exc.limit,
+            },
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

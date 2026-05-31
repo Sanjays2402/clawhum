@@ -41,6 +41,7 @@ from .routes import sessions as sessions_routes
 from .routes import share as share_routes
 from .routes import spotify as spotify_routes
 from .routes import sso as sso_routes
+from .routes import seat_limit as seat_limit_routes
 from .routes import usage as usage_routes
 from .routes import webhooks as webhooks_routes
 from .state import AppState
@@ -153,6 +154,7 @@ def create_app() -> FastAPI:
     app.include_router(scim_routes.router)
     app.include_router(scim_admin_routes.router)
     app.include_router(sessions_routes.router)
+    app.include_router(seat_limit_routes.router)
     # Stable, version-pinned public API surface. The same routers are
     # mounted again under /v1 so integrators can target a URL we will not
     # break, while existing unversioned routes stay alive for the web UI.
@@ -178,6 +180,7 @@ def create_app() -> FastAPI:
     app.include_router(scim_routes.router, prefix="/v1")
     app.include_router(scim_admin_routes.router, prefix="/v1")
     app.include_router(sessions_routes.router, prefix="/v1")
+    app.include_router(seat_limit_routes.router, prefix="/v1")
     app.include_router(metrics_router)
     register_app_collector(app)
     return app

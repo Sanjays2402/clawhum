@@ -62,6 +62,7 @@ const nextConfig = {
       { source: "/api/audit/export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/audit/export` },
       { source: "/api/quotas", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/quotas` },
       { source: "/api/residency", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/residency` },
+      { source: "/api/workspace/seat-limit", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/workspace/seat-limit` },
       { source: "/api/admin/scim/token", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/admin/scim/token` },
       { source: "/api/v1/privacy/export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/export` },
       { source: "/api/v1/privacy/workspace-export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/workspace-export` },

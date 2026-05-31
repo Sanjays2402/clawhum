@@ -37,3 +37,4 @@ data/usage.jsonl
 data/webhook_allowlist.jsonl
 data/sessions.jsonl
 data/session_policy.jsonl
+data/seat_limits.jsonl
