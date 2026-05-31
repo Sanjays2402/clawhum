@@ -20,6 +20,7 @@ const TABS: { href: string; label: string; hint: string }[] = [
   { href: "/pricing", label: "pricing", hint: "plans + faq" },
   { href: "/settings", label: "settings", hint: "api key + usage" },
   { href: "/settings/keys", label: "keys", hint: "personal access tokens" },
+  { href: "/settings/notifications", label: "notify", hint: "browser alerts" },
   { href: "/webhooks", label: "webhooks", hint: "outbound events" },
   { href: "/shares", label: "shares", hint: "public links" },
   { href: "/collections", label: "collections", hint: "grouped result sets" },

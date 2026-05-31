@@ -10,6 +10,20 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Try it (browser notifications)
+
+`http://127.0.0.1:7452/settings/notifications` registers the browser `Notification` permission for the tab, then opts you into one or more event kinds: a saved match landing in history, or a webhook attempt out of `/v1/hooks`. A background poller hits `/api/activity` every 30 seconds, diffs against a per-device cursor, and fires a real OS-level notification for anything new whose kind you turned on. Optional 250 ms WebAudio cue. Recent firings are logged in-app so you can audit what the engine actually delivered.
+
+```bash
+# 1. open the page, click "enable browser notifications", grant the permission prompt.
+open http://127.0.0.1:7452/settings/notifications
+
+# 2. trigger a saved match from the api. within ~30s a system notification appears.
+curl -X POST http://127.0.0.1:7452/api/match \
+  -H "X-API-Key: $CLAWHUM_API_KEY" \
+  -F "audio=@web/public/samples/twinkle.wav"
+```
+
 ## Try it (personal access tokens)
 
 Mint, list, and revoke API tokens from the browser. Each token is scoped to the caller's tenant, carries a subset of the minter's roles, and is shown in plaintext exactly once. Tokens authenticate against the same `X-API-Key` header that the rest of the API uses, so existing curl/python/JS snippets keep working.

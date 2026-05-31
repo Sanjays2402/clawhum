@@ -6,6 +6,7 @@ import SiteNav from "@/components/SiteNav";
 import ApiKeyProvider from "@/components/ApiKeyProvider";
 import PWAInstaller from "@/components/PWAInstaller";
 import Toaster from "@/components/Toaster";
+import NotifyEngineMount from "@/components/NotifyEngineMount";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -56,6 +57,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <ApiKeyProvider />
           <PWAInstaller />
           <Toaster />
+          <NotifyEngineMount />
           <TransportBar />
           <SiteNav />
           <main className="flex-1">{children}</main>
