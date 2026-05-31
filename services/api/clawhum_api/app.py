@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .audit import AuditLogMiddleware
+from .budget_middleware import BudgetMiddleware
 from .idempotency import IdempotencyMiddleware, build_store, register as _register_idem_store
 from .metrics import PrometheusMiddleware, register_app_collector
 from .metrics import router as metrics_router
@@ -43,6 +44,7 @@ from .routes import mfa as mfa_routes
 from .routes import pitch as pitch_routes
 from .routes import privacy as privacy_routes
 from .routes import quotas as quotas_routes
+from .routes import budget as budget_routes
 from .routes import residency as residency_routes
 from .routes import retention as retention_routes
 from .routes import scim as scim_routes
@@ -83,6 +85,10 @@ async def _lifespan(app: FastAPI):
     _sso_store.reset_cache()
     from . import quota_store as _quota_store
     _quota_store.reset_cache()
+    from . import budget_store as _budget_store
+    _budget_store.reset_cache()
+    from .usage import reset_month_cache as _reset_month_cache
+    _reset_month_cache()
     from . import residency_store as _residency_store
     _residency_store.reset_cache()
     app.state.clawhum = AppState.boot(prefer_clap=False)  # default to fallback at startup; reindex can flip
@@ -102,6 +108,10 @@ def create_app() -> FastAPI:
     # before RequestID so request_id is already attached to request.state.
     app.add_middleware(AuditLogMiddleware, enabled=settings.audit_enabled)
     app.add_middleware(UsageRecorderMiddleware)
+    # Budget enforcement runs after Usage records the event so a request
+    # blocked at the cap is never charged, and inside TenantScope so
+    # request.state.tenant_id is resolved before the cap lookup.
+    app.add_middleware(BudgetMiddleware)
     app.add_middleware(TenantScopeMiddleware)
     app.add_middleware(SimpleRateLimit, max_per_minute=settings.rate_limit_per_minute)
     # Idempotency-Key replay cache sits outside the rate limiter so a
@@ -135,7 +145,7 @@ def create_app() -> FastAPI:
         allow_methods=settings.cors_methods_list(),
         allow_headers=settings.cors_headers_list(),
         allow_credentials=cors_allow_credentials,
-        expose_headers=["X-Request-ID", "traceparent", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-RateLimit-Scope", "X-RateLimit-Plan", "X-RateLimit-Limit-Day", "X-RateLimit-Remaining-Day", "X-Data-Region", "X-Workspace-Region", "Retry-After", "Idempotent-Replayed", "X-Original-Request-ID"],
+        expose_headers=["X-Request-ID", "traceparent", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-RateLimit-Scope", "X-RateLimit-Plan", "X-RateLimit-Limit-Day", "X-RateLimit-Remaining-Day", "X-Data-Region", "X-Workspace-Region", "Retry-After", "Idempotent-Replayed", "X-Original-Request-ID", "X-Budget-Limit", "X-Budget-Used", "X-Budget-Remaining", "X-Budget-Status", "X-Budget-Enforcement"],
         max_age=600,
     )
     # Security headers run outermost so they apply to every response,
@@ -182,6 +192,7 @@ def create_app() -> FastAPI:
     app.include_router(audit_routes.router)
     app.include_router(audit_forwarder_routes.router)
     app.include_router(quotas_routes.router)
+    app.include_router(budget_routes.router)
     app.include_router(residency_routes.router)
     app.include_router(scim_routes.router)
     app.include_router(scim_admin_routes.router)
@@ -216,6 +227,7 @@ def create_app() -> FastAPI:
     app.include_router(audit_routes.router, prefix="/v1")
     app.include_router(audit_forwarder_routes.router, prefix="/v1")
     app.include_router(quotas_routes.router, prefix="/v1")
+    app.include_router(budget_routes.router, prefix="/v1")
     app.include_router(residency_routes.router, prefix="/v1")
     app.include_router(library_routes.router, prefix="/v1")
     app.include_router(scim_routes.router, prefix="/v1")

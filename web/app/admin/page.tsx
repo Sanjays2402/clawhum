@@ -638,6 +638,20 @@ export default function AdminConsolePage() {
         </Card>
 
         <Card
+          title="monthly budget cap"
+          icon={<Gauge size={14} weight="duotone" />}
+          href="/admin/budget"
+          hrefLabel="configure"
+        >
+          <p className="text-xs text-[var(--color-dim)]">
+            Hard ceiling on chargeable requests for this workspace over
+            a rolling 30 day window. Bounds the month while rate limits
+            bound the rate. Returns HTTP 402 past the cap or runs in
+            audit only mode during rollout. Admin only, MFA gated.
+          </p>
+        </Card>
+
+        <Card
           title="recent activity"
           icon={<ListMagnifyingGlass size={14} weight="duotone" />}
           href="/settings/audit"

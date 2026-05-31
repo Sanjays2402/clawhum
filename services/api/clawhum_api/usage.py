@@ -47,6 +47,66 @@ _WRITE_LOCK = threading.Lock()
 
 _DEFAULT_FREE_QUOTA = int(os.environ.get("CLAWHUM_FREE_QUOTA_MONTH", "1000"))
 
+# In-process per-tenant rolling month counter. Used by the budget
+# middleware to avoid a full event-file scan on every chargeable
+# request. Populated lazily from disk per tenant on first lookup and
+# kept in sync by record_event(). Indexed by absolute file path so a
+# test fixture pointing settings.usage_path at a fresh file does not
+# inherit a previous run's counter.
+_MONTH_COUNTS: dict[str, dict[str, list]] = {}
+_MONTH_LOCK = threading.Lock()
+_MONTH_WINDOW_SEC = 86_400 * 30
+
+
+def _trim_window(events: list, now: float) -> None:
+    """Drop timestamps that fell out of the 30 day window."""
+    cut = now - _MONTH_WINDOW_SEC
+    while events and events[0] < cut:
+        events.pop(0)
+
+
+def _ensure_tenant_loaded(path_key: str, path: Path, tenant_id: str, now: float) -> list:
+    """Return the in-memory event-timestamp list for ``tenant_id``,
+    seeding it from disk on first use for this process+file.
+    """
+    with _MONTH_LOCK:
+        bucket = _MONTH_COUNTS.setdefault(path_key, {})
+        if tenant_id in bucket:
+            events = bucket[tenant_id]
+            _trim_window(events, now)
+            return events
+        events = []
+        cut = now - _MONTH_WINDOW_SEC
+        if path.exists():
+            for row in _iter_events(path):
+                if row.get("tenant_id") != tenant_id:
+                    continue
+                ts = float(row.get("ts", 0))
+                if ts >= cut:
+                    events.append(ts)
+        events.sort()
+        bucket[tenant_id] = events
+        return events
+
+
+def month_count(tenant_id: str, now: float | None = None) -> int:
+    """Return rolling 30 day chargeable-event count for the tenant.
+
+    Cheap: O(1) amortized after the first call per tenant. Safe to call
+    from request middleware.
+    """
+    if now is None:
+        now = time.time()
+    p = _store_path()
+    events = _ensure_tenant_loaded(str(p), p, tenant_id or ANON_TENANT_ID, now)
+    return len(events)
+
+
+def reset_month_cache() -> None:
+    """Drop the in-process monthly counter. Used by tests and lifespan."""
+    with _MONTH_LOCK:
+        _MONTH_COUNTS.clear()
+
 
 def _store_path() -> Path:
     p = getattr(get_settings(), "usage_path", None)
@@ -60,6 +120,11 @@ def _store_path() -> Path:
 def monthly_quota() -> int:
     """Return the configured monthly free-tier quota in requests."""
     return _DEFAULT_FREE_QUOTA
+
+
+def classify(path: str, method: str) -> str | None:
+    """Public alias used by the budget middleware."""
+    return _classify(path, method)
 
 
 def _classify(path: str, method: str) -> str | None:
@@ -87,6 +152,19 @@ def record_event(tenant_id: str, event: str, ts: float | None = None) -> None:
     with _WRITE_LOCK:
         with p.open("a", encoding="utf-8") as fh:
             fh.write(line)
+    # Keep the in-process monthly counter in sync so the budget
+    # middleware sees this event on the very next request without
+    # rescanning the file.
+    now = float(row["ts"])
+    with _MONTH_LOCK:
+        bucket = _MONTH_COUNTS.setdefault(str(p), {})
+        events = bucket.get(tenant_id)
+        if events is None:
+            # Tenant not yet seeded; first read will load from disk and
+            # naturally include this freshly written line.
+            return
+        events.append(now)
+        _trim_window(events, now)
 
 
 def _iter_events(path: Path):

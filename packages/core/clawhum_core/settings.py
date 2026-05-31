@@ -87,6 +87,7 @@ class Settings(BaseSettings):
         ),
     )
     quota_path: Path = Path("./data/quotas.jsonl")
+    budget_path: Path = Path("./data/budgets.jsonl")
     residency_path: Path = Path("./data/residency.jsonl")
     region: str = Field(
         default="unset",

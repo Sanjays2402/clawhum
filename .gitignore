@@ -36,6 +36,7 @@ models/
 data/usage.jsonl
 data/webhook_allowlist.jsonl
 data/sessions.jsonl
+data/budgets.jsonl
 data/session_policy.jsonl
 data/seat_limits.jsonl
 data/invite_domains.jsonl

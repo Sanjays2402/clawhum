@@ -2,6 +2,32 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace monthly budget cap
+
+Rate limits bound the rate. Budgets bound the month. Finance and procurement teams will not sign a contract without a hard ceiling on billable consumption, so every workspace now has a configurable `monthly_cap` over a rolling 30 day window covering aggregate chargeable requests across every API key and PAT. While `used` stays under the cap, every response carries `X-Budget-Limit`, `X-Budget-Used`, `X-Budget-Remaining`, and `X-Budget-Status` (`ok` | `warning` | `exhausted`) so well behaved clients back off before they hit the wall. Past the cap, chargeable requests return `HTTP 402 Payment Required` with a structured `{code: "budget_exhausted", monthly_cap, used, window_sec}` body so SDKs surface the right upsell. Reads, health, metrics, and the budget admin route itself keep working so an over-budget admin can still raise the cap. A `hard_stop: false` mode supports audit-only rollout: requests still succeed but headers flag the overage so dashboards alert without breaking integrations. Mutations require the admin role plus a fresh MFA step-up and are written to the tamper-evident audit chain with before / after state. The budget is strictly per-workspace; pinned by `tests/integration/test_budget.py` which proves cross-tenant isolation and the 402 enforcement boundary.
+
+### Try it (monthly budget cap)
+
+UI: open [`/admin/budget`](http://127.0.0.1:7452/admin/budget) for the live used / remaining / status panel and to set the cap, warn threshold, and enforcement mode. API:
+
+```bash
+# read the current cap, rolling usage, and status
+curl -sS http://127.0.0.1:7451/v1/budget \
+  -H 'X-API-Key: sk_admin'
+
+# set a 100k chargeable-request monthly cap with a 75% warn threshold
+curl -sS -X PUT http://127.0.0.1:7451/v1/budget \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"monthly_cap":100000,"soft_threshold_pct":75,"hard_stop":true,"notes":"contract Q3"}'
+
+# past the cap, chargeable POSTs are rejected with 402
+curl -sS -i -X POST http://127.0.0.1:7451/history \
+  -H 'X-API-Key: sk_admin' -d '{"query_id":"q1","track_id":"t1","score":0.9}'
+# HTTP/1.1 402 Payment Required
+# X-Budget-Status: exhausted
+# {"detail":"workspace monthly budget exhausted","code":"budget_exhausted",...}
+```
+
 ## Per-workspace closure / wind-down lifecycle
 
 GDPR Article 17 (right to erasure), CCPA §1798.105, and almost every enterprise MSA require a clearly defined account-closure pathway with a grace window for data extraction. Workspace admins can now schedule a closure with a bounded grace period (1 minute to 30 days, default 7 days) via `POST /workspace/closure`. While the closure is `scheduled`, the auth middleware rejects every mutating request to that workspace with `HTTP 423 Locked` and a structured `workspace_closing` detail plus `X-Workspace-State` and `X-Workspace-Finalize-At` headers so SDKs can route the customer to a "cancel or export now" runbook. Reads keep working so the customer can pull data out. Once the finalize timestamp elapses, the workspace transitions to `closed` and every non-export route returns `HTTP 410 Gone`; the closure status, audit log, privacy / export, MFA, and `/me` routes stay reachable so the customer can finish wind-down. The closure log is append-only JSONL (same pattern as legal_hold and SSO) so the timeline survives for auditors. Cancellation by another admin (with MFA step-up) immediately restores write access. Cross-tenant isolation: scheduling closure on tenant A has zero effect on tenant B. Pinned by `tests/integration/test_workspace_closure.py`.
