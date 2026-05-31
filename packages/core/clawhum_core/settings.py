@@ -81,6 +81,17 @@ class Settings(BaseSettings):
             "always allowed so the feature is opt-in per tenant."
         ),
     )
+    sso_path: Path = Path("./data/sso.jsonl")
+    sso_default_redirect_uri: str = Field(
+        default="http://127.0.0.1:7451/auth/sso/callback",
+        description=(
+            "Default OIDC redirect URI shown in the SSO admin UI when a "
+            "workspace owner is wiring up their identity provider. The "
+            "backend never performs the redirect itself; this string is "
+            "surfaced read only so admins can paste it into Okta, Azure "
+            "AD, or Google Workspace without guessing."
+        ),
+    )
     webhook_deliveries_path: Path = Path("./data/webhook_deliveries.jsonl")
     webhook_timeout_sec: float = 5.0
     webhook_max_attempts: int = 3

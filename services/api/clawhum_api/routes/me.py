@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, Request
 
 from ..api_keys import ANON_TENANT_ID, ROLES, get_registry
 from ..auth import require_api_key
+from .. import sso_store
 from clawhum_core.settings import get_settings
 from pydantic import BaseModel
 
@@ -25,6 +26,10 @@ class MeResponse(BaseModel):
     rate_limit_per_minute: int
     auth_mode: str  # "open" (dev) or "key"
     masked_key: str  # last 4 chars or "dev"
+    sso_configured: bool = False
+    sso_enforced: bool = False
+    sso_provider: str = ""
+    sso_email_domain: str = ""
 
 
 def _mask(secret: str) -> str:
@@ -51,6 +56,8 @@ async def me(request: Request) -> MeResponse:
     if key is not None and key.rpm:
         rpm = key.rpm
 
+    sso = sso_store.get_for_tenant(tenant) if tenant else None
+
     return MeResponse(
         tenant_id=tenant,
         key_name=name,
@@ -58,4 +65,8 @@ async def me(request: Request) -> MeResponse:
         rate_limit_per_minute=int(rpm),
         auth_mode=auth_mode,
         masked_key=_mask(presented or "dev"),
+        sso_configured=sso is not None,
+        sso_enforced=bool(sso and sso.enforced),
+        sso_provider=sso.provider if sso else "",
+        sso_email_domain=sso.email_domain if sso else "",
     )

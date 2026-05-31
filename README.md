@@ -10,6 +10,31 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Workspace single sign on (OIDC)
+
+A workspace admin wires an OIDC provider at `/settings/sso`: Okta, Microsoft Entra ID, Google Workspace, Auth0, Keycloak, or any generic OIDC. The record stores the issuer, client id, client secret, the email domain that maps to the workspace, and an enforce toggle. When enforce is on, `/me` reports `sso_enforced=true` so the sign-in screen can hide password and magic-link paths for users in that email domain. The public `GET /sso/discover?email=` endpoint lets an unauthenticated login form decide where to send a user without leaking which other domains are customers; nothing-interesting is returned for unknown domains. Two workspaces cannot silently claim the same email domain; the API rejects the second writer with 400. Reads mask the client secret; only admin role can read or write, and mutations require a fresh `X-MFA-Code` once the actor has enrolled TOTP. Every write flows through the global audit log.
+
+### Try it (single sign on)
+
+```bash
+# Configure the workspace's identity provider.
+curl -X PUT http://127.0.0.1:7451/v1/sso/config \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "Content-Type: application/json" \
+  -d '{"provider":"okta","issuer":"https://acme.okta.com","client_id":"0oa-acme","client_secret":"<secret>","email_domain":"acme.com","enforced":true}'
+
+# Public discovery: where should this user sign in?
+curl 'http://127.0.0.1:7451/sso/discover?email=person@acme.com'
+
+# Read back (admin only; secret comes back masked).
+curl http://127.0.0.1:7451/v1/sso/config -H "X-API-Key: $CLAWHUM_KEY"
+
+# Remove the config (admin + MFA).
+curl -X DELETE http://127.0.0.1:7451/v1/sso/config \
+  -H "X-API-Key: $CLAWHUM_KEY" -H "X-MFA-Code: 123456"
+```
+
+Web UI: `http://127.0.0.1:7452/settings/sso`.
+
 ## Workspace members and invites
 
 A workspace admin manages the human roster from `/settings/members`: invite a teammate by email with a role (`reader`, `writer`, `admin`), see pending invites with their expiry, change a member's role, and revoke a seat when someone leaves. Invite tokens are returned exactly once and hashed at rest; the recipient trades the token for membership at `POST /members/accept` with no API key required. Role changes and revokes are gated by admin role plus a fresh `X-MFA-Code` once the actor has enrolled TOTP. The roster is strictly per workspace: another tenant's admin cannot see, mutate, or even probe for member ids they do not own.
