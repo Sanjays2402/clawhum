@@ -102,6 +102,15 @@ class ShareCreateBody(BaseModel):
     note: str | None = Field(default=None, max_length=280)
 
 
+class ShareUpdateBody(BaseModel):
+    """Partial update for an existing share. Today only the human note
+    is editable. New optional fields can be added here without breaking
+    older clients because every field is optional.
+    """
+
+    note: str | None = Field(default=None, max_length=280)
+
+
 class ShareCreateResponse(BaseModel):
     id: str
     url_path: str  # client renders the absolute URL using window.location.origin
@@ -200,6 +209,53 @@ async def list_shares(request: Request) -> ShareListResponse:
         )
     items.sort(key=lambda x: x.created_at, reverse=True)
     return ShareListResponse(shares=items, total=len(items))
+
+
+@router.patch(
+    "/share/{share_id}",
+    response_model=ShareListItem,
+    dependencies=[Depends(require_api_key)],
+)
+async def update_share(
+    share_id: str, body: ShareUpdateBody, request: Request
+) -> ShareListItem:
+    if not share_id or len(share_id) > 64 or not share_id.isalnum():
+        raise HTTPException(404, "not found")
+    tenant_id = getattr(request.state, "tenant_id", "anonymous")
+    rec = _find(share_id)
+    if rec is None or _is_deleted(rec):
+        raise HTTPException(404, "not found")
+    if rec.get("tenant_id") != tenant_id:
+        # Don't leak existence across tenants.
+        raise HTTPException(404, "not found")
+    # Build a full merged record so the append-only log keeps replaying
+    # cleanly: _collapse_for_tenant always picks the newest record per id.
+    merged = dict(rec)
+    if body.note is not None:
+        # Empty string is a valid clear; treat as removing the note.
+        note = body.note.strip()
+        merged["note"] = note if note else None
+    merged["updated_at"] = time.time()
+    line = json.dumps(merged, ensure_ascii=False, separators=(",", ":"))
+    with _WRITE_LOCK:
+        with _store_path().open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    results = merged.get("results") or []
+    top = results[0] if results else None
+    return ShareListItem(
+        id=share_id,
+        created_at=float(merged.get("created_at") or 0.0),
+        query_id=str(merged.get("query_id") or ""),
+        elapsed_ms=int(merged.get("elapsed_ms") or 0),
+        count=int(merged.get("count") or 0),
+        filename=merged.get("filename"),
+        duration_sec=merged.get("duration_sec"),
+        note=merged.get("note"),
+        top_title=(top or {}).get("title"),
+        top_artist=(top or {}).get("artist"),
+        top_score=(top or {}).get("score"),
+        url_path=f"/r/{share_id}",
+    )
 
 
 @router.delete("/share/{share_id}", dependencies=[Depends(require_api_key)])

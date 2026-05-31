@@ -24,6 +24,21 @@ curl -X POST http://127.0.0.1:7452/api/match \
   -F "audio=@web/public/samples/twinkle.wav"
 ```
 
+## Try it (rename your shares)
+
+Every row on `/shares` now has an inline note editor. Click the note (or the "add a note" hint) on any share to rename it without re-creating the link, then save with Enter or Esc to cancel. The public `/r/<id>` page updates immediately, so the same URL you already pasted keeps working with the new label. Backed by `PATCH /share/{id}` (also exposed at `/v1/share/{id}`); empty strings clear the note.
+
+```bash
+make dev            # FastAPI on :7451, Next.js on :7452
+open http://127.0.0.1:7452/shares
+
+# Or rename from curl, scoped to your tenant by the api key.
+curl -X PATCH http://127.0.0.1:7452/api/v1/share/$SHARE_ID \
+  -H "X-API-Key: $CLAWHUM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"note":"second take, cleaner"}'
+```
+
 ## Try it (personal access tokens)
 
 Mint, list, and revoke API tokens from the browser. Each token is scoped to the caller's tenant, carries a subset of the minter's roles, and is shown in plaintext exactly once. Tokens authenticate against the same `X-API-Key` header that the rest of the API uses, so existing curl/python/JS snippets keep working.

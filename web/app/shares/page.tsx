@@ -13,6 +13,8 @@ import {
   ArrowSquareOut,
   MagnifyingGlass,
   Check,
+  PencilSimple,
+  X,
 } from "@phosphor-icons/react/dist/ssr";
 import { useApiKey, getApiKey } from "@/lib/apiKey";
 import { toast } from "@/lib/toast";
@@ -60,6 +62,9 @@ export default function SharesPage() {
   const [q, setQ] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [savingId, setSavingId] = useState<string | null>(null);
 
   const fetchShares = useCallback(async () => {
     setLoading(true);
@@ -128,6 +133,59 @@ export default function SharesPage() {
       toast.error("clipboard blocked");
     }
   }, []);
+
+  const startEdit = useCallback((s: ShareItem) => {
+    setEditingId(s.id);
+    setNoteDraft(s.note ?? "");
+  }, []);
+
+  const cancelEdit = useCallback(() => {
+    setEditingId(null);
+    setNoteDraft("");
+  }, []);
+
+  const saveNote = useCallback(
+    async (id: string) => {
+      const next = noteDraft.slice(0, 280);
+      setSavingId(id);
+      try {
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        const k = getApiKey();
+        if (k) headers["X-API-Key"] = k;
+        const r = await fetch(`/api/share/${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({ note: next }),
+        });
+        if (!r.ok) {
+          const body = await r.text();
+          toast.error("rename failed", { description: body.slice(0, 200) });
+          return;
+        }
+        const updated = (await r.json()) as ShareItem;
+        setData((cur) =>
+          cur
+            ? {
+                ...cur,
+                shares: cur.shares.map((s) =>
+                  s.id === id ? { ...s, note: updated.note } : s,
+                ),
+              }
+            : cur,
+        );
+        toast.success(updated.note ? "note updated" : "note cleared");
+        setEditingId(null);
+        setNoteDraft("");
+      } catch (e) {
+        toast.error("rename failed", { description: (e as Error).message });
+      } finally {
+        setSavingId(null);
+      }
+    },
+    [noteDraft],
+  );
 
   const revoke = useCallback(
     async (id: string) => {
@@ -302,10 +360,73 @@ export default function SharesPage() {
                       )}
                       {s.filename && <span className="truncate max-w-[140px]">{s.filename}</span>}
                     </div>
-                    {s.note && (
-                      <div className="font-mono text-[10px] text-[var(--color-muted)] mt-1 italic truncate">
-                        {s.note}
-                      </div>
+                    {editingId === s.id ? (
+                      <form
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          saveNote(s.id);
+                        }}
+                        className="mt-1 flex items-center gap-1.5"
+                      >
+                        <input
+                          autoFocus
+                          value={noteDraft}
+                          maxLength={280}
+                          onChange={(e) => setNoteDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              cancelEdit();
+                            }
+                          }}
+                          placeholder="add a short note, 280 chars max"
+                          aria-label={`edit note for share ${s.id}`}
+                          className="flex-1 bg-[var(--color-bg)] border border-[var(--color-line)] focus:border-[var(--color-phosphor)] outline-none px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text)] placeholder:text-[var(--color-dim)] rounded-[1px]"
+                        />
+                        <span className="font-mono text-[9px] text-[var(--color-dim)] tabular-nums">
+                          {noteDraft.length}/280
+                        </span>
+                        <button
+                          type="submit"
+                          disabled={savingId === s.id}
+                          aria-label="save note"
+                          className="flex items-center gap-1 px-1.5 py-0.5 border border-[var(--color-line)] hover:border-[var(--color-phosphor)] font-mono text-[9px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)] rounded-[1px] disabled:opacity-50"
+                        >
+                          <Check size={10} weight="duotone" />
+                          <span>{savingId === s.id ? "..." : "save"}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelEdit}
+                          aria-label="cancel edit"
+                          className="flex items-center gap-1 px-1.5 py-0.5 border border-[var(--color-line)] hover:border-[var(--color-magenta)] font-mono text-[9px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-magenta)] rounded-[1px]"
+                        >
+                          <X size={10} weight="duotone" />
+                          <span>cancel</span>
+                        </button>
+                      </form>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => startEdit(s)}
+                        aria-label={s.note ? `edit note for share ${s.id}` : `add note to share ${s.id}`}
+                        className="group mt-1 flex items-center gap-1.5 text-left max-w-full"
+                      >
+                        {s.note ? (
+                          <span className="font-mono text-[10px] text-[var(--color-muted)] italic truncate group-hover:text-[var(--color-text)]">
+                            {s.note}
+                          </span>
+                        ) : (
+                          <span className="font-mono text-[10px] text-[var(--color-dim)] italic group-hover:text-[var(--color-muted)]">
+                            add a note
+                          </span>
+                        )}
+                        <PencilSimple
+                          size={10}
+                          weight="duotone"
+                          className="text-[var(--color-dim)] opacity-0 group-hover:opacity-100 shrink-0"
+                        />
+                      </button>
                     )}
                   </div>
                 </div>

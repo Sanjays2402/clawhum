@@ -139,3 +139,78 @@ def test_share_revoke_is_tenant_scoped(monkeypatch, tmp_path):
         ok = c.delete(f"/share/{sid}", headers={"X-API-Key": "secret-a"})
         assert ok.status_code == 200
         assert c.get(f"/share/{sid}").status_code == 404
+
+
+def test_share_patch_note_round_trip(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as c:
+        body = _sample_body()
+        body["note"] = "first cut"
+        r = c.post("/share", json=body, headers={"X-API-Key": "changeme"})
+        assert r.status_code == 200, r.text
+        sid = r.json()["id"]
+
+        # patch requires auth
+        assert c.patch(f"/share/{sid}", json={"note": "nope"}).status_code == 401
+
+        # rename the note
+        p = c.patch(
+            f"/share/{sid}",
+            json={"note": "  cleaned up takes  "},
+            headers={"X-API-Key": "changeme"},
+        )
+        assert p.status_code == 200, p.text
+        assert p.json()["note"] == "cleaned up takes"
+        # results are preserved across the partial update
+        assert p.json()["top_title"] == "Test Song"
+
+        # public read reflects the update
+        pub = c.get(f"/share/{sid}").json()
+        assert pub["note"] == "cleaned up takes"
+        assert pub["count"] == 2
+        assert pub["results"][0]["title"] == "Test Song"
+
+        # list reflects the update too
+        listed = c.get("/share", headers={"X-API-Key": "changeme"}).json()
+        assert listed["total"] == 1
+        assert listed["shares"][0]["note"] == "cleaned up takes"
+
+        # clearing the note via empty string drops it back to None
+        p2 = c.patch(
+            f"/share/{sid}",
+            json={"note": "   "},
+            headers={"X-API-Key": "changeme"},
+        )
+        assert p2.status_code == 200
+        assert p2.json()["note"] is None
+        assert c.get(f"/share/{sid}").json()["note"] is None
+
+
+def test_share_patch_404_for_missing_and_other_tenant(monkeypatch, tmp_path):
+    api_keys = "alice:secret-a:9999:writer:tenant-a,bob:secret-b:9999:writer:tenant-b"
+    with _client(monkeypatch, tmp_path, api_keys=api_keys) as c:
+        # patch a nonexistent share
+        miss = c.patch(
+            "/share/zzzzzzzzzzzz",
+            json={"note": "x"},
+            headers={"X-API-Key": "secret-a"},
+        )
+        assert miss.status_code == 404
+
+        # alice creates, bob cannot patch
+        r = c.post("/share", json=_sample_body(), headers={"X-API-Key": "secret-a"})
+        sid = r.json()["id"]
+        deny = c.patch(
+            f"/share/{sid}",
+            json={"note": "hijack"},
+            headers={"X-API-Key": "secret-b"},
+        )
+        assert deny.status_code == 404
+
+        # revoked share cannot be patched
+        c.delete(f"/share/{sid}", headers={"X-API-Key": "secret-a"})
+        gone = c.patch(
+            f"/share/{sid}",
+            json={"note": "ghost"},
+            headers={"X-API-Key": "secret-a"},
+        )
+        assert gone.status_code == 404
