@@ -14,6 +14,8 @@ const nextConfig = {
       { source: "/api/pitch", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/pitch` },
       { source: "/api/share", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/share` },
       { source: "/api/share/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/share/:id` },
+      { source: "/api/history", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/history` },
+      { source: "/api/history/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/history/:id` },
       { source: "/api/me", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/me` },
       { source: "/api/webhooks", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhooks` },
       { source: "/api/webhooks/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhooks/:id` },

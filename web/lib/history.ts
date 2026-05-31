@@ -56,6 +56,27 @@ export function saveMatch(m: StoredMatch) {
     for (const e of all) delete e.query_waveform;
     try { localStorage.setItem(KEY, JSON.stringify(all)); } catch {}
   }
+  // Best-effort cloud sync. The patched global fetch attaches the
+  // user's API key when present; on 401 (no key) we silently noop so
+  // anonymous users keep working with localStorage only.
+  try {
+    void fetch("/api/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query_id: m.query_id,
+        elapsed_ms: m.elapsed_ms,
+        count: m.count,
+        results: m.results,
+        filename: m.filename ?? null,
+        duration_sec: m.duration_sec ?? null,
+        name: m.name ?? null,
+        tags: m.tags ?? [],
+      }),
+    }).catch(() => {});
+  } catch {
+    /* ignore network errors; localStorage is the source of truth for offline */
+  }
 }
 
 export function getMatch(id: string): StoredMatch | null {

@@ -10,6 +10,30 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Try it (cloud history)
+
+ClawHum now syncs every match to your account so history survives device switches and browser-storage wipes. Open `http://127.0.0.1:7452/history` after setting an API key in `/settings` and you'll see every run, searchable by query name, filename, artist, or title, with rename, tag, and delete inline. The `/matches` page keeps the local-only log for offline use.
+
+```bash
+# save a match to your history
+curl -X POST http://127.0.0.1:7451/history \
+  -H 'X-API-Key: dev' -H 'Content-Type: application/json' \
+  -d '{"query_id":"q-1","elapsed_ms":42,"count":1,"name":"verse hook","tags":["practice"],"results":[{"track_id":"t1","title":"Bohemian Rhapsody","artist":"Queen","score":0.91}]}'
+
+# list (newest first, with search + tag filter)
+curl 'http://127.0.0.1:7451/history?q=queen&limit=10' -H 'X-API-Key: dev'
+
+# rename / retag
+curl -X PATCH http://127.0.0.1:7451/history/<id> \
+  -H 'X-API-Key: dev' -H 'Content-Type: application/json' \
+  -d '{"name":"chorus hook","tags":["jazz","demo"]}'
+
+# delete
+curl -X DELETE http://127.0.0.1:7451/history/<id> -H 'X-API-Key: dev'
+```
+
+Entries are tenant-scoped at write time so each API key only sees its own history.
+
 ## Try it (webhooks)
 
 ClawHum now ships outbound webhooks. Register a URL at `http://127.0.0.1:7452/webhooks` and every completed match POSTs the full `MatchResponse` JSON to that endpoint, signed with HMAC-SHA256 in the `X-Clawhum-Signature` header. Failed deliveries retry with exponential backoff up to three attempts, and every attempt is recorded in a per-webhook delivery log you can inspect from the same page.

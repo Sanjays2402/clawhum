@@ -14,6 +14,7 @@ from .audit import AuditLogMiddleware
 from .metrics import PrometheusMiddleware, register_app_collector
 from .metrics import router as metrics_router
 from .middleware import RequestIDMiddleware, SecurityHeadersMiddleware, SimpleRateLimit
+from .routes import batch as batch_routes
 from .routes import feedback as feedback_routes
 from .routes import health as health_routes
 from .routes import library as library_routes
@@ -21,6 +22,7 @@ from .routes import match as match_routes
 from .routes import me as me_routes
 from .routes import pitch as pitch_routes
 from .routes import privacy as privacy_routes
+from .routes import history as history_routes
 from .routes import share as share_routes
 from .routes import spotify as spotify_routes
 from .routes import webhooks as webhooks_routes
@@ -90,12 +92,14 @@ def create_app() -> FastAPI:
     init_telemetry(app)
     app.include_router(health_routes.router)
     app.include_router(match_routes.router)
+    app.include_router(batch_routes.router)
     app.include_router(library_routes.router)
     app.include_router(pitch_routes.router)
     app.include_router(feedback_routes.router)
     app.include_router(spotify_routes.router)
     app.include_router(privacy_routes.router)
     app.include_router(share_routes.router)
+    app.include_router(history_routes.router)
     app.include_router(me_routes.router)
     app.include_router(webhooks_routes.router)
     app.include_router(metrics_router)
