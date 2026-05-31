@@ -10,6 +10,19 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Try it (embed a shared match anywhere)
+
+Every public `/r/<id>` share now ships an embeddable iframe view at `/r/<id>/embed`. The share page exposes a copy-ready snippet with width and height controls, and the page itself advertises the iframe via an oEmbed 1.0 discovery link, so pasting the share URL into WordPress, Notion, Slack, or any oEmbed-aware editor auto-renders a clawhum card. Read-only, no auth, safe to load cross origin.
+
+```bash
+# 1. publish a share from history or matches in the UI, then grab the id.
+# 2. resolve the embed via oEmbed (returns the iframe HTML plus dims):
+curl "http://127.0.0.1:7452/api/oembed?url=http://127.0.0.1:7452/r/<id>&maxwidth=480&maxheight=360"
+
+# 3. or hit the embed view directly in a browser:
+open "http://127.0.0.1:7452/r/<id>/embed"
+```
+
 ## Try it (browse the indexed catalog)
 
 `http://127.0.0.1:7452/catalog` is now a server-backed browser over every fingerprinted track in the index, not just the ones you happen to have matched against locally. Search across title, artist, album, or id; sort by title, artist, duration, or id; filter by source; paginate 24 at a time. Click any card to land on `/track/<id>` for a detail view with reference audio playback, tempo, key, and a direct link back into the capture flow. Both pages call the new `GET /tracks` and `GET /track/{id}` endpoints, also exposed as `GET /v1/tracks` and `GET /v1/track/{id}` for integrators.

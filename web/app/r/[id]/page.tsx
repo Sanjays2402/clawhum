@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { ShareNetwork, MusicNote, Clock } from "@phosphor-icons/react/dist/ssr";
+import EmbedSnippet from "@/components/EmbedSnippet";
 
 interface SharedResult {
   track_id: string;
@@ -69,6 +70,16 @@ export async function generateMetadata(
     description: desc,
     openGraph: { title, description: desc, type: "article" },
     twitter: { card: "summary_large_image", title, description: desc },
+    other: {
+      // oEmbed discovery: lets WordPress, Notion, Slack, etc. auto-render
+      // this share when its URL is pasted into supported editors.
+      "oembed:json": `/api/oembed?url=${encodeURIComponent(`/r/${id}`)}&format=json`,
+    },
+    alternates: {
+      types: {
+        "application/json+oembed": `/api/oembed?url=${encodeURIComponent(`/r/${id}`)}&format=json`,
+      },
+    },
   };
 }
 
@@ -172,6 +183,8 @@ export default async function SharedMatchPage(
           </ol>
         )}
       </section>
+
+      <EmbedSnippet shareId={data.id} />
 
       <footer className="flex items-center justify-between pt-2 border-t border-[var(--color-line)] font-mono text-[10px] uppercase tracking-widest text-[var(--color-dim)]">
         <span>read-only / anyone with the link can view</span>
