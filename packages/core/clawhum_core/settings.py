@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     history_views_path: Path = Path("./data/history_views.jsonl")
     usage_path: Path = Path("./data/usage.jsonl")
     webhooks_path: Path = Path("./data/webhooks.jsonl")
+    pat_path: Path = Path("./data/personal_access_tokens.jsonl")
     webhook_deliveries_path: Path = Path("./data/webhook_deliveries.jsonl")
     webhook_timeout_sec: float = 5.0
     webhook_max_attempts: int = 3

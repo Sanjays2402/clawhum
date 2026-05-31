@@ -10,6 +10,21 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
 
 ClawHum is a query-by-humming engine that turns a microphone clip into ranked song matches against a local or Spotify-backed catalog.
 
+## Try it (personal access tokens)
+
+Mint, list, and revoke API tokens from the browser. Each token is scoped to the caller's tenant, carries a subset of the minter's roles, and is shown in plaintext exactly once. Tokens authenticate against the same `X-API-Key` header that the rest of the API uses, so existing curl/python/JS snippets keep working.
+
+```bash
+make dev            # FastAPI on :7451, Next.js on :7452
+open http://127.0.0.1:7452/settings/keys
+
+# After minting a token in the UI, call any /v1/* endpoint with it.
+curl -X POST http://127.0.0.1:7452/api/v1/keys \
+  -H "X-API-Key: $CLAWHUM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"ci-bot"}'
+```
+
 ## Try it (saved history views)
 
 `http://127.0.0.1:7452/history` now lets you pin any combination of search query, tag, sort, and starred-only filter as a named view. The chips appear above the filter bar; click one to apply, hover to rename or delete. Views are server-scoped per API key so they survive device switches the same way history does, and the route is mounted at `/v1/history/views` as part of the stable public surface.

@@ -29,6 +29,8 @@ const nextConfig = {
       { source: "/api/activity", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/activity` },
       { source: "/api/collections", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/collections` },
       { source: "/api/collections/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/collections/:id` },
+      { source: "/api/keys", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/keys` },
+      { source: "/api/keys/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/keys/:id` },
       { source: "/api/v1/privacy/export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/export` },
       { source: "/api/v1/privacy/me", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/me` },
       // Stable v1 public API: forward everything under /api/v1/* to the

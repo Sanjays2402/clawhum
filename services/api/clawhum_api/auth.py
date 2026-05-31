@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from fastapi import Header, HTTPException, Request, status
 
 from .api_keys import ANON_TENANT_ID, DEV_TENANT_ID, ROLES, get_registry
+from . import pat_store
 
 
 async def require_api_key(
@@ -25,6 +26,20 @@ async def require_api_key(
         return "dev"
     key = registry.lookup(x_api_key)
     if key is None:
+        # Fall back to user-minted personal access tokens.
+        if pat_store.looks_like_pat(x_api_key):
+            pat = pat_store.lookup_by_secret(x_api_key)
+            if pat is not None:
+                request.state.api_key_name = f"pat:{pat.name}"
+                request.state.api_key_roles = pat.roles
+                request.state.tenant_id = pat.tenant_id or ANON_TENANT_ID
+                request.state.pat_id = pat.id
+                # Best-effort, fire and forget. Failures must never block auth.
+                try:
+                    pat_store.touch_last_used(pat.id)
+                except Exception:
+                    pass
+                return x_api_key
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid api key")
     request.state.api_key_name = key.name
     request.state.api_key_roles = key.roles
