@@ -5,7 +5,7 @@ import useSWR from "swr";
 import { useRouter } from "next/navigation";
 import CaptureSurface from "@/components/CaptureSurface";
 import Spectrogram from "@/components/Spectrogram";
-import { swrFetcher, type Stats, type MatchResponse } from "@/lib/api";
+import { swrFetcher, type Stats, type MatchResponse, extractQueryPitch } from "@/lib/api";
 import { downsampleFloat, saveMatch } from "@/lib/history";
 
 export default function Home() {
@@ -44,6 +44,9 @@ export default function Home() {
       }
       const j = (await r.json()) as MatchResponse;
       setLast(j);
+      // Fire-and-forget pitch extraction so the match detail page can render
+      // a contour overlay even though the original blob isn't persisted.
+      const pitch = await extractQueryPitch(blob, name);
       saveMatch({
         query_id: j.query_id,
         ts: Date.now(),
@@ -52,6 +55,7 @@ export default function Home() {
         filename: name,
         duration_sec: dur,
         query_waveform: downsampleFloat(viz, 4096),
+        query_pitch: pitch ?? undefined,
         results: j.results,
       });
     } catch (e: any) {

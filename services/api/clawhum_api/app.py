@@ -18,6 +18,7 @@ from .routes import feedback as feedback_routes
 from .routes import health as health_routes
 from .routes import library as library_routes
 from .routes import match as match_routes
+from .routes import pitch as pitch_routes
 from .routes import privacy as privacy_routes
 from .routes import spotify as spotify_routes
 from .state import AppState
@@ -87,6 +88,7 @@ def create_app() -> FastAPI:
     app.include_router(health_routes.router)
     app.include_router(match_routes.router)
     app.include_router(library_routes.router)
+    app.include_router(pitch_routes.router)
     app.include_router(feedback_routes.router)
     app.include_router(spotify_routes.router)
     app.include_router(privacy_routes.router)

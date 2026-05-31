@@ -31,6 +31,11 @@ Accepts an audio upload (hum, whistle, recorded clip), decodes it via `soundfile
   curl -H 'x-api-key: dev' -o ref.wav \
        http://127.0.0.1:7451/track/local:abc1234567890abc/audio
   ```
+- `POST /pitch` and `GET /track/{track_id}/pitch` extract a pYIN fundamental-frequency contour (Hz + MIDI, voiced ratio, median Hz) from an upload or from any indexed track's matched segment. The match detail page overlays the user's query melody against the reference segment on a single recharts plot, key-normalised to the same median MIDI, with a per-frame agreement percentage so a user can see exactly *where* the two melodies tracked together and where they diverged. Returns at most 240 points per contour to keep payloads small. Try it:
+  ```
+  curl -F audio=@web/public/samples/twinkle.wav -H 'x-api-key: dev' \
+       http://127.0.0.1:7451/pitch
+  ```
 - 8 locale files under `web/i18n/` (de, en, es, fr, it, ja, ko, pt).
 - OpenTelemetry FastAPI instrumentation, OTLP exporter when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 

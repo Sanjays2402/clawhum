@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import Waveform from "@/components/Waveform";
 import Spectrogram from "@/components/Spectrogram";
+import PitchOverlay from "@/components/PitchOverlay";
 import { getMatch, type StoredMatch } from "@/lib/history";
 
 type RefAudioState =
@@ -228,6 +229,14 @@ export default function MatchDetail({ params }: { params: Promise<{ id: string }
           </div>
         )}
       </div>
+
+      {/* Pitch contour overlay: query vs reference, key-normalised */}
+      <PitchOverlay
+        queryContour={m.query_pitch ?? null}
+        trackId={cand?.track_id}
+        segmentIndex={cand?.segment_index ?? 0}
+        windowSec={1.5}
+      />
 
       {/* Candidates with score bars */}
       <div className="grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">

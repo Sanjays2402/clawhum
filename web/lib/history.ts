@@ -10,6 +10,17 @@ export interface StoredMatch {
   duration_sec?: number;
   /** Downsampled Float32Array of the query waveform (~4096 samples max) */
   query_waveform?: number[];
+  /** Optional pre-computed pitch contour of the query, for explainability views. */
+  query_pitch?: {
+    sr: number;
+    duration_sec: number;
+    hop_sec: number;
+    times: number[];
+    hz: (number | null)[];
+    midi: (number | null)[];
+    voiced_ratio: number;
+    median_hz: number;
+  };
   results: MatchResult[];
 }
 

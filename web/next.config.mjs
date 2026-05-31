@@ -10,6 +10,8 @@ const nextConfig = {
       { source: "/api/metrics", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/metrics` },
       { source: "/api/health", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/health` },
       { source: "/api/track/:trackId/audio", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/track/:trackId/audio` },
+      { source: "/api/track/:trackId/pitch", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/track/:trackId/pitch` },
+      { source: "/api/pitch", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/pitch` },
     ];
   },
 };

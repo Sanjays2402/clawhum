@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { MusicNotes, Play, Pause, MagnifyingGlass, Lightning, Waveform as WaveformIcon } from "@phosphor-icons/react/dist/ssr";
 import Waveform from "@/components/Waveform";
-import { swrFetcher, type MatchResponse, type MatchResult } from "@/lib/api";
+import { swrFetcher, type MatchResponse, type MatchResult, extractQueryPitch } from "@/lib/api";
 import useSWR from "swr";
 import { saveMatch, downsampleFloat } from "@/lib/history";
 
@@ -101,6 +101,7 @@ export default function DemoPage() {
       const j = (await r.json()) as MatchResponse;
       setRun(s.id, { loading: false, result: j, waveform: wf });
       try {
+        const pitch = await extractQueryPitch(blob, `${s.id}.wav`);
         saveMatch({
           query_id: j.query_id,
           ts: Date.now(),
@@ -109,6 +110,7 @@ export default function DemoPage() {
           filename: `${s.id}.wav`,
           duration_sec: duration,
           query_waveform: downsampleFloat(wf, 4096),
+          query_pitch: pitch ?? undefined,
           results: j.results,
         });
       } catch {}

@@ -49,3 +49,27 @@ export async function textFetch(path: string): Promise<string> {
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   return r.text();
 }
+
+export interface PitchContour {
+  sr: number;
+  duration_sec: number;
+  hop_sec: number;
+  times: number[];
+  hz: (number | null)[];
+  midi: (number | null)[];
+  voiced_ratio: number;
+  median_hz: number;
+}
+
+/** POST a query blob to /api/pitch. Best effort; returns null on failure. */
+export async function extractQueryPitch(blob: Blob, filename = "query.wav"): Promise<PitchContour | null> {
+  try {
+    const fd = new FormData();
+    fd.append("audio", blob, filename);
+    const r = await fetch("/api/pitch", { method: "POST", body: fd });
+    if (!r.ok) return null;
+    return (await r.json()) as PitchContour;
+  } catch {
+    return null;
+  }
+}
