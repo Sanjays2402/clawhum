@@ -57,6 +57,7 @@ from .routes import webhook_policy as webhook_policy_routes
 from .routes import webhook_delivery_rate as webhook_delivery_rate_routes
 from .routes import body_size as body_size_routes
 from .routes import match_duration as match_duration_routes
+from .routes import match_topk as match_topk_routes
 from .routes import dpa as dpa_routes
 from .routes import dsar as dsar_routes
 from .routes import incidents as incidents_routes
@@ -132,6 +133,8 @@ async def _lifespan(app: FastAPI):
     _body_size.reset_cache()
     from . import match_duration as _match_duration
     _match_duration.reset_cache()
+    from . import match_topk as _match_topk
+    _match_topk.reset_cache()
     from . import sso_store as _sso_store
     _sso_store.reset_cache()
     from . import quota_store as _quota_store
@@ -264,6 +267,8 @@ def create_app() -> FastAPI:
     app.include_router(body_size_routes.router, prefix="/v1")
     app.include_router(match_duration_routes.router)
     app.include_router(match_duration_routes.router, prefix="/v1")
+    app.include_router(match_topk_routes.router)
+    app.include_router(match_topk_routes.router, prefix="/v1")
     app.include_router(dpa_routes.router)
     app.include_router(dsar_routes.router)
     app.include_router(incidents_routes.router)

@@ -37,6 +37,7 @@ from clawhum_match.matcher import Matcher
 from ..auth import require_api_key
 from ..tenant import current_tenant_id
 from .. import match_duration
+from .. import match_topk
 
 router = APIRouter(tags=["batch"])
 
@@ -105,6 +106,20 @@ async def batch(
     batch_id = str(uuid.uuid4())
     eff_top_k = top_k or settings.top_k
     eff_threshold = threshold if threshold is not None else settings.threshold
+    # Per-workspace top_k cap. 0 = no cap (default). Reject the whole
+    # batch up front so callers don't burn embed cost before the cap
+    # check fires per row.
+    tenant_for_caps = current_tenant_id(request)
+    topk_cap = match_topk.max_top_k(tenant_for_caps)
+    if topk_cap and eff_top_k > topk_cap:
+        raise HTTPException(status_code=400, detail={
+            "code": "match_top_k_too_large",
+            "message": (
+                f"top_k {eff_top_k} exceeds workspace cap of {topk_cap}"
+            ),
+            "top_k": eff_top_k,
+            "max_top_k": topk_cap,
+        })
     # Per-workspace decoded-duration cap, applied per clip below.
     duration_cap = match_duration.max_duration_sec(current_tenant_id(request))
 

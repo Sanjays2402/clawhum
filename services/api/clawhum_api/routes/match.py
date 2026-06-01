@@ -11,6 +11,7 @@ from ..auth import require_api_key, require_scopes
 from ..schemas import MatchResponse, MatchResult
 from ..tenant import current_tenant_id
 from .. import match_duration
+from .. import match_topk
 from . import webhooks as webhooks_routes
 
 router = APIRouter(tags=["match"])
@@ -57,6 +58,21 @@ async def match(
                 "max_duration_sec": cap,
             })
 
+    # Per-workspace top_k cap. 0 = no cap (default). We enforce on the
+    # *requested* top_k (or default) so callers cannot exfiltrate a
+    # giant candidate set even if the matcher would happily compute one.
+    eff_top_k = top_k or s.top_k
+    topk_cap = match_topk.max_top_k(tenant_id)
+    if topk_cap and eff_top_k > topk_cap:
+        raise HTTPException(status_code=400, detail={
+            "code": "match_top_k_too_large",
+            "message": (
+                f"top_k {eff_top_k} exceeds workspace cap of {topk_cap}"
+            ),
+            "top_k": eff_top_k,
+            "max_top_k": topk_cap,
+        })
+
     if not state.tracks:
         raise HTTPException(400, "index is empty; run reindex first")
 
@@ -64,7 +80,7 @@ async def match(
     t0 = time.perf_counter()
     matches = matcher.match(
         x, sr,
-        top_k=top_k or s.top_k,
+        top_k=eff_top_k,
         threshold=threshold if threshold is not None else s.threshold,
     )
     elapsed_ms = int((time.perf_counter() - t0) * 1000)

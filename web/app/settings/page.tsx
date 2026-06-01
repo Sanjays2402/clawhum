@@ -636,6 +636,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Workspace match top_k cap */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">match top_k</span>
+            <a
+              href="/settings/match-topk"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            cap the maximum top_k a caller may request on /match and /batch for this workspace. bounds JSON-encode cost and response size so one tenant cannot pin top_k to a giant value and starve the worker for everyone else. over-cap requests fail with a structured 400 before the matcher runs. admin role plus MFA required.
+          </p>
+        </section>
+
         {/* Workspace PAT secret prefix */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">
