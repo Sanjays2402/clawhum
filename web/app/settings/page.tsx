@@ -380,6 +380,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Expired invite cleanup */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">expired invites</span>
+            <a
+              href="/settings/expired-invites"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            sweep pending invites whose tokens already expired. supports a dry run preview and one click bulk purge. covers the SOC2 dormant credentials control without revoking seats one at a time.
+          </p>
+        </section>
+
         {/* Workspace quota plan */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

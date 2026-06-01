@@ -80,6 +80,8 @@ const nextConfig = {
       { source: "/api/admin/pat-auth-lockout", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/admin/pat-auth-lockout` },
       { source: "/api/admin/pat-auth-lockout/:ip", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/admin/pat-auth-lockout/:ip` },
       { source: "/api/members", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/members` },
+      { source: "/api/members/expired-invites", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/members/expired-invites` },
+      { source: "/api/members/expired-invites/purge", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/members/expired-invites/purge` },
       { source: "/api/members/invite", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/members/invite` },
       { source: "/api/members/accept", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/members/accept` },
       { source: "/api/members/:id/resend", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/members/:id/resend` },

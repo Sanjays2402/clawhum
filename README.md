@@ -2,6 +2,28 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Expired pending-invite cleanup
+
+Pending invites that nobody ever accepted accumulate forever in the workspace roster. The token is already useless once `invite_expires_at` elapses (the accept endpoint refuses it) but the seat row stays in the list until an admin revokes it one by one, and SOC2 reviewers always ask for a dormant-credentials report that calls them out. Workspace owners can now see the backlog at [`/settings/expired-invites`](http://127.0.0.1:7452/settings/expired-invites), preview a cleanup with a dry run, and purge every expired pending invite in one click. The list endpoint is reader-gated so anyone with workspace access can verify the count for a compliance report; the purge is admin role plus a fresh MFA step-up and supports `?dry_run=true` so the action can be wired into CI without touching production state. Each tombstoned row is written through the same append-only log as a manual revoke, so the audit timeline still shows the full lifecycle. Tenant scoping is enforced inside `member_store`: workspace A cannot list or purge workspace B's expired invites no matter what tenant id the caller passes. Invites with `invite_expires_at == 0` (operator opted out of expiry) are intentionally excluded. Pinned by `tests/integration/test_expired_invites.py` which proves the list filters by expiry, the dry run does not mutate, the real purge is idempotent, and cross-tenant access is denied.
+
+### Try it (expired invite cleanup)
+
+UI: open [`/settings/expired-invites`](http://127.0.0.1:7452/settings/expired-invites) to view the backlog, dry run the cleanup, and purge in one click. API:
+
+```bash
+# List expired pending invites (reader role)
+curl -sS http://127.0.0.1:7451/members/expired-invites \
+  -H "X-API-Key: $CLAWHUM_API_KEY"
+
+# Dry run preview (admin + MFA, no mutation)
+curl -sS -X POST "http://127.0.0.1:7451/members/expired-invites/purge?dry_run=true" \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+
+# Real purge (admin + MFA)
+curl -sS -X POST http://127.0.0.1:7451/members/expired-invites/purge \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+```
+
 ## Per-workspace PAT expiry advance warning
 
 Personal access tokens are minted with an absolute expiry but SDKs and CI jobs that authenticate with them have no way to learn that a rotation is due until the day the token actually stops working, which is how 03:00 outage pages get written. Workspace owners can now set a per-tenant warning window at [`/settings/pat-expiry-warning`](http://127.0.0.1:7452/settings/pat-expiry-warning): when a PAT-authenticated response is within N days of its `expires_at`, every response (including reads, writes, and error responses) carries standards-compliant warning headers: `Sunset` as an IMF-fixdate per RFC 8594, `Deprecation: true` per the IETF deprecation-header draft, an optional `Link: <docs>; rel="sunset"` pointing at the workspace's rotation runbook, plus `X-Clawhum-Token-Expires-In` (integer seconds) and `X-Clawhum-Token-Expires-At` (ISO-8601 UTC) for clients that do not parse Sunset dates. Outside the window, no headers are written, so quiet days stay quiet. Default `warn_within_days` is `0` (disabled), so existing tenants keep working unchanged. The store is keyed by tenant id with append-only JSONL like every other policy module here, so cross-tenant lookups are impossible: workspace A opting in does not surface headers on workspace B's PATs. The middleware reads the PAT expiry that `auth.require_api_key` already stashes on `request.state` so there is no extra database hit per request, and it uses `setdefault` on the response headers so a route that already wrote its own `Sunset` (e.g. a share-link expiry) still wins over the policy default. The CORS `expose_headers` list is extended so browser SDKs see the headers from cross-origin calls. Mutations require admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `pat_expiry_warning.update` with before / after state. Pinned by `tests/integration/test_pat_expiry_warning.py` which proves headers fire inside the window, stay silent outside it, are tenant-scoped (workspace B does not inherit workspace A's policy), and malformed policy submissions are rejected with a structured 400.

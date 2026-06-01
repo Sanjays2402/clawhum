@@ -513,6 +513,69 @@ def revoke(member_id: str, *, tenant_id: str) -> Member:
     return tomb
 
 
+def list_expired_invites(tenant_id: str, *, now: float | None = None) -> list[Member]:
+    """Pending invites whose ``invite_expires_at`` is in the past.
+
+    Enterprise compliance reviewers expect a workspace owner to be
+    able to identify and clear stale invite tokens that nobody ever
+    accepted (typo'd email, recipient left the company). The token is
+    already useless after the expiry clock elapses (``lookup_by_token``
+    returns ``None``), but the row stays in the roster forever unless
+    an admin revokes it row by row. This helper surfaces the backlog
+    so the admin console and audit reports can show one number.
+
+    Invites with ``invite_expires_at == 0`` never expire (operator opt
+    out) and are intentionally excluded.
+    """
+    tenant_id = (tenant_id or "").strip().lower()
+    if not tenant_id:
+        return []
+    t = time.time() if now is None else now
+    return [
+        m for m in list_for_tenant(tenant_id)
+        if m.status == STATUS_INVITED
+        and m.invite_expires_at > 0
+        and t >= m.invite_expires_at
+    ]
+
+
+def purge_expired_invites(
+    tenant_id: str,
+    *,
+    now: float | None = None,
+) -> list[Member]:
+    """Tombstone every expired pending invite for ``tenant_id``.
+
+    Returns the list of rows that were tombstoned (post-purge view, so
+    each entry has ``status=revoked`` and ``deleted=True``). Idempotent:
+    re-running yields an empty list once the backlog is cleared. The
+    last-admin guard is bypassed because pending invites never count
+    as active admins.
+
+    Mutations go through the same append-only log as ``revoke`` so the
+    audit timeline still shows each invite reaching its terminal state.
+    """
+    targets = list_expired_invites(tenant_id, now=now)
+    purged: list[Member] = []
+    for m in targets:
+        tomb = Member(
+            id=m.id,
+            tenant_id=m.tenant_id,
+            email=m.email,
+            role=m.role,
+            status=STATUS_REVOKED,
+            invited_by=m.invited_by,
+            invited_at=m.invited_at,
+            accepted_at=m.accepted_at,
+            invite_token_hash="",
+            invite_expires_at=0.0,
+            deleted=True,
+        )
+        _append(asdict(tomb))
+        purged.append(tomb)
+    return purged
+
+
 def reset_for_tests() -> None:
     """Truncate the on disk log. Tests only."""
     path = _path()

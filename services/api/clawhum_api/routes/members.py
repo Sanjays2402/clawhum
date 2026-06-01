@@ -29,6 +29,7 @@ from .. import member_store
 from .. import seat_limit_store
 from ..api_keys import ROLES, ANON_TENANT_ID, DEV_TENANT_ID
 from ..auth import require_admin_with_mfa, require_roles
+from ..dry_run import is_dry_run, preview
 from ..tenant import current_tenant_id
 
 router = APIRouter(tags=["members"])
@@ -95,6 +96,78 @@ async def list_members(request: Request) -> dict[str, Any]:
         "members": [m.public_dict() for m in rows],
         "counts": member_store.count_for_tenant(tenant),
     }
+
+
+class ExpiredInviteListResponse(BaseModel):
+    members: list[MemberView]
+    count: int
+
+
+class PurgeExpiredResponse(BaseModel):
+    purged: list[MemberView]
+    count: int
+
+
+@router.get(
+    "/members/expired-invites",
+    response_model=ExpiredInviteListResponse,
+    dependencies=[Depends(require_roles("reader"))],
+)
+async def list_expired_invites(request: Request) -> dict[str, Any]:
+    """List pending invites that have passed their expiry timestamp.
+
+    Tokens for these rows are already useless (``lookup_by_token``
+    refuses them) but the seat row stays in the roster until an admin
+    purges it. Surfaced so the admin console can show a single number
+    and a one-click cleanup for SOC2 dormant-credentials reviews.
+    """
+    tenant = _guard_tenant(current_tenant_id(request))
+    rows = member_store.list_expired_invites(tenant)
+    return {
+        "members": [m.public_dict() for m in rows],
+        "count": len(rows),
+    }
+
+
+@router.post(
+    "/members/expired-invites/purge",
+    dependencies=[Depends(require_admin_with_mfa())],
+)
+async def purge_expired_invites(request: Request) -> Any:
+    """Tombstone every expired pending invite for the caller's workspace.
+
+    Supports ``?dry_run=true`` so an admin can preview the cleanup in
+    CI without mutating the roster. The endpoint is idempotent;
+    repeated calls with the same backlog tombstone each row once and
+    then return an empty list.
+    """
+    tenant = _guard_tenant(current_tenant_id(request))
+    candidates = member_store.list_expired_invites(tenant)
+    if is_dry_run(request):
+        return preview(
+            "members.expired_invites",
+            None,
+            tenant_id=tenant,
+            would_purge=[m.public_dict() for m in candidates],
+            count=len(candidates),
+        )
+    purged = member_store.purge_expired_invites(tenant)
+    return PurgeExpiredResponse(
+        purged=[
+            MemberView(
+                id=m.id,
+                email=m.email,
+                role=m.role,
+                status=m.status,
+                invited_by=m.invited_by,
+                invited_at=m.invited_at,
+                accepted_at=m.accepted_at,
+                invite_expires_at=m.invite_expires_at,
+            )
+            for m in purged
+        ],
+        count=len(purged),
+    )
 
 
 @router.post(

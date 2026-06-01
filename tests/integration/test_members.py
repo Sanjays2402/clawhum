@@ -362,3 +362,124 @@ def test_last_admin_cannot_be_demoted_or_revoked(monkeypatch, tmp_path):
             headers={"X-API-Key": "acmekey"},
         )
         assert r.status_code == 409
+
+
+def test_expired_invites_list_and_purge_with_dry_run(monkeypatch, tmp_path):
+    """Expired pending invites surface to admins and purge is tenant scoped.
+
+    Cross tenant isolation: globex must not see or touch acme's
+    expired invites even though they live in the same audit log
+    backing file. Dry run returns a preview without mutating state.
+    """
+    import time as _time
+
+    with _client(monkeypatch, tmp_path) as c:
+        # Seed via the store so we can backdate the expiry without
+        # the FastAPI clock.
+        from clawhum_api import member_store
+
+        past = _time.time() - 7200.0  # 2h ago; default ttl is hours
+        fresh = _time.time()
+
+        # Acme: one expired invite, one fresh invite.
+        expired_member, _ = member_store.invite(
+            tenant_id="acme",
+            email="ghost@acme.test",
+            role="reader",
+            invited_by="acme_admin",
+            ttl_hours=1,
+            now=past,
+        )
+        member_store.invite(
+            tenant_id="acme",
+            email="live@acme.test",
+            role="reader",
+            invited_by="acme_admin",
+            ttl_hours=24,
+            now=fresh,
+        )
+        # Globex: one expired invite that must stay untouched.
+        globex_expired, _ = member_store.invite(
+            tenant_id="globex",
+            email="ghost@globex.test",
+            role="reader",
+            invited_by="globex_admin",
+            ttl_hours=1,
+            now=past,
+        )
+
+        # Unauthenticated callers blocked.
+        assert c.get("/members/expired-invites").status_code == 401
+
+        # Reader on acme sees only the acme expired row.
+        r = c.get(
+            "/members/expired-invites",
+            headers={"X-API-Key": "acmereader"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["count"] == 1
+        assert body["members"][0]["id"] == expired_member.id
+        assert body["members"][0]["email"] == "ghost@acme.test"
+
+        # Reader cannot purge (admin + MFA required).
+        r = c.post(
+            "/members/expired-invites/purge",
+            headers={"X-API-Key": "acmereader"},
+        )
+        assert r.status_code == 403
+
+        # Dry run preview as admin: returns the row but does not mutate.
+        r = c.post(
+            "/members/expired-invites/purge?dry_run=true",
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("dry_run") is True
+        would = body["would_delete"]
+        assert would["count"] == 1
+        assert would["would_purge"][0]["id"] == expired_member.id
+
+        # State unchanged after preview.
+        r = c.get(
+            "/members/expired-invites",
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.json()["count"] == 1
+
+        # Real purge as admin.
+        r = c.post(
+            "/members/expired-invites/purge",
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["count"] == 1
+        assert body["purged"][0]["id"] == expired_member.id
+        assert body["purged"][0]["status"] == "revoked"
+
+        # Idempotent: second call returns zero.
+        r = c.post(
+            "/members/expired-invites/purge",
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 200
+        assert r.json()["count"] == 0
+
+        # Cross tenant isolation: globex's expired invite still pending.
+        r = c.get(
+            "/members/expired-invites",
+            headers={"X-API-Key": "globexkey"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["count"] == 1
+        assert body["members"][0]["id"] == globex_expired.id
+
+        # Acme admin cannot purge globex's row even if they knew the id.
+        r = c.post(
+            "/members/expired-invites/purge",
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.json()["count"] == 0  # nothing of acme's left
