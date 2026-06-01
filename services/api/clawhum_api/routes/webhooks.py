@@ -329,6 +329,17 @@ async def create_webhook(
     try:
         webhook_safety.validate_destination(str(body.url), tenant_id)
     except webhook_safety.WebhookDestinationError as e:
+        # Surface the workspace HTTPS policy block as a structured error
+        # so dashboards and integrators can branch on a stable code.
+        from .. import webhook_policy as _wp
+        if _wp.require_https(tenant_id) and str(body.url).lower().startswith("http://"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "webhook_https_required",
+                    "message": "workspace policy requires https for webhook destinations",
+                },
+            )
         raise HTTPException(400, str(e))
     hook_id = _new_id()
     secret = _new_secret()

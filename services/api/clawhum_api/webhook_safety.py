@@ -237,6 +237,16 @@ def validate_destination(url: str, tenant_id: str) -> ParsedDestination:
     settings = get_settings()
     parsed = parse_destination(url)
 
+    # Per-workspace HTTPS-only policy. Checked before any DNS so a
+    # plaintext URL fails fast with a structured reason and no network
+    # side effects. Strictly per tenant; the import is local to avoid
+    # an import cycle with audit/route modules.
+    from . import webhook_policy as _webhook_policy
+    if _webhook_policy.require_https(tenant_id) and parsed.scheme != "https":
+        raise WebhookDestinationError(
+            "workspace policy requires https for webhook destinations"
+        )
+
     # Host literal check (covers cases where DNS would not be queried).
     if parsed.host in _GLOBAL_DENY_HOSTS:
         raise WebhookDestinationError(

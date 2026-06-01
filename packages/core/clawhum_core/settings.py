@@ -167,11 +167,33 @@ class Settings(BaseSettings):
         ),
     )
     ip_allowlist_path: Path = Path("./data/ip_allowlist.jsonl")
+    trusted_proxies_path: Path = Field(
+        default=Path("./data/trusted_proxies.jsonl"),
+        description=(
+            "JSONL store for the per workspace trusted reverse proxy"
+            " CIDR list. Append only, tombstone deletes. Workspace"
+            " entries layer on top of CLAWHUM_TRUSTED_PROXIES_GLOBAL."
+        ),
+    )
+    trusted_proxies_global: str = Field(
+        default="",
+        description=(
+            "Comma separated CIDRs of reverse proxies the deployment"
+            " sits behind (ingress, load balancer, CDN). Only requests"
+            " whose socket peer is in this list have their"
+            " X-Forwarded-For header honoured when computing the"
+            " client IP. Empty means the API always uses the socket"
+            " peer, the safe default for a direct public exposure"
+            " but will reject office IP allowlists if the operator"
+            " forgot to configure their proxy here."
+        ),
+    )
     embed_origins_path: Path = Path("./data/embed_origins.jsonl")
     security_contacts_path: Path = Path("./data/security_contacts.jsonl")
     dsar_requests_path: Path = Path("./data/dsar_requests.jsonl")
     invite_domains_path: Path = Path("./data/invite_domains.jsonl")
     scope_policy_path: Path = Path("./data/scope_policy.jsonl")
+    webhook_policy_path: Path = Path("./data/webhook_policy.jsonl")
     dpa_acceptances_path: Path = Path("./data/dpa_acceptances.jsonl")
     support_access_path: Path = Path("./data/support_access.jsonl")
     sessions_path: Path = Path("./data/sessions.jsonl")

@@ -100,7 +100,7 @@ async def require_api_key(
                     headers = list(request.headers.items())
                     client_host = request.client.host if request.client else ""
                     resolved_ip = (
-                        ip_allowlist.client_ip_from_request(headers, client_host)
+                        ip_allowlist.client_ip_from_request(headers, client_host, tenant_id=pat.tenant_id)
                         or client_host
                         or ""
                     )
@@ -249,7 +249,7 @@ def _record_and_enforce_session(request: Request, *, actor: str, actor_kind: str
         return
     headers = {k.decode().lower(): v.decode() for k, v in request.headers.raw}
     client_host = request.client.host if request.client else ""
-    ip = ip_allowlist.client_ip_from_request(headers, client_host) or client_host or ""
+    ip = ip_allowlist.client_ip_from_request(headers, client_host, tenant_id=tenant_id) or client_host or ""
     user_agent = headers.get("user-agent", "")
     try:
         sess = session_store.touch(
@@ -306,7 +306,7 @@ def _enforce_pat_trusted_device(request: Request, pat: pat_store.PAT) -> None:
     headers = {k.decode().lower(): v.decode() for k, v in request.headers.raw}
     client_host = request.client.host if request.client else ""
     ip = (
-        ip_allowlist.client_ip_from_request(headers, client_host)
+        ip_allowlist.client_ip_from_request(headers, client_host, tenant_id=pat.tenant_id)
         or client_host
         or ""
     )
@@ -350,16 +350,17 @@ def _enforce_pat_ip_allowlist(request: Request, pat: pat_store.PAT) -> None:
     """Reject when the caller's IP is outside the per-PAT allowlist.
 
     Empty allowlist means "no restriction", matching how the workspace
-    allowlist behaves. Trusts the first X-Forwarded-For hop when set,
-    mirroring ``_enforce_ip_allowlist`` so a deployment behind a single
-    trusted proxy honours both gates identically. Operators who do not
-    terminate TLS at a trusted edge MUST strip XFF upstream.
+    allowlist behaves. ``X-Forwarded-For`` is only honoured when the
+    socket peer is in the trusted proxy list (deployment global plus
+    per workspace); otherwise the socket peer wins and any forwarding
+    header is ignored, so a direct client cannot spoof its source IP
+    to bypass the per-PAT allowlist.
     """
     if not pat.ip_cidrs:
         return
     headers = {k.decode().lower(): v.decode() for k, v in request.headers.raw}
     client_host = request.client.host if request.client else None
-    client_ip = ip_allowlist.client_ip_from_request(headers, client_host)
+    client_ip = ip_allowlist.client_ip_from_request(headers, client_host, tenant_id=pat.tenant_id)
     if not pat_store.ip_in_cidrs(client_ip, pat.ip_cidrs):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -463,10 +464,11 @@ def _enforce_ip_allowlist(request: Request) -> None:
     """Reject the request when the caller's IP is outside the tenant rules.
 
     No-op when allowlist enforcement is disabled globally or the tenant
-    has not configured any rules. Trusts the first X-Forwarded-For hop
-    so deployments behind a single trusted proxy work out of the box;
-    operators terminating TLS elsewhere should strip untrusted XFF
-    headers at the edge.
+    has not configured any rules. ``X-Forwarded-For`` is only honoured
+    when the socket peer is in the trusted proxy list (deployment
+    global plus per workspace); otherwise the socket peer wins, so a
+    direct client cannot spoof its source IP to bypass the workspace
+    allowlist.
     """
     settings = get_settings()
     if not settings.ip_allowlist_enabled:
@@ -476,7 +478,7 @@ def _enforce_ip_allowlist(request: Request) -> None:
         return
     headers = {k.decode().lower(): v.decode() for k, v in request.headers.raw}
     client_host = request.client.host if request.client else None
-    client_ip = ip_allowlist.client_ip_from_request(headers, client_host)
+    client_ip = ip_allowlist.client_ip_from_request(headers, client_host, tenant_id=tenant_id)
     if not ip_allowlist.is_allowed(tenant_id, client_ip):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

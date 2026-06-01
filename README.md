@@ -2,6 +2,32 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace HTTPS-only webhook policy
+
+SSRF protections already block private and cloud-metadata destinations, but the global default still allows plaintext `http://` receivers because some on-prem deployments terminate TLS at a load balancer one hop away. That default fails enterprise procurement: SOC2 CC6.7 and most DPAs require that webhook payloads (which carry signed records of customer data and an HMAC secret in every header) only ever cross TLS, and an `http://` delivery defeats the point of HMAC signing because an on-path attacker can read the same bytes the signature is meant to authenticate. Each workspace can now flip a single `require_https` policy under `/settings/webhook-policy`. While the policy is on, `POST /webhooks` rejects plaintext URLs with `HTTP 400` and a structured `{code: "webhook_https_required"}` body, and every delivery attempt re-checks the scheme right before send so a later policy flip starts failing pre-existing `http://` endpoints with the same code in their delivery log instead of leaking the payload. The settings page surfaces the count of existing plaintext endpoints before you flip the switch, so admins are warned which deliveries will start failing. Strictly per-workspace: tenant A turning enforcement on has zero effect on tenant B. Toggling the policy requires the admin role plus a fresh MFA step-up and is written to the audit log with before / after state. Pinned by `tests/integration/test_webhook_https_policy.py` which proves the 400 gate, the per-tenant isolation, and that https deliveries continue to flow once the policy is on.
+
+### Try it (webhook HTTPS policy)
+
+UI: open [`/settings/webhook-policy`](http://127.0.0.1:7452/settings/webhook-policy) to view the current policy, the count of existing plaintext endpoints, and to require https for the workspace. API:
+
+```bash
+# read the current policy + plaintext endpoint warning
+curl -sS http://127.0.0.1:7451/webhook-policy \
+  -H 'X-API-Key: sk_admin'
+
+# require https for every webhook destination in the workspace
+curl -sS -X PUT http://127.0.0.1:7451/webhook-policy \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"require_https": true}'
+
+# a plaintext registration now fails fast
+curl -sS -i -X POST http://127.0.0.1:7451/webhooks \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"url":"http://example.com/hook","events":["match.completed"]}'
+# HTTP/1.1 400 Bad Request
+# {"detail":{"code":"webhook_https_required","message":"workspace policy requires https for webhook destinations"}}
+```
+
 ## Per-PAT trusted device approval
 
 A leaked PAT secret should not be enough on its own. Each personal access token can now flip on strict device approval: the auth layer computes a stable device fingerprint from the resolved client IP prefix (/24 for IPv4, /48 for IPv6) plus a coarse User-Agent family (chrome, curl, python-requests, and so on), and rejects any request whose fingerprint is not on the approved list with `HTTP 403` plus an `X-Device-Fingerprint` response header so the workspace owner can approve it out of band. Unknown devices are auto-recorded as `pending` and surfaced on `/settings/keys` so admins see exactly who has tried to use the token, from which IP, with which UA family, and how often. Turning strict mode on does NOT auto-trust the device that was already in use, so a leaked-and-already-in-use token cannot silently approve the attacker. Toggling the bit and approving or forgetting a device require step-up MFA and are written to the audit chain via the existing mutation middleware. The approval list is strictly per (tenant_id, pat_id, fingerprint); cross workspace probes return 404 not 403 so token ids cannot be enumerated. Revoking the PAT tears down its device list. Pinned by `tests/integration/test_pat_trusted_devices.py` which proves the 403 gate, fingerprint scoping, and cross tenant isolation end to end.

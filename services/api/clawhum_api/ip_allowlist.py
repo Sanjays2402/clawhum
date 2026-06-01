@@ -179,12 +179,25 @@ def has_rules(tenant_id: str) -> bool:
     return bool(list_rules(tenant_id))
 
 
-def client_ip_from_request(headers: dict[str, str] | "Iterable[tuple[str, str]]", client_host: str | None) -> str:
+def client_ip_from_request(
+    headers: dict[str, str] | "Iterable[tuple[str, str]]",
+    client_host: str | None,
+    tenant_id: str | None = None,
+) -> str:
     """Extract the originating client IP.
 
-    Honors X-Forwarded-For (first hop) when present, falls back to the
-    socket peer. Returns "0.0.0.0" when nothing is known so callers can
-    deny safely without raising.
+    Only honours ``X-Forwarded-For`` when the socket peer is in the
+    configured trusted proxy set (deployment global plus per
+    workspace). Untrusted peers get their socket IP and any
+    forwarding header they sent is ignored, defeating the spoofed
+    XFF attack that would otherwise let a direct caller bypass the
+    workspace IP allowlist by forging a header.
+
+    Returns "0.0.0.0" when nothing is known so callers can deny
+    safely without raising. ``tenant_id`` is optional; when omitted,
+    only the deployment global proxy list is consulted, which is the
+    correct behaviour for pre auth code paths that have not yet
+    resolved the workspace.
     """
     if isinstance(headers, dict):
         xff = headers.get("x-forwarded-for") or headers.get("X-Forwarded-For") or ""
@@ -194,8 +207,5 @@ def client_ip_from_request(headers: dict[str, str] | "Iterable[tuple[str, str]]"
             if k.lower() == "x-forwarded-for":
                 xff = v
                 break
-    if xff:
-        first = xff.split(",")[0].strip()
-        if first:
-            return first
-    return client_host or "0.0.0.0"
+    from . import trusted_proxies
+    return trusted_proxies.resolve_client_ip(xff, client_host, tenant_id)

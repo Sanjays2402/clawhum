@@ -668,6 +668,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Webhook HTTPS-only policy */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">webhook transport policy</span>
+            <a
+              href="/settings/webhook-policy"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              configure
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            require https for every webhook destination in this workspace. blocks plaintext registrations and blocks deliveries to pre-existing http endpoints once enforcement is on.
+          </p>
+        </section>
+
         {/* Onboarding controls */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">
