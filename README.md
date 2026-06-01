@@ -16,6 +16,24 @@ curl -s -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
 
 Then open [`/admin/audit-chain`](http://127.0.0.1:7452/admin/audit-chain) to verify, copy the tail digest, and link the run from your SOC2 evidence pack.
 
+## Sub-processor registry and per-workspace acknowledgement
+
+Every enterprise procurement and EU data protection review asks for the GDPR Art. 28(2) list of sub-processors, the customer's last sign-off on that list, and the email addresses that should be notified before the list changes. ClawHum now ships all three.
+
+The global registry tracks each sub-processor (name, purpose, region, data categories, DPA URL, status) with a monotonically increasing revision number so customers can prove the exact list they acknowledged. Per-workspace acknowledgements are tenant scoped and reject a stale revision with `409` so a customer cannot blindly accept a list that changed under them. Per-workspace notification subscriptions hold the addresses we email before the registry changes.
+
+Platform admin workspaces (set via `CLAWHUM_SUBPROCESSORS_PLATFORM_ADMIN_TENANTS`) are the only ones that may mutate the global list. Every mutation passes through `AuditLogMiddleware` so the change becomes part of the immutable audit trail customers export during SOC2 / ISO 27001 evidence collection.
+
+### Try it
+
+```bash
+uv run python -m clawhum_api  # http://127.0.0.1:7451
+pnpm --filter clawhum-web dev # http://127.0.0.1:7450/settings/subprocessors
+
+curl -s -H "X-API-Key: $CLAWHUM_API_KEY" http://127.0.0.1:7451/v1/subprocessors
+curl -s -H "X-API-Key: $CLAWHUM_API_KEY" http://127.0.0.1:7451/v1/subprocessors/acknowledgement
+```
+
 ## Per-workspace webhook signing-secret max age (forced rotation)
 
 Webhook signing secrets are long-lived shared secrets and every SOC2 CC6.1 / ISO 27001 A.10.1.2 / NIST 800-53 SC-12 review wants them rotated on a defined cadence. Workspace owners can now set a per-tenant ceiling on `max_secret_age_days` at `/webhook-secret-rotation`: once any of that workspace's webhook secrets crosses the floor (anchored on the most recent rotation, falling back to `created_at` for hooks that have never rotated), `GET /webhooks` attaches `Sunset` (RFC 8594 IMF-fixdate of the missed deadline for the oldest stale hook), `Deprecation: true` per the IETF deprecation-header draft, an optional `Link: <docs>; rel="sunset"` pointing at the workspace's rotation runbook, plus `X-Clawhum-Webhook-Secret-Stale-Count`, `X-Clawhum-Webhook-Secret-Max-Age-Days`, and `X-Clawhum-Webhook-Secret-Oldest-Rotated-At` for SDKs that prefer structured numbers. A companion `GET /webhook-secret-rotation/stale` lists every offending hook id, URL, and age in days so a dashboard or cron job can prioritise rotations without scraping. Default `max_secret_age_days` is `0` (disabled), so existing tenants are unchanged. Storage is the same append-only JSONL last-writer-wins pattern used by every other per-workspace policy module, keyed by tenant id, so cross-tenant lookups are impossible: workspace A flipping the knob has zero effect on workspace B's hooks or warning headers. The CORS `expose_headers` list is extended so browser SDKs see the headers from cross-origin calls. Mutations require admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `webhook_secret_rotation.update` with before / after state. Pinned by `tests/integration/test_webhook_secret_rotation.py` which proves headers fire when a hook is past the floor, stay silent when it is under, are tenant-scoped (workspace B does not inherit workspace A's policy or its stale list), and malformed policy submissions are rejected with a structured 400.

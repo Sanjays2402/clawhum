@@ -31,6 +31,7 @@ from .routes import collections as collections_routes
 from .routes import embed_origins as embed_origins_routes
 from .routes import security_contacts as security_contacts_routes
 from .routes import support_access as support_access_routes
+from .routes import subprocessors as subprocessors_routes
 from .routes import legal_hold as legal_hold_routes
 from .routes import closure as closure_routes
 from .routes import feedback as feedback_routes
@@ -97,6 +98,8 @@ async def _lifespan(app: FastAPI):
     _trusted_proxies.reset_cache()
     from . import security_contacts as _security_contacts
     _security_contacts.reset_cache()
+    from . import subprocessors as _subprocessors
+    _subprocessors.reset_cache()
     from . import support_access as _support_access
     _support_access.reset_cache()
     from . import closure as _workspace_closure
@@ -263,6 +266,7 @@ def create_app() -> FastAPI:
     app.include_router(seat_limit_routes.router)
     app.include_router(embed_origins_routes.router)
     app.include_router(security_contacts_routes.router)
+    app.include_router(subprocessors_routes.router)
     app.include_router(support_access_routes.router)
     app.include_router(legal_hold_routes.router)
     app.include_router(closure_routes.router)
@@ -311,6 +315,7 @@ def create_app() -> FastAPI:
     app.include_router(seat_limit_routes.router, prefix="/v1")
     app.include_router(embed_origins_routes.router, prefix="/v1")
     app.include_router(security_contacts_routes.router, prefix="/v1")
+    app.include_router(subprocessors_routes.router, prefix="/v1")
     app.include_router(support_access_routes.router, prefix="/v1")
     app.include_router(legal_hold_routes.router, prefix="/v1")
     app.include_router(closure_routes.router, prefix="/v1")

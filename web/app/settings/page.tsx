@@ -668,6 +668,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Sub-processor registry (GDPR Art. 28) */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">sub-processors</span>
+            <a
+              href="/settings/subprocessors"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            the GDPR article 28 list of third parties that may process your data on our behalf, your last acknowledgement, and the addresses we notify before the list changes. tenant scoped; every mutation is audit logged.
+          </p>
+        </section>
+
         {/* Data subject access requests */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

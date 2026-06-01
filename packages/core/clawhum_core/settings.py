@@ -218,6 +218,20 @@ class Settings(BaseSettings):
     )
     embed_origins_path: Path = Path("./data/embed_origins.jsonl")
     security_contacts_path: Path = Path("./data/security_contacts.jsonl")
+    subprocessors_path: Path = Path("./data/subprocessors.jsonl")
+    subprocessor_tenant_path: Path = Path("./data/subprocessor_tenant.jsonl")
+    subprocessors_platform_admin_tenants: str = Field(
+        default="",
+        description=(
+            "Comma separated workspace ids whose admins may mutate"
+            " the GLOBAL sub-processor registry (Article 28(2) list)."
+            " Other workspaces can read the registry, manage their"
+            " own subscriptions, and record their own acknowledgement,"
+            " but only platform admin tenants may add, edit, or remove"
+            " entries. Empty means the registry is read only at the"
+            " HTTP layer; operators seed it via the JSONL file."
+        ),
+    )
     dsar_requests_path: Path = Path("./data/dsar_requests.jsonl")
     incidents_path: Path = Path("./data/security_incidents.jsonl")
     invite_domains_path: Path = Path("./data/invite_domains.jsonl")
