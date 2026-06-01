@@ -2,6 +2,30 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-PAT owner email and workspace credential inventory
+
+When a SOC2 or ISO 27001 reviewer asks "who owns each of your personal access tokens?" the honest answer used to be "grep chat history". Workspace owners can now tag every PAT with the contact email of the human who owns it (the on-call engineer for the CI job using it, the data scientist who pasted it into a notebook, etc.). The field is optional at mint time, validated to look like an email, and stored lowercased; existing tokens keep working unchanged. A new admin-only inventory at [`/settings/keys/inventory`](http://127.0.0.1:7452/settings/keys/inventory) lists every live PAT with its owner email and surfaces a `without_owner` count so the orphans get assigned before the next compliance review. Setting or clearing the owner email after the fact requires admin role plus a fresh MFA step-up because reassigning accountability for a live credential is a sensitive operation. Tenant scoping is enforced inside `pat_store.set_owner_email`: workspace A cannot read or mutate workspace B's tokens, and a cross-tenant id returns 404 so existence does not leak. Pinned by `tests/integration/test_pat_owner_email.py` which proves the field is captured at mint, malformed addresses are rejected with a structured 400, the setter is tenant-scoped, the inventory only counts the calling workspace's tokens, and reader-role callers are denied with 403.
+
+### Try it (PAT owner email)
+
+UI: open [`/settings/keys/inventory`](http://127.0.0.1:7452/settings/keys/inventory) to see every PAT plus its owner, and click `set owner` on any row to attach or change an email. API:
+
+```bash
+# Mint a PAT with an owner email
+curl -sS -X POST http://127.0.0.1:7451/keys \
+  -H "X-API-Key: $CLAWHUM_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"name":"ci-bot","owner_email":"sre@example.com"}'
+
+# Attach an owner to an existing PAT (admin + MFA)
+curl -sS -X PUT http://127.0.0.1:7451/admin/keys/$KEY_ID/owner-email \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d '{"owner_email":"oncall@example.com"}'
+
+# Read the workspace credential inventory
+curl -sS http://127.0.0.1:7451/admin/keys/inventory \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+```
+
 ## Per-PAT HTTP method allowlist
 
 Scopes decide what a token can do, path prefixes decide where it can reach, but neither lets a workspace mint a credential that is mechanically incapable of mutating state. A leaked `writer` PAT that should only ever issue `GET /match` calls can still drive a `POST /feedback` or a `DELETE /library/{id}` because role-based scopes are method-agnostic. Workspace owners can now pin any PAT to a list of HTTP verbs from `/settings/keys`: tick `GET` (or hit the read only preset) and a leak cannot mutate anything regardless of how broad the scopes were when it was minted. The allowlist accepts any of `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS`; `HEAD` is implicitly allowed whenever `GET` is so monitoring probes and HTTP caches do not break. Off-method requests are rejected with `405 Method Not Allowed`, a populated `Allow:` header listing the permitted verbs, and an `X-Pat-Method-Denied` breadcrumb so a misconfigured client surfaces the constraint in its own logs instead of looking like a server bug. Enforcement runs inside `auth.require_api_key` before `last_used` is touched, so a denied request does not light up the token in the activity timeline and a leak attempting blind writes cannot grease its way past the per-IP brute-force lockout either. The empty list means no restriction, which keeps every PAT minted before this field shipped working unchanged. Cross-tenant safety is the same shape as every other PAT setting here: `set_http_methods` returns `None` when the id is unknown or owned by a different workspace and the route surfaces that as `404` so existence is never leaked. Mutations require `writer` role plus a fresh MFA step-up because tightening or loosening the fence is destructive (a too-narrow set bricks a CI deploy; a loosened set widens the blast radius on a leak). Pinned by `tests/integration/test_pat_method_allowlist.py` which proves writes are blocked with 405 and the `Allow` header populated, the list can be tightened and cleared, unknown verbs return 400, and umbrella admins cannot widen acme's tokens.

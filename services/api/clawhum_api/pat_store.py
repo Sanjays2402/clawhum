@@ -141,6 +141,13 @@ class PAT:
     # scopes or path pinning. Layered on top of scopes (what) and
     # path_prefixes (where); this gates *how*.
     http_methods: frozenset[str] = frozenset()
+    # Per-PAT owner contact email. Optional free-text (validated as a
+    # syntactically reasonable address when non-empty). Surfacing this
+    # in the workspace key inventory lets a CISO answer the standard
+    # SOC2 CC6.1 ownership question ("who do we page if this credential
+    # is leaked?") without crawling chat history. Default empty so
+    # every PAT minted before this field shipped keeps working.
+    owner_email: str = ""
 
     def prior_secret_active(self, now: float | None = None) -> bool:
         if not self.prior_secret_hash or self.prior_secret_expires_at <= 0:
@@ -212,6 +219,7 @@ def _from_record(rec: dict[str, Any]) -> PAT:
         path_prefixes=normalise_path_prefixes(rec.get("path_prefixes") or []),
         require_device_approval=bool(rec.get("require_device_approval", False)),
         http_methods=normalise_http_methods(rec.get("http_methods") or []),
+        owner_email=normalise_owner_email(rec.get("owner_email") or "", allow_blank=True),
     )
 
 
@@ -316,6 +324,7 @@ def create(
     ip_cidrs: Iterable[str] | None = None,
     path_prefixes: Iterable[str] | None = None,
     http_methods: Iterable[str] | None = None,
+    owner_email: str | None = None,
 ) -> tuple[PAT, str]:
     """Mint a new PAT. Returns (record, plaintext_secret_shown_once).
 
@@ -355,6 +364,7 @@ def create(
     safe_cidrs = normalise_cidrs(ip_cidrs)
     safe_prefixes = normalise_path_prefixes(path_prefixes)
     safe_methods = normalise_http_methods(http_methods)
+    safe_owner_email = normalise_owner_email(owner_email or "", allow_blank=True)
     # Workspace concurrent-PAT cap: when an admin has pinned
     # ``max_active`` for this workspace, any mint that would push the
     # live token count over the cap is rejected here so the operator
@@ -408,6 +418,7 @@ def create(
         "path_prefixes": sorted(safe_prefixes),
         "require_device_approval": False,
         "http_methods": sorted(safe_methods),
+        "owner_email": safe_owner_email,
     }
     _append(rec)
     return _from_record(rec), secret
@@ -490,6 +501,7 @@ def rotate(
         "require_device_approval": current.require_device_approval,
         "http_methods": sorted(current.http_methods),
         "rotated_at": now,
+        "owner_email": current.owner_email,
     }
     _append(rec)
     return _from_record(rec), new_secret
@@ -528,6 +540,7 @@ def revoke(*, tenant_id: str, pat_id: str) -> bool:
         "require_device_approval": current.require_device_approval,
         "http_methods": sorted(current.http_methods),
         "revoked_at": time.time(),
+        "owner_email": current.owner_email,
     }
     _append(rec)
     return True
@@ -614,6 +627,7 @@ def touch_last_used(
         "path_prefixes": sorted(current.path_prefixes),
         "require_device_approval": current.require_device_approval,
         "http_methods": sorted(current.http_methods),
+        "owner_email": current.owner_email,
     }
     _append(rec)
 
@@ -660,6 +674,7 @@ def public_view(p: PAT) -> dict[str, Any]:
         "path_prefixes": sorted(p.path_prefixes),
         "require_device_approval": p.require_device_approval,
         "http_methods": sorted(p.http_methods),
+        "owner_email": p.owner_email,
         "max_age_minutes": (
             _policy.max_pat_age_minutes if _policy is not None else 0
         ),
@@ -839,6 +854,7 @@ def set_path_prefixes(
         "require_device_approval": current.require_device_approval,
         "http_methods": sorted(current.http_methods),
         "path_prefixes_updated_at": time.time(),
+        "owner_email": current.owner_email,
     }
     _append(rec)
     return _from_record(rec)
@@ -880,6 +896,7 @@ def set_ip_cidrs(
         "require_device_approval": current.require_device_approval,
         "http_methods": sorted(current.http_methods),
         "ip_updated_at": time.time(),
+        "owner_email": current.owner_email,
     }
     _append(rec)
     return _from_record(rec)
@@ -922,6 +939,7 @@ def set_require_device_approval(
         "require_device_approval": bool(required),
         "http_methods": sorted(current.http_methods),
         "device_policy_updated_at": time.time(),
+        "owner_email": current.owner_email,
     }
     _append(rec)
     return _from_record(rec)
@@ -964,6 +982,7 @@ def set_path_prefixes(
         "require_device_approval": current.require_device_approval,
         "http_methods": sorted(current.http_methods),
         "path_updated_at": time.time(),
+        "owner_email": current.owner_email,
     }
     _append(rec)
     return _from_record(rec)
@@ -1059,6 +1078,79 @@ def set_http_methods(
         "require_device_approval": current.require_device_approval,
         "http_methods": sorted(safe),
         "http_methods_updated_at": time.time(),
+        "owner_email": current.owner_email,
+    }
+    _append(rec)
+    return _from_record(rec)
+
+
+# --- Owner email -----------------------------------------------------
+
+_OWNER_EMAIL_MAX = 128
+_OWNER_EMAIL_RE = __import__("re").compile(
+    r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$"
+)
+
+
+def normalise_owner_email(raw: str | None, *, allow_blank: bool = True) -> str:
+    """Validate and lowercase a PAT owner email.
+
+    Empty / None is accepted when ``allow_blank`` is True (the field is
+    optional by default so existing tokens stay legal). Non-empty input
+    is stripped, lowercased, length-capped, and matched against a
+    pragmatic email regex. Raises :class:`ValueError` on bad input so
+    callers surface a structured 400.
+    """
+    s = (raw or "").strip().lower()
+    if not s:
+        if allow_blank:
+            return ""
+        raise ValueError("owner_email is required")
+    if len(s) > _OWNER_EMAIL_MAX:
+        raise ValueError(f"owner_email must be <= {_OWNER_EMAIL_MAX} chars")
+    if not _OWNER_EMAIL_RE.match(s):
+        raise ValueError("owner_email must look like name@example.com")
+    return s
+
+
+def set_owner_email(
+    *, tenant_id: str, pat_id: str, owner_email: str
+) -> "PAT | None":
+    """Replace the per-PAT owner email contact.
+
+    Empty string clears the value. Returns None when the token is
+    unknown or owned by another tenant so the caller surfaces a 404
+    without leaking existence across tenants. Raises :class:`ValueError`
+    when ``owner_email`` is non-blank and fails validation.
+    """
+    current = _reduce().get(pat_id)
+    if current is None or current.deleted or current.tenant_id != tenant_id:
+        return None
+    safe_email = normalise_owner_email(owner_email, allow_blank=True)
+    rec = {
+        "id": current.id,
+        "tenant_id": current.tenant_id,
+        "name": current.name,
+        "roles": sorted(current.roles),
+        "rpm": current.rpm,
+        "created_at": current.created_at,
+        "last_used_at": current.last_used_at,
+        "secret_hash": current.secret_hash,
+        "secret_hint": current.secret_hint,
+        "last_used_ip": current.last_used_ip,
+        "last_used_ua": current.last_used_ua,
+        "deleted": False,
+        "expires_at": current.expires_at,
+        "scopes": sorted(current.scopes),
+        "prior_secret_hash": current.prior_secret_hash,
+        "prior_secret_hint": current.prior_secret_hint,
+        "prior_secret_expires_at": current.prior_secret_expires_at,
+        "ip_cidrs": sorted(current.ip_cidrs),
+        "path_prefixes": sorted(current.path_prefixes),
+        "require_device_approval": current.require_device_approval,
+        "http_methods": sorted(current.http_methods),
+        "owner_email": safe_email,
+        "owner_email_updated_at": time.time(),
     }
     _append(rec)
     return _from_record(rec)
