@@ -83,9 +83,12 @@ class ExportManifest:
     row_counts: dict[str, int]
     total_rows: int
     sha256: str  # hash of the concatenated category payloads, for tamper-evidence
+    signature_key_id: str = ""
+    signature_alg: str = ""
+    signature_hex: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "tenant_id": self.tenant_id,
             "generated_at": self.generated_at,
             "generated_at_iso": time.strftime(
@@ -95,21 +98,33 @@ class ExportManifest:
             "row_counts": dict(sorted(self.row_counts.items())),
             "total_rows": self.total_rows,
             "sha256": self.sha256,
-            "schema_version": 1,
-            "notes": [
-                "Each <category>.jsonl file is newline-delimited JSON,"
-                " one record per line, scoped to tenant_id.",
-                "Secret fields (client_secret, token, endpoint_secret,"
-                " totp_secret, password) are replaced with the literal"
-                " string 'redacted'. Row shape and counts are preserved.",
-                "Rows written before multi tenancy was enabled have no"
-                " tenant_id tag and are surfaced only to the 'default'"
-                " tenant, matching scope_rows() elsewhere in the API.",
-                "Audit log is included as audit.jsonl. The append-only"
-                " forensic log is preserved on disk; this bundle is a"
-                " filtered copy, not a deletion.",
-            ],
+            "schema_version": 2,
         }
+        if self.signature_key_id and self.signature_hex:
+            out["signature"] = {
+                "key_id": self.signature_key_id,
+                "algorithm": self.signature_alg,
+                "value": self.signature_hex,
+                "verify_endpoint": "/v1/privacy/workspace-export/verify",
+            }
+        out["notes"] = [
+            "Each <category>.jsonl file is newline-delimited JSON,"
+            " one record per line, scoped to tenant_id.",
+            "Secret fields (client_secret, token, endpoint_secret,"
+            " totp_secret, password) are replaced with the literal"
+            " string 'redacted'. Row shape and counts are preserved.",
+            "Rows written before multi tenancy was enabled have no"
+            " tenant_id tag and are surfaced only to the 'default'"
+            " tenant, matching scope_rows() elsewhere in the API.",
+            "Audit log is included as audit.jsonl. The append-only"
+            " forensic log is preserved on disk; this bundle is a"
+            " filtered copy, not a deletion.",
+            "If present, signature.json carries a per-workspace"
+            " HMAC-SHA256 signature over (sha256, tenant_id,"
+            " generated_at). Verify via POST"
+            " /v1/privacy/workspace-export/verify.",
+        ]
+        return out
 
 
 def _iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
@@ -216,13 +231,35 @@ def build_export(tenant_id: str) -> tuple[bytes, ExportManifest]:
         hasher.update(b"\0")
         hasher.update(payloads[cat])
 
+    generated_at = time.time()
+    payload_sha = hasher.hexdigest()
+    # Sign the manifest sha bound to tenant + timestamp. Auto-mints a
+    # signing key for this tenant on first export so the contract
+    # "every export is signed" holds even for brand new workspaces.
+    from . import export_signing
+
+    try:
+        key_id, signature_hex = export_signing.sign_export(
+            tenant_id=tenant_id,
+            manifest_sha256=payload_sha,
+            generated_at=generated_at,
+        )
+        alg = export_signing.SIGNING_ALG
+    except Exception:
+        # Signing must never break a GDPR data export. If the key store
+        # is unwritable the bundle still ships with an empty signature.
+        key_id, signature_hex, alg = "", "", ""
+
     manifest = ExportManifest(
         tenant_id=tenant_id,
-        generated_at=time.time(),
+        generated_at=generated_at,
         app_version=__version__,
         row_counts=counts,
         total_rows=sum(counts.values()),
-        sha256=hasher.hexdigest(),
+        sha256=payload_sha,
+        signature_key_id=key_id,
+        signature_alg=alg,
+        signature_hex=signature_hex,
     )
 
     buf = io.BytesIO()
@@ -233,11 +270,45 @@ def build_export(tenant_id: str) -> tuple[bytes, ExportManifest]:
         )
         for category, blob in sorted(payloads.items()):
             zf.writestr(f"{category}.jsonl", blob)
+        # Standalone signature file so a verifier never has to parse the
+        # manifest to know what was signed.
+        if signature_hex:
+            zf.writestr(
+                "signature.json",
+                json.dumps(
+                    {
+                        "tenant_id": tenant_id,
+                        "key_id": key_id,
+                        "algorithm": alg,
+                        "manifest_sha256": payload_sha,
+                        "generated_at": int(generated_at),
+                        "signature": signature_hex,
+                        "verify_endpoint": "/v1/privacy/workspace-export/verify",
+                        "openssl_verify": (
+                            "printf '%s' '" + _signing_payload_preview(
+                                payload_sha, tenant_id, generated_at
+                            ) + "' | openssl dgst -sha256 -hmac \"$ESK_SECRET\""
+                        ),
+                    },
+                    indent=2,
+                    sort_keys=True,
+                ),
+            )
         zf.writestr(
             "README.txt",
             _readme_text(manifest),
         )
     return buf.getvalue(), manifest
+
+
+def _signing_payload_preview(
+    manifest_sha256: str, tenant_id: str, generated_at: float
+) -> str:
+    from . import export_signing
+
+    return export_signing.signing_message(
+        manifest_sha256, tenant_id, generated_at
+    ).decode("utf-8")
 
 
 def _serialise_jsonl(rows: list[dict[str, Any]]) -> bytes:
@@ -259,7 +330,16 @@ def _readme_text(manifest: ExportManifest) -> str:
         "\n"
         "Files:\n"
         "  manifest.json       Counts, integrity hash, schema info.\n"
+        "  signature.json      Per-workspace HMAC-SHA256 signature\n"
+        "                      (skip if your buyer does not verify).\n"
         "  <category>.jsonl    Newline-delimited JSON, tenant-scoped.\n"
+        "\n"
+        "To verify the signature:\n"
+        "  POST /v1/privacy/workspace-export/verify with the manifest\n"
+        "  body or upload signature.json. Server returns 200 if the\n"
+        "  bundle came from this workspace and was not modified, 400\n"
+        "  otherwise. Workspace owners can also verify offline using\n"
+        "  the plaintext secret shown on key mint or rotate.\n"
         "\n"
         "Secrets (client_secret, endpoint_secret, totp_secret, token,\n"
         "password) are replaced with the literal string 'redacted'.\n"

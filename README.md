@@ -2,6 +2,40 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Signed workspace data exports
+
+Enterprise procurement reviews ask the same question every time a GDPR or SOC2 export lands in a buyer's evidence vault: how do we prove this archive came from clawhum, for our workspace, and was not edited between download and review. The plain sha256 we already shipped on the manifest proved internal consistency but did not prove origin. Each workspace now mints a per-workspace HMAC-SHA256 signing key, exposed at `/export-signing` and managed from [`/settings/export-signing`](http://127.0.0.1:7452/settings/export-signing). Every workspace export is signed under the active key over a canonical payload that binds the manifest sha256 to the tenant id and the generation timestamp, so a signature minted for tenant A's bundle is mathematically incapable of validating tenant B's bundle. The signature, key id, and algorithm ride on the response as `x-clawhum-export-signature`, `x-clawhum-export-key-id`, and `x-clawhum-export-signature-alg`, are embedded inside the manifest under a `signature` block, and are written as a standalone `signature.json` so a compliance reviewer never has to parse the manifest to know what was signed. A new verify endpoint at `/v1/privacy/workspace-export/verify` accepts the full manifest dict (the friendliest path for a reviewer who just drags `manifest.json` from the bundle) or the four discrete fields, and is strictly tenant scoped: a verify call from tenant B against tenant A's signature is rejected before the HMAC math even runs. Keys can be rotated at any time; the previous secret stays valid for a 14 day grace window so signatures issued before rotation still verify cleanly. Mint, rotate, and reveal all require the admin role plus a fresh MFA step-up and every action lands in the tamper-evident audit chain as `export_signing.mint`, `export_signing.rotate`, or `export_signing.reveal` with before / after key state. The plaintext secret is shown exactly once on mint and rotate so the workspace owner can verify offline with `openssl dgst -sha256 -hmac` and the on-disk key store is chmod 600 best-effort to keep the secret off shared logs and backups. Pinned by `tests/integration/test_export_signing.py` which proves every export ships with a signature header and `signature.json`, that the manifest body verifies, that a tampered sha256 is rejected, that tenant B cannot verify tenant A's bundle in either upload mode, and that reader role cannot mint, rotate, or reveal.
+
+### Try it (signed workspace exports)
+
+UI: open [`/settings/export-signing`](http://127.0.0.1:7452/settings/export-signing) to mint or rotate the workspace signing key, reveal the active plaintext secret, and copy a ready-to-run verify snippet. API:
+
+```bash
+# read the public state of the signing key (any reader)
+curl -sS http://127.0.0.1:7451/export-signing \
+  -H 'X-API-Key: sk_admin'
+
+# mint the initial signing key (admin + MFA). Returns the secret once.
+curl -sS -X POST http://127.0.0.1:7451/export-signing/mint \
+  -H 'X-API-Key: sk_admin'
+
+# download a workspace export; the signature rides on response headers
+# and is also embedded inside signature.json in the ZIP.
+curl -sS -OJ http://127.0.0.1:7451/v1/privacy/workspace-export \
+  -H 'X-API-Key: sk_admin'
+
+# verify a downloaded bundle by uploading the manifest dict.
+unzip -p clawhum-workspace-*.zip manifest.json \
+  | curl -sS -X POST \
+      -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+      --data-binary @- \
+      http://127.0.0.1:7451/v1/privacy/workspace-export/verify
+
+# rotate the key (admin + MFA). Previous key keeps verifying for 14 days.
+curl -sS -X POST http://127.0.0.1:7451/export-signing/rotate \
+  -H 'X-API-Key: sk_admin'
+```
+
 ## Per-workspace PAT concurrency cap
 
 Enterprise procurement reviews routinely ask how many machine credentials a single workspace can hold at once and who controls that ceiling. A workspace with no upper bound on live PATs has unbounded blast radius if one admin account is compromised and encourages credential sprawl that nobody audits. Each workspace can now pin a single integer cap on the number of live, non-expired personal access tokens it may hold, exposed at `/pat-concurrency` and managed from [`/settings/pat-concurrency`](http://127.0.0.1:7452/settings/pat-concurrency). A value of 0 is the default and preserves current behaviour; values above the hard ceiling (10,000) are rejected with a Pydantic 422. Enforcement runs inside `pat_store.create` before any secret is generated, so a request that would push the live count over the cap never persists a row, never charges audit ink, and never returns a plaintext secret that could leak. When the cap is breached, `POST /keys` returns HTTP 429 with a structured `{error: "pat_concurrency_exceeded", live, max_active}` body and a `Retry-After: 0` header so the SDK can surface the real reason instead of treating the response as a generic rate limit. Revoking or expiring a token frees a slot immediately; the count is recomputed live from the same source of truth that authenticates incoming requests, so the dashboard can never disagree with enforcement. The cap is strictly per-tenant: tenant A capping at 1 PAT has zero effect on tenant B's mints or policy reads. Mutating the cap requires the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `pat_concurrency.update` with before / after state. Pinned by `tests/integration/test_pat_concurrency.py` which proves the default does not throttle, that the (N+1)-th mint is rejected with the structured 429, that revoking a token frees a slot for the next mint, and that cross-tenant isolation holds in both directions.

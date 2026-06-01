@@ -540,6 +540,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Export signing key */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">export signing</span>
+            <a
+              href="/settings/export-signing"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            sign every workspace data export with a per-workspace HMAC-SHA256 key so compliance reviewers can prove months later that an archived bundle was produced by clawhum for this workspace and was not modified. rotate any time; previous key keeps verifying for 14 days. admin role plus MFA required to mint or rotate.
+          </p>
+        </section>
+
         {/* Workspace PAT concurrency cap */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

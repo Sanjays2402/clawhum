@@ -36,6 +36,7 @@ from .routes import ip_allowlist as ip_allowlist_routes
 from .routes import trusted_proxies as trusted_proxies_routes
 from .routes import invite_domains as invite_domains_routes
 from .routes import scope_policy as scope_policy_routes
+from .routes import export_signing as export_signing_routes
 from .routes import pat_concurrency as pat_concurrency_routes
 from .routes import webhook_policy as webhook_policy_routes
 from .routes import webhook_delivery_rate as webhook_delivery_rate_routes
@@ -231,6 +232,7 @@ def create_app() -> FastAPI:
     app.include_router(support_access_routes.router)
     app.include_router(legal_hold_routes.router)
     app.include_router(closure_routes.router)
+    app.include_router(export_signing_routes.router)
     # Stable, version-pinned public API surface. The same routers are
     # mounted again under /v1 so integrators can target a URL we will not
     # break, while existing unversioned routes stay alive for the web UI.
@@ -258,6 +260,7 @@ def create_app() -> FastAPI:
     app.include_router(retention_routes.router, prefix="/v1")
     app.include_router(audit_routes.router, prefix="/v1")
     app.include_router(audit_forwarder_routes.router, prefix="/v1")
+    app.include_router(export_signing_routes.router, prefix="/v1")
     app.include_router(quotas_routes.router, prefix="/v1")
     app.include_router(budget_routes.router, prefix="/v1")
     app.include_router(residency_routes.router, prefix="/v1")

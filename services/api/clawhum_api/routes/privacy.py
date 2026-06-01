@@ -26,6 +26,8 @@ from ..auth import require_api_key, require_mfa, require_roles
 from ..privacy import actor_id_for, collect_events, redact_actor, redact_tenant_feedback
 from ..tenant import current_tenant_id, scope_rows
 from ..workspace_export import build_export, export_filename
+from .. import export_signing
+from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/v1/privacy", tags=["privacy"], dependencies=[Depends(require_api_key)])
 
@@ -93,16 +95,21 @@ async def workspace_export(request: Request) -> Any:
             "filename": export_filename(tenant_id, manifest.generated_at),
         })
     filename = export_filename(tenant_id, manifest.generated_at)
+    headers = {
+        "content-disposition": f'attachment; filename="{filename}"',
+        "x-clawhum-export-rows": str(manifest.total_rows),
+        "x-clawhum-export-sha256": manifest.sha256,
+        "x-clawhum-export-tenant": tenant_id,
+        "cache-control": "no-store",
+    }
+    if manifest.signature_hex:
+        headers["x-clawhum-export-signature"] = manifest.signature_hex
+        headers["x-clawhum-export-key-id"] = manifest.signature_key_id
+        headers["x-clawhum-export-signature-alg"] = manifest.signature_alg
     return Response(
         content=blob,
         media_type="application/zip",
-        headers={
-            "content-disposition": f'attachment; filename="{filename}"',
-            "x-clawhum-export-rows": str(manifest.total_rows),
-            "x-clawhum-export-sha256": manifest.sha256,
-            "x-clawhum-export-tenant": tenant_id,
-            "cache-control": "no-store",
-        },
+        headers=headers,
     )
 
 
@@ -155,4 +162,110 @@ async def delete_my_data(
         "tenant_id": tenant_id,
         "redacted_events": count,
         "redacted_feedback_rows": feedback_redacted,
+    })
+
+
+class VerifyExportRequest(BaseModel):
+    """Payload accepted by /workspace-export/verify.
+
+    Callers may either upload the full manifest dict (the contents of
+    ``manifest.json`` from the bundle), or supply the four discrete
+    fields ``manifest_sha256``, ``generated_at``, ``key_id``, and
+    ``signature``. Uploading the manifest dict is the friendlier path
+    for a compliance reviewer who just wants to drag-drop the file.
+    """
+
+    manifest: dict[str, Any] | None = Field(
+        default=None,
+        description="Full manifest.json dict from the export bundle.",
+    )
+    signature: str | None = Field(default=None, description="Hex signature.")
+    key_id: str | None = Field(default=None)
+    manifest_sha256: str | None = Field(default=None)
+    generated_at: float | None = Field(default=None)
+
+
+@router.post("/workspace-export/verify")
+async def verify_workspace_export(
+    body: VerifyExportRequest,
+    request: Request,
+) -> JSONResponse:
+    """Verify a workspace export signature without re-downloading the bundle.
+
+    Open to any authenticated caller in the tenant; verification leaks
+    no signing material. The endpoint is strictly tenant-scoped: a
+    signature for tenant A's bundle never verifies as tenant B's,
+    because we only look up the signing key for the caller's tenant.
+    Returns 200 with ``{"valid": true, ...}`` on success, 400 with
+    ``{"valid": false, "reason": "..."}`` on any failure mode.
+    """
+    tenant_id = current_tenant_id(request)
+
+    manifest = body.manifest or {}
+    sha = body.manifest_sha256 or str(manifest.get("sha256") or "")
+    gen = body.generated_at
+    if gen is None:
+        gen = manifest.get("generated_at")
+    sig_block = manifest.get("signature") if isinstance(manifest, dict) else None
+    if isinstance(sig_block, dict):
+        key_id = body.key_id or str(sig_block.get("key_id") or "")
+        sig = body.signature or str(sig_block.get("value") or "")
+    else:
+        key_id = body.key_id or ""
+        sig = body.signature or ""
+
+    if not sha or gen is None or not key_id or not sig:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "valid": False,
+                "reason": "missing one of manifest_sha256, generated_at, key_id, signature",
+            },
+        )
+
+    # Reject cross-tenant: if the manifest itself claims a different
+    # tenant_id, fail fast and loudly so a misfiled bundle is obvious.
+    claimed_tenant = str(manifest.get("tenant_id") or tenant_id)
+    if claimed_tenant and claimed_tenant != tenant_id:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "valid": False,
+                "reason": "manifest tenant_id does not match caller tenant",
+                "manifest_tenant_id": claimed_tenant,
+                "caller_tenant_id": tenant_id,
+            },
+        )
+
+    try:
+        generated_at = float(gen)
+    except (TypeError, ValueError):
+        return JSONResponse(
+            status_code=400,
+            content={"valid": False, "reason": "generated_at must be numeric"},
+        )
+
+    ok = export_signing.verify_export(
+        tenant_id=tenant_id,
+        key_id=key_id,
+        signature_hex=sig,
+        manifest_sha256=sha,
+        generated_at=generated_at,
+    )
+    if not ok:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "valid": False,
+                "reason": "signature does not match active or grace key",
+            },
+        )
+    key = export_signing.get_key(tenant_id)
+    return JSONResponse({
+        "valid": True,
+        "tenant_id": tenant_id,
+        "key_id": key_id,
+        "algorithm": export_signing.SIGNING_ALG,
+        "is_active_key": bool(key and key.key_id == key_id),
+        "verified_at": int(__import__("time").time()),
     })
