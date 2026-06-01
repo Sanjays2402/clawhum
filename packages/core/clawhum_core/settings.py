@@ -254,6 +254,10 @@ class Settings(BaseSettings):
     support_access_path: Path = Path("./data/support_access.jsonl")
     sessions_path: Path = Path("./data/sessions.jsonl")
     session_policy_path: Path = Path("./data/session_policy.jsonl")
+    system_use_notification_path: Path = Path(
+        "./data/system_use_notification.jsonl"
+    )
+    system_use_acks_path: Path = Path("./data/system_use_acks.jsonl")
     ip_allowlist_enabled: bool = Field(
         default=True,
         description=(

@@ -29,6 +29,7 @@ import {
   Pulse,
   GlobeHemisphereWest,
   HardDrives,
+  Megaphone,
   CloudArrowUp,
   Siren,
 } from "@phosphor-icons/react/dist/ssr";
@@ -706,6 +707,20 @@ export default function AdminConsolePage() {
             Oversized payloads return HTTP 413 before the route runs,
             so they never touch the worker or count against the
             monthly quota. Admin only, MFA gated.
+          </p>
+        </Card>
+
+        <Card
+          title="system use notification"
+          icon={<Megaphone size={14} weight="duotone" />}
+          href="/admin/system-use-notification"
+          hrefLabel="configure"
+        >
+          <p className="text-xs text-[var(--color-dim)]">
+            Per workspace login banner that every API actor must
+            acknowledge before mutating actions are allowed. Wording
+            changes bump the revision and force a fresh ack across
+            the workspace. Admin only, MFA gated.
           </p>
         </Card>
 

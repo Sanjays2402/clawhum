@@ -2,6 +2,33 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace system use notification with required acknowledgement
+
+NIST 800-53 AC-8 and the SOC2 / FedRAMP / DoD equivalents require buyers to display a system use notification before a user is allowed to act on the system, and to record that the user accepted it. ClawHum now ships the full control. Workspace owners set the banner text (title + body) at [`/admin/system-use-notification`](http://127.0.0.1:7452/admin/system-use-notification); changing the wording bumps a monotonic `revision` and invalidates every prior acknowledgement, forcing a fresh ack across the workspace. Every authenticated actor fetches the current banner from `GET /system-use-notification` and posts `POST /system-use-notification/ack` with the matching revision number. If the wording in flight at the server has moved on the ack endpoint returns `409 revision_mismatch` with the current revision so the client can re-prompt with the right text. Enforcement is handled by `SystemUseNotificationMiddleware`, which runs alongside the body-size cap so a mutating request (`POST`, `PUT`, `PATCH`, `DELETE`) from an actor who has not acked the current revision is rejected with `403 system_use_ack_required` plus `X-System-Use-Ack-Required: 1` and `X-System-Use-Notification-Revision: <n>` before the route or the tenant scope logic runs. The ack endpoint itself plus health, metrics, MFA, SSO, sessions, me, and SCIM are skipped so a locked-out workspace can always recover. The admin console also exposes the latest ack per actor (with IP and timestamp) for evidence packs. Storage uses the same append-only JSONL last-writer-wins pattern as every other per-workspace policy, keyed by tenant id, so cross-tenant lookups are impossible. Mutations to the banner require admin role plus a fresh MFA step-up and are written to the tamper-evident audit chain as `system_use_notification.update` with before / after diff; each ack is logged as `system_use_notification.ack`. Pinned by `tests/integration/test_system_use_notification.py` which proves the opt-in default, the 403 enforcement before ack and 200 after, the revision bump on wording change with stale-rev rejection at 409, and that tenant A's banner and ack roster do not leak to tenant B.
+
+### Try it (system use notification)
+
+```bash
+uv run python -m clawhum_api  # http://127.0.0.1:7451
+pnpm --filter clawhum-web dev # http://127.0.0.1:7452/admin/system-use-notification
+
+curl -s -X PUT http://127.0.0.1:7451/system-use-notification \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "X-MFA-Code: $TOTP" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"Authorized use only","body":"All activity on this system is logged. By continuing you consent to monitoring.","enforced":true}'
+
+curl -s -H "X-API-Key: $CLAWHUM_WRITER_KEY" \
+  http://127.0.0.1:7451/system-use-notification | jq
+
+curl -s -X POST http://127.0.0.1:7451/system-use-notification/ack \
+  -H "X-API-Key: $CLAWHUM_WRITER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"revision":1}'
+```
+
+Without an ack at the current revision every mutating call returns `403 system_use_ack_required`; the diagnostic headers tell SDKs to fetch the banner and prompt the user.
+
 ## Per-workspace SCIM bearer token max age (forced rotation)
 
 The SCIM 2.0 bearer token is the most powerful shared secret in the platform: a single string lets the buyer's IdP (Okta, Azure AD, Google Workspace) push joiners and leavers across the entire member roster. Every SOC2 CC6.1 / ISO 27001 A.10.1.2 / NIST 800-53 SC-12 review wants that secret rotated on a defined cadence. Workspace owners can now set a per-tenant ceiling on `max_token_age_days` at [`/settings/scim-token-rotation`](http://127.0.0.1:7450/settings/scim-token-rotation): once the active SCIM token crosses the floor, every `/scim/v2/*` response attaches `Sunset` (RFC 8594 IMF-fixdate of the missed deadline), `Deprecation: true` per the IETF deprecation-header draft, an optional `Link: <docs>; rel="sunset"` pointing at the workspace's rotation runbook, plus `X-Clawhum-SCIM-Token-Age-Days`, `X-Clawhum-SCIM-Token-Max-Age-Days`, and `X-Clawhum-SCIM-Token-Created-At` for IdP adapters that prefer structured numbers over date parsing. Default `max_token_age_days` is `0` (disabled), so existing tenants are unchanged. Storage uses the same append-only JSONL last-writer-wins pattern as every other per-workspace policy module, keyed by tenant id, so cross-tenant lookups are impossible: workspace A flipping the knob has zero effect on workspace B's SCIM responses. The CORS `expose_headers` list is extended so browser SDKs see the headers from cross-origin calls. Mutations require admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `scim_token_rotation.update` with before / after state. Pinned by `tests/integration/test_scim_token_rotation.py` which proves headers fire when the active token is past the floor, stay silent when it is fresh, are tenant-scoped (workspace B does not inherit workspace A's policy), and that disabling the policy cleanly stops the headers without rotating the live token.

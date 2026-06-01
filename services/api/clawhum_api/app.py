@@ -79,6 +79,8 @@ from .routes import sessions as sessions_routes
 from .routes import share as share_routes
 from .routes import spotify as spotify_routes
 from .routes import sso as sso_routes
+from .routes import system_use_notification as system_use_notification_routes
+from .system_use_notification_middleware import SystemUseNotificationMiddleware
 from .routes import seat_limit as seat_limit_routes
 from .routes import usage as usage_routes
 from .routes import webhooks as webhooks_routes
@@ -137,6 +139,8 @@ async def _lifespan(app: FastAPI):
     _match_topk.reset_cache()
     from . import sso_store as _sso_store
     _sso_store.reset_cache()
+    from . import system_use_notification as _system_use_notification
+    _system_use_notification.reset_cache()
     from . import quota_store as _quota_store
     _quota_store.reset_cache()
     from . import budget_store as _budget_store
@@ -180,6 +184,10 @@ def create_app() -> FastAPI:
     # size is never billed; it also resolves the tenant from the API
     # key header directly so the cap applies before any route runs.
     app.add_middleware(BodySizeMiddleware)
+    # System-use notification gate runs alongside the body-size cap so a
+    # request from an actor who has not acked the banner is rejected
+    # before the route or any tenant scoping logic runs.
+    app.add_middleware(SystemUseNotificationMiddleware)
     app.add_middleware(TenantScopeMiddleware)
     app.add_middleware(SimpleRateLimit, max_per_minute=settings.rate_limit_per_minute)
     # Idempotency-Key replay cache sits outside the rate limiter so a
@@ -292,6 +300,8 @@ def create_app() -> FastAPI:
     app.include_router(legal_hold_routes.router)
     app.include_router(closure_routes.router)
     app.include_router(classification_routes.router)
+    app.include_router(system_use_notification_routes.router)
+    app.include_router(system_use_notification_routes.router, prefix="/v1")
     app.include_router(export_signing_routes.router)
     # Stable, version-pinned public API surface. The same routers are
     # mounted again under /v1 so integrators can target a URL we will not
