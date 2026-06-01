@@ -700,6 +700,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Webhook delivery rate cap */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">webhook delivery rate</span>
+            <a
+              href="/settings/webhook-delivery-rate"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              configure
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            cap outbound deliveries per webhook per minute so a runaway producer cannot exceed the receiver budget. suppressed attempts are still recorded in the delivery log and audit trail.
+          </p>
+        </section>
+
         {/* Onboarding controls */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

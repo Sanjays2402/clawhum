@@ -36,6 +36,7 @@ from .routes import trusted_proxies as trusted_proxies_routes
 from .routes import invite_domains as invite_domains_routes
 from .routes import scope_policy as scope_policy_routes
 from .routes import webhook_policy as webhook_policy_routes
+from .routes import webhook_delivery_rate as webhook_delivery_rate_routes
 from .routes import dpa as dpa_routes
 from .routes import dsar as dsar_routes
 from .routes import keys as keys_routes
@@ -88,6 +89,8 @@ async def _lifespan(app: FastAPI):
     _scope_policy.reset_cache()
     from . import webhook_policy as _webhook_policy
     _webhook_policy.reset_cache()
+    from . import webhook_delivery_rate as _webhook_delivery_rate
+    _webhook_delivery_rate.reset_cache()
     from . import sso_store as _sso_store
     _sso_store.reset_cache()
     from . import quota_store as _quota_store
@@ -193,6 +196,7 @@ def create_app() -> FastAPI:
     app.include_router(invite_domains_routes.router)
     app.include_router(scope_policy_routes.router)
     app.include_router(webhook_policy_routes.router)
+    app.include_router(webhook_delivery_rate_routes.router)
     app.include_router(dpa_routes.router)
     app.include_router(dsar_routes.router)
     app.include_router(mfa_routes.router)

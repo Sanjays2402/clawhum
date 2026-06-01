@@ -17,6 +17,7 @@ import {
   Warning,
   Pause,
   Play,
+  Gauge,
 } from "@phosphor-icons/react/dist/ssr";
 
 interface WebhookItem {
@@ -71,6 +72,140 @@ function fmtTs(ms: number) {
   const d = new Date(ms);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+interface DeliveryRateState {
+  max_per_minute: number;
+  ceiling: number;
+  active_hook_count: number;
+  updated_at: number;
+  updated_by: string;
+}
+
+function DeliveryRateCard() {
+  const [state, setState] = useState<DeliveryRateState | null>(null);
+  const [draft, setDraft] = useState<string>("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const load = useCallback(async () => {
+    setErr(null);
+    try {
+      const r = await fetch("/api/webhook-delivery-rate", { cache: "no-store" });
+      if (!r.ok) throw new Error(`http ${r.status}`);
+      const data = (await r.json()) as DeliveryRateState;
+      setState(data);
+      setDraft(String(data.max_per_minute));
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "load failed");
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const save = useCallback(async () => {
+    if (!state) return;
+    const n = Number.parseInt(draft, 10);
+    if (!Number.isFinite(n) || n < 0) {
+      setErr("enter a non-negative integer");
+      return;
+    }
+    if (n > state.ceiling) {
+      setErr(`max is ${state.ceiling}`);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch("/api/webhook-delivery-rate", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ max_per_minute: n }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const detail = (body && body.detail) || body;
+        const msg = typeof detail === "string" ? detail : detail?.message || `http ${r.status}`;
+        throw new Error(msg);
+      }
+      setState(body as DeliveryRateState);
+      setDraft(String((body as DeliveryRateState).max_per_minute));
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1500);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : "save failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [draft, state]);
+
+  if (state === null && err === null) {
+    return (
+      <div className="border border-[var(--color-line)] p-4 bg-[var(--color-panel)] font-mono text-[11px] text-[var(--color-dim)]">
+        loading delivery rate policy...
+      </div>
+    );
+  }
+
+  const capValue = state?.max_per_minute ?? 0;
+  const enforced = capValue > 0;
+
+  return (
+    <div className="border border-[var(--color-line)] p-4 space-y-3 bg-[var(--color-panel)]">
+      <div className="flex items-center gap-2">
+        <Gauge size={14} weight="duotone" className="text-[var(--color-phosphor)]" />
+        <div className="font-mono text-[10px] uppercase tracking-widest text-[var(--color-dim)]">
+          per hook delivery rate cap
+        </div>
+        <div className="ml-auto font-mono text-[10px] text-[var(--color-dim)]">
+          {state ? `${state.active_hook_count} active hook${state.active_hook_count === 1 ? "" : "s"}` : ""}
+        </div>
+      </div>
+      <p className="font-mono text-[11px] text-[var(--color-dim)] max-w-[80ch]">
+        Caps outbound deliveries per individual webhook to this many per 60 second window. Extra events
+        are recorded with <code>rate_limited=true</code> and never sent to the receiver. 0 disables the cap.
+      </p>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2">
+        <input
+          type="number"
+          min={0}
+          max={state?.ceiling ?? 10000}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          className="w-32 bg-[var(--color-bg)] border border-[var(--color-line)] px-2 py-1.5 font-mono text-[12px] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-phosphor)]"
+        />
+        <span className="font-mono text-[10px] text-[var(--color-dim)]">per minute</span>
+        <button
+          disabled={busy || !state || draft === String(capValue)}
+          onClick={save}
+          className="border border-[var(--color-phosphor)] text-[var(--color-phosphor)] px-3 py-1.5 font-mono text-[11px] uppercase tracking-widest hover:bg-[rgba(0,255,140,0.06)] disabled:opacity-30 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+        >
+          <Check size={12} weight="duotone" /> {busy ? "saving" : "save"}
+        </button>
+        <span className="font-mono text-[10px] text-[var(--color-dim)]">
+          status: {enforced ? `enforced at ${capValue}/min` : "no cap"}
+        </span>
+        {saved && (
+          <span className="font-mono text-[10px] text-[var(--color-phosphor)] inline-flex items-center gap-1">
+            <CheckCircle size={11} weight="duotone" /> saved
+          </span>
+        )}
+      </div>
+      {err && (
+        <div className="font-mono text-[11px] text-[var(--color-amber)] inline-flex items-center gap-1.5">
+          <Warning size={12} weight="duotone" /> {err}
+        </div>
+      )}
+      {state && state.updated_at > 0 && (
+        <div className="font-mono text-[10px] text-[var(--color-dim)]">
+          last updated {fmtTs(state.updated_at * 1000)} by {state.updated_by || "unknown"}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function WebhooksPage() {
@@ -288,6 +423,8 @@ export default function WebhooksPage() {
         Each delivery carries an <code>X-Clawhum-Signature</code> header (HMAC-SHA256 of the body using your endpoint secret).
         Failed deliveries retry with exponential backoff up to three attempts.
       </p>
+
+      <DeliveryRateCard />
 
       {actionMsg && (
         <div

@@ -2,6 +2,30 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace per-hook outbound delivery rate cap
+
+The webhook stack already enforces SSRF safety, HTTPS-only transport, HMAC signing, retries with backoff, and a consecutive-failure circuit breaker. What it did not bound was sender-side delivery *rate*: a runaway producer inside a workspace (a debugging script, a mis-configured batch job, a single match endpoint hammered by a test suite) could fan out thousands of events per minute to a single customer endpoint and trip the receiver's own ingress rate limits or get the deployment classified as an attack. This release adds a per-workspace integer cap on outbound deliveries per individual webhook in any 60 second window, exposed at `/webhook-delivery-rate` and surfaced inline on the workspace `/webhooks` page. A value of 0 is the default and preserves current behaviour for existing tenants; values above the hard ceiling are rejected with a structured `{code: "webhook_delivery_rate_invalid"}` 400. When the cap is exceeded the dispatcher records a synthetic delivery row with `rate_limited=true`, `status=0`, `error="rate_limited_by_policy: N/min cap exceeded"` and skips the HTTP request, so the workspace audit log and the per-hook delivery log still show every suppression for incident review. Synthetic rate-limit rows do not themselves count toward the budget, so they cannot starve a recovered hook forever. Every suppression also writes `webhook.rate_limited` to the tamper-evident audit chain, and every policy mutation writes `webhook_delivery_rate.update` with before/after state. The cap is strictly per-tenant: tenant A capping at 1/min has zero effect on tenant B's deliveries or policy reads. Mutating the cap requires the admin role plus a fresh MFA step-up. Pinned by `tests/integration/test_webhook_delivery_rate.py` which proves the default does not throttle, that the (N+1)th delivery within 60s is suppressed and audited, that cross-tenant isolation holds in both directions, and that negative or out-of-range caps are rejected.
+
+### Try it (webhook delivery rate cap)
+
+UI: open [`/webhooks`](http://127.0.0.1:7452/webhooks) to view the current cap, the count of active hooks it covers, and to change it inline. API:
+
+```bash
+# read the current per-hook delivery rate cap and ceiling
+curl -sS http://127.0.0.1:7451/webhook-delivery-rate \
+  -H 'X-API-Key: sk_admin'
+
+# cap every webhook in this workspace at 30 deliveries per minute
+curl -sS -X PUT http://127.0.0.1:7451/webhook-delivery-rate \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"max_per_minute": 30}'
+
+# disable the cap (and fall back to the existing circuit breaker only)
+curl -sS -X PUT http://127.0.0.1:7451/webhook-delivery-rate \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"max_per_minute": 0}'
+```
+
 ## Trusted reverse proxies with X-Forwarded-For spoofing fix
 
 The API used to honour the first hop of `X-Forwarded-For` unconditionally when computing the client IP. That is a procurement-grade vulnerability: any direct caller can send `X-Forwarded-For: 10.0.0.5` to bypass a workspace IP allowlist, plant a forged IP in the audit log, and confuse PAT trusted device fingerprints. This release adds a trusted reverse proxy list (deployment-wide via `CLAWHUM_TRUSTED_PROXIES_GLOBAL`, with optional per-workspace extension under `/settings/trusted-proxies`) and only honours `X-Forwarded-For` when the socket peer falls inside that set. Untrusted callers get their socket IP and any forwarding header they sent is silently ignored. Resolution walks `X-Forwarded-For` right to left and stops at the first untrusted hop, matching the RFC 7239 model used by nginx `set_real_ip_from`, Rails `trusted_proxies`, and Express `trust proxy`. The fix is wired through every consumer of the client IP: workspace IP allowlist enforcement, per-PAT IP allowlist enforcement, PAT trusted device fingerprints, session touch records, and the DPA acceptance evidence record. The settings page shows the deployment global list (read only so a workspace admin cannot widen the operator's baseline trust), the workspace list (admin plus MFA to mutate, every change audited), and a live diagnostic of what the API thinks your socket peer and resolved client IP are so SecOps can verify their proxy is wired correctly without leaving the page. Workspace entries are tenant-scoped: tenant A cannot see, list, or delete tenant B's entries even with admin role. Pinned by `tests/integration/test_trusted_proxies.py` which proves that a spoofed `X-Forwarded-For` from an untrusted peer cannot bypass the workspace allowlist, that a single-hop ingress topology works once the loopback is trusted, and that workspace proxy lists do not leak across tenants.
@@ -23,6 +47,32 @@ curl -sS -X POST http://127.0.0.1:7451/trusted-proxies \
 # from an untrusted peer, this header is ignored and the socket IP is enforced
 curl -sS -i http://127.0.0.1:7451/me \
   -H 'X-API-Key: sk_admin' -H 'X-Forwarded-For: 10.5.5.5'
+```
+
+## Per-workspace per-hook webhook delivery rate cap
+
+The existing webhook stack already enforces SSRF safety, HTTPS-only transport, HMAC signing, retries with backoff, and a consecutive failure circuit breaker. What it does not bound is delivery rate: a runaway producer inside the workspace (a debugging script, a misconfigured batch job, a single match endpoint hammered by a test suite) can fan out thousands of events per minute to one customer endpoint, trip the receiver's ingress rate limit, and get the deployment classified as an attacker. Enterprise receivers (banks, CRMs, on-prem ITSM) explicitly require a sender-side cap. Each workspace can now set a per-hook `max_per_minute` ceiling under `/settings/webhook-delivery-rate`; the dispatcher counts real attempts over the last 60 seconds (skips and policy blocks do not count) and once the budget is spent it writes a synthetic delivery record with `status=0` and `rate_limited=true` instead of issuing the HTTP request, so the workspace audit and delivery log still shows the suppression. A value of `0` disables the cap and is the default so existing tenants see no behaviour change. The cap is per hook, not per tenant, because each receiver advertises its own budget. Reading the policy requires the `reader` role; writing it requires the `admin` role plus a fresh MFA step-up and the before/after state is written to the audit log. Tenant scoped on every read and write so tenant A cannot see or change tenant B's policy. Pinned by `tests/integration/test_webhook_delivery_rate.py` which proves the budget gate, that suppressed attempts are still recorded for the right tenant only, that the admin gate blocks non-admins, and that cross-tenant reads return only the caller's own policy.
+
+### Try it (webhook delivery rate)
+
+UI: open [`/settings/webhook-delivery-rate`](http://127.0.0.1:7452/settings/webhook-delivery-rate) to see the current cap, the number of active webhooks it applies to, and to change the ceiling. API:
+
+```bash
+# read the current per-hook cap for the workspace
+curl -sS http://127.0.0.1:7451/webhook-delivery-rate \
+  -H 'X-API-Key: sk_admin'
+
+# cap every webhook in this workspace at 120 deliveries per minute
+curl -sS -X PUT http://127.0.0.1:7451/webhook-delivery-rate \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -H 'X-MFA-Code: 123456' \
+  -d '{"max_per_minute":120}'
+
+# disable the cap (default behaviour)
+curl -sS -X PUT http://127.0.0.1:7451/webhook-delivery-rate \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -H 'X-MFA-Code: 123456' \
+  -d '{"max_per_minute":0}'
 ```
 
 ## Per-workspace HTTPS-only webhook policy

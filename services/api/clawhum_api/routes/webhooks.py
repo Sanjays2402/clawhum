@@ -36,6 +36,8 @@ from pydantic import BaseModel, Field, HttpUrl
 from ..auth import require_api_key, require_mfa, require_roles
 from ..tenant import current_tenant
 from .. import webhook_safety
+from .. import webhook_delivery_rate
+from ..audit import write_event as audit_write_event
 
 router = APIRouter(tags=["webhooks"])
 log = get_logger("clawhum.webhooks")
@@ -924,6 +926,84 @@ async def _deliver_one(
             webhook_id=hook["id"], tenant_id=tenant_id, reason=str(policy_err),
         )
         return delivery_id
+    # Per-workspace per-hook delivery rate cap. Enforced sender side so
+    # a runaway producer cannot fan out faster than the receiver has
+    # told us they can absorb. A cap of 0 is the default (no cap).
+    try:
+        cap = webhook_delivery_rate.max_per_minute(tenant_id)
+    except Exception:  # pragma: no cover - policy read must never break delivery
+        cap = 0
+    if cap > 0:
+        boundary = time.time() - 60.0
+        observed = 0
+        for rec in _iter_jsonl(_deliveries_path()):
+            if rec.get("webhook_id") != hook["id"]:
+                continue
+            if rec.get("tenant_id") != tenant_id:
+                continue
+            ts = float(rec.get("created_at") or 0.0)
+            if ts < boundary:
+                continue
+            # Synthetic skip records do not count toward the budget;
+            # only real attempts (HTTP issued or about to be) do.
+            if rec.get("rate_limited") or rec.get("policy_blocked"):
+                continue
+            observed += 1
+        if observed >= cap:
+            delivery_id = _new_id()
+            rec = {
+                "id": delivery_id,
+                "tenant_id": tenant_id,
+                "webhook_id": hook["id"],
+                "event": event,
+                "attempt": 1,
+                "status": 0,
+                "ok": False,
+                "elapsed_ms": 0,
+                "error": (
+                    f"rate_limited_by_policy: {cap}/min cap exceeded"
+                    f" (observed {observed} in last 60s)"
+                ),
+                "created_at": time.time(),
+                "rate_limited": True,
+                "rate_cap": cap,
+            }
+            if redelivery_of:
+                rec["redelivery_of"] = redelivery_of
+            if store_payload:
+                rec["payload"] = payload
+            _append_delivery(rec)
+            log.warning(
+                "webhook_delivery_rate_limited",
+                webhook_id=hook["id"], tenant_id=tenant_id,
+                cap=cap, observed=observed,
+            )
+            try:
+                audit_write_event(
+                    {
+                        "ts": rec["created_at"],
+                        "actor": "system:webhook-delivery-rate",
+                        "tenant_id": tenant_id,
+                        "target": hook["id"],
+                        "request_id": "",
+                        "path": f"/webhooks/{hook['id']}/deliver",
+                        "method": "INTERNAL",
+                        "action": "webhook.rate_limited",
+                        "status": 0,
+                        "detail": {
+                            "event": event,
+                            "cap": cap,
+                            "observed": observed,
+                            "delivery_id": delivery_id,
+                        },
+                    }
+                )
+            except Exception:  # pragma: no cover - audit must never break delivery
+                log.warning(
+                    "webhook_rate_limit_audit_failed",
+                    webhook_id=hook["id"],
+                )
+            return delivery_id
     async with httpx.AsyncClient() as client:
         for attempt in range(1, s.webhook_max_attempts + 1):
             t0 = time.perf_counter()
