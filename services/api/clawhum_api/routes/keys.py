@@ -75,6 +75,19 @@ class CreateKeyBody(BaseModel):
             "cannot also drain '/library' or '/exports'."
         ),
     )
+    http_methods: list[str] | None = Field(
+        default=None,
+        max_length=7,
+        description=(
+            "Optional list of HTTP methods the token may use. Empty "
+            "or omitted means no method restriction. Allowed verbs: "
+            "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS. Use "
+            "['GET','HEAD'] to mint a true read-only token whose leak "
+            "cannot mutate state regardless of scopes. HEAD is always "
+            "implicitly allowed when GET is, so monitoring probes do "
+            "not break."
+        ),
+    )
 
 
 class KeyView(BaseModel):
@@ -97,6 +110,7 @@ class KeyView(BaseModel):
     ip_cidrs: list[str] = Field(default_factory=list)
     path_prefixes: list[str] = Field(default_factory=list)
     require_device_approval: bool = False
+    http_methods: list[str] = Field(default_factory=list)
     # Force-rotation policy state (populated from active workspace
     # SessionPolicy on read). 0 / None mean the policy is unset.
     max_age_minutes: int = 0
@@ -210,6 +224,7 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
             scopes=normalise_scopes(body.scopes or []),
             ip_cidrs=body.ip_cidrs or [],
             path_prefixes=body.path_prefixes or [],
+            http_methods=body.http_methods or [],
         )
     except ValueError as exc:
         # scope_policy.ScopeNotAllowedError is a ValueError subclass;
@@ -544,6 +559,81 @@ async def set_key_path_allowlist(
         "path_prefixes": sorted(updated.path_prefixes),
     }
 
+
+class MethodAllowlistBody(BaseModel):
+    http_methods: list[str] = Field(
+        default_factory=list,
+        max_length=7,
+        description=(
+            "Replacement list of HTTP methods the token may use. "
+            "Pass an empty list to clear the restriction (any verb). "
+            "Allowed values: GET, HEAD, POST, PUT, PATCH, DELETE, "
+            "OPTIONS. Unknown verbs return 400 with the offending value."
+        ),
+    )
+
+
+class MethodAllowlistResponse(BaseModel):
+    ok: bool
+    id: str
+    http_methods: list[str]
+
+
+@router.put(
+    "/keys/{key_id}/method-allowlist",
+    response_model=MethodAllowlistResponse,
+    dependencies=[Depends(require_roles("writer")), Depends(require_mfa())],
+)
+async def set_key_method_allowlist(
+    key_id: str,
+    body: MethodAllowlistBody,
+    request: Request,
+) -> dict[str, Any]:
+    """Pin a PAT to a list of HTTP methods.
+
+    The empty list clears the restriction. Step-up MFA is required
+    because tightening or loosening the method fence is destructive:
+    flipping a read-only token to read-write widens the blast radius
+    on a leak, and pinning to a too-narrow set can lock a CI
+    pipeline out mid-deploy.
+    """
+    from ..dry_run import is_dry_run, preview
+    tenant = current_tenant_id(request)
+    existing = next(
+        (p for p in pat_store.live_for_tenant(tenant) if p.id == key_id),
+        None,
+    )
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    if is_dry_run(request):
+        return preview(
+            "api_key_method_allowlist",
+            key_id,
+            tenant_id=tenant,
+            name=existing.name,
+            previous=sorted(existing.http_methods),
+            requested=list(body.http_methods),
+        )
+    try:
+        updated = pat_store.set_http_methods(
+            tenant_id=tenant, pat_id=key_id, methods=body.http_methods
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid http_methods: {exc}",
+        )
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    return {
+        "ok": True,
+        "id": updated.id,
+        "http_methods": sorted(updated.http_methods),
+    }
 
 
 class IpHistoryEntryView(BaseModel):

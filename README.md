@@ -2,6 +2,36 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-PAT HTTP method allowlist
+
+Scopes decide what a token can do, path prefixes decide where it can reach, but neither lets a workspace mint a credential that is mechanically incapable of mutating state. A leaked `writer` PAT that should only ever issue `GET /match` calls can still drive a `POST /feedback` or a `DELETE /library/{id}` because role-based scopes are method-agnostic. Workspace owners can now pin any PAT to a list of HTTP verbs from `/settings/keys`: tick `GET` (or hit the read only preset) and a leak cannot mutate anything regardless of how broad the scopes were when it was minted. The allowlist accepts any of `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS`; `HEAD` is implicitly allowed whenever `GET` is so monitoring probes and HTTP caches do not break. Off-method requests are rejected with `405 Method Not Allowed`, a populated `Allow:` header listing the permitted verbs, and an `X-Pat-Method-Denied` breadcrumb so a misconfigured client surfaces the constraint in its own logs instead of looking like a server bug. Enforcement runs inside `auth.require_api_key` before `last_used` is touched, so a denied request does not light up the token in the activity timeline and a leak attempting blind writes cannot grease its way past the per-IP brute-force lockout either. The empty list means no restriction, which keeps every PAT minted before this field shipped working unchanged. Cross-tenant safety is the same shape as every other PAT setting here: `set_http_methods` returns `None` when the id is unknown or owned by a different workspace and the route surfaces that as `404` so existence is never leaked. Mutations require `writer` role plus a fresh MFA step-up because tightening or loosening the fence is destructive (a too-narrow set bricks a CI deploy; a loosened set widens the blast radius on a leak). Pinned by `tests/integration/test_pat_method_allowlist.py` which proves writes are blocked with 405 and the `Allow` header populated, the list can be tightened and cleared, unknown verbs return 400, and umbrella admins cannot widen acme's tokens.
+
+### Try it (PAT method allowlist)
+
+UI: open [`/settings/keys`](http://127.0.0.1:7452/settings/keys), click `method allowlist` on any token, tick the verbs (or hit `read only`), save. API:
+
+```bash
+# Mint a read-only token in one shot
+curl -sS -X POST http://127.0.0.1:7451/keys \
+  -H "X-API-Key: $CLAWHUM_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"name":"prod-readonly","http_methods":["GET"]}'
+
+# Tighten an existing token to GET only (writer + MFA)
+curl -sS -X PUT http://127.0.0.1:7451/keys/$KEY_ID/method-allowlist \
+  -H "X-API-Key: $CLAWHUM_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"http_methods":["GET"]}'
+
+# Watch a write get rejected with 405 + Allow header
+curl -sSI -X POST http://127.0.0.1:7451/feedback \
+  -H "X-API-Key: $READONLY_PAT" -H 'Content-Type: application/json' \
+  -d '{"query_id":"q","match_id":"m","rating":1}' | grep -iE 'http/|allow:|x-pat-method'
+
+# Clear the restriction (any verb again)
+curl -sS -X PUT http://127.0.0.1:7451/keys/$KEY_ID/method-allowlist \
+  -H "X-API-Key: $CLAWHUM_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"http_methods":[]}'
+```
+
 ## Expired pending-invite cleanup
 
 Pending invites that nobody ever accepted accumulate forever in the workspace roster. The token is already useless once `invite_expires_at` elapses (the accept endpoint refuses it) but the seat row stays in the list until an admin revokes it one by one, and SOC2 reviewers always ask for a dormant-credentials report that calls them out. Workspace owners can now see the backlog at [`/settings/expired-invites`](http://127.0.0.1:7452/settings/expired-invites), preview a cleanup with a dry run, and purge every expired pending invite in one click. The list endpoint is reader-gated so anyone with workspace access can verify the count for a compliance report; the purge is admin role plus a fresh MFA step-up and supports `?dry_run=true` so the action can be wired into CI without touching production state. Each tombstoned row is written through the same append-only log as a manual revoke, so the audit timeline still shows the full lifecycle. Tenant scoping is enforced inside `member_store`: workspace A cannot list or purge workspace B's expired invites no matter what tenant id the caller passes. Invites with `invite_expires_at == 0` (operator opted out of expiry) are intentionally excluded. Pinned by `tests/integration/test_expired_invites.py` which proves the list filters by expiry, the dry run does not mutate, the real purge is idempotent, and cross-tenant access is denied.

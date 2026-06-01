@@ -45,6 +45,7 @@ interface KeyRow {
   rotation_active?: boolean;
   ip_cidrs?: string[];
   path_prefixes?: string[];
+  http_methods?: string[];
   require_device_approval?: boolean;
   max_age_minutes?: number;
   age_seconds_remaining?: number | null;
@@ -173,6 +174,10 @@ export default function KeysPage() {
   const [pathDraft, setPathDraft] = useState<string>("");
   const [pathSaving, setPathSaving] = useState<string | null>(null);
   const [pathError, setPathError] = useState<string | null>(null);
+  const [methodId, setMethodId] = useState<string | null>(null);
+  const [methodDraft, setMethodDraft] = useState<string[]>([]);
+  const [methodSaving, setMethodSaving] = useState<string | null>(null);
+  const [methodError, setMethodError] = useState<string | null>(null);
   const [revokeAllError, setRevokeAllError] = useState<string | null>(null);
   const [historyId, setHistoryId] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState<string | null>(null);
@@ -375,6 +380,34 @@ export default function KeysPage() {
       setPathError(e?.message || String(e));
     } finally {
       setPathSaving(null);
+    }
+  }
+
+  async function saveMethodAllowlist(id: string) {
+    if (methodSaving) return;
+    setMethodSaving(id);
+    setMethodError(null);
+    const http_methods = methodDraft
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+    try {
+      const r = await fetch(`/api/keys/${id}/method-allowlist`, {
+        method: "PUT",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ http_methods }),
+      });
+      if (!r.ok) {
+        const msg = await r.text().catch(() => "");
+        setMethodError(msg || `failed with ${r.status}`);
+        return;
+      }
+      setMethodId(null);
+      setMethodDraft([]);
+      await refresh();
+    } catch (e: any) {
+      setMethodError(e?.message || String(e));
+    } finally {
+      setMethodSaving(null);
     }
   }
 
@@ -1007,6 +1040,23 @@ export default function KeysPage() {
                           : `${row.path_prefixes!.length} prefixes`
                         : "any"}
                     </span>
+                    <span
+                      title={
+                        (row.http_methods?.length ?? 0) > 0
+                          ? `Token only accepts: ${row.http_methods!.join(", ")}${row.http_methods!.includes("GET") && !row.http_methods!.includes("HEAD") ? " (HEAD implicit)" : ""}`
+                          : "Token usable with any HTTP verb. Click 'method allowlist' to restrict."
+                      }
+                      className={
+                        (row.http_methods?.length ?? 0) > 0
+                          ? "text-[var(--color-accent)]"
+                          : undefined
+                      }
+                    >
+                      methods:{" "}
+                      {(row.http_methods?.length ?? 0) > 0
+                        ? row.http_methods!.join(",")
+                        : "any"}
+                    </span>
                   </div>
                 </div>
                 {confirmId === row.id ? (
@@ -1162,6 +1212,75 @@ export default function KeysPage() {
                       Each entry must start with '/'. A request matches when its path equals the prefix or is followed by '/'. The token can always reach /me, /mfa, /sessions, and /keys/policy so it can rotate itself.
                     </p>
                   </div>
+                ) : methodId === row.id ? (
+                  <div className="flex flex-col gap-2 w-full sm:w-[28rem]">
+                    <label className="text-[11px] text-[var(--color-muted)] font-mono uppercase tracking-wider">
+                      allowed http methods
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].map((m) => {
+                        const on = methodDraft.includes(m);
+                        return (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() =>
+                              setMethodDraft((d) =>
+                                d.includes(m) ? d.filter((x) => x !== m) : [...d, m].sort()
+                              )
+                            }
+                            className={`px-2 py-1 rounded border text-[11px] font-mono ${
+                              on
+                                ? "border-[var(--color-accent)] text-[var(--color-accent)] bg-[var(--color-accent)]/10"
+                                : "border-[var(--color-line)] text-[var(--color-muted)] hover:bg-[var(--color-bg)]"
+                            }`}
+                            aria-pressed={on}
+                          >
+                            {m}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => saveMethodAllowlist(row.id)}
+                        disabled={methodSaving === row.id}
+                        className="px-3 py-1.5 rounded bg-[var(--color-accent)] text-[var(--color-bg)] text-xs font-medium hover:opacity-90 disabled:opacity-50"
+                      >
+                        {methodSaving === row.id ? "saving..." : "save"}
+                      </button>
+                      <button
+                        onClick={() => setMethodDraft(["GET"])}
+                        className="px-3 py-1.5 rounded border border-[var(--color-line)] text-xs"
+                        title="Quick preset: read-only token (GET only; HEAD implicit)."
+                      >
+                        read only
+                      </button>
+                      <button
+                        onClick={() => setMethodDraft([])}
+                        className="px-3 py-1.5 rounded border border-[var(--color-line)] text-xs"
+                        title="Empty selection removes the method restriction when saved."
+                      >
+                        clear
+                      </button>
+                      <button
+                        onClick={() => {
+                          setMethodId(null);
+                          setMethodDraft([]);
+                          setMethodError(null);
+                        }}
+                        className="px-3 py-1.5 rounded border border-[var(--color-line)] text-xs"
+                      >
+                        cancel
+                      </button>
+                      {methodError && (
+                        <span className="text-[11px] text-red-500 break-all">{methodError}</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-[var(--color-muted)]">
+                      Empty selection removes the restriction. Pin to GET to mint a true read-only token; HEAD is implicit so monitoring probes keep working. Step-up MFA is required when the workspace enforces it.
+                    </p>
+                  </div>
                 ) : (
                   <div className="flex items-center gap-2">
                     <button
@@ -1202,6 +1321,19 @@ export default function KeysPage() {
                       title="Restrict this token to specific URL path prefixes. Empty list means usable on any route."
                     >
                       <Terminal size={12} weight="duotone" /> path allowlist
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMethodId(row.id);
+                        setMethodDraft(row.http_methods ?? []);
+                        setMethodError(null);
+                      }}
+                      disabled={row.expired}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-[var(--color-line)] text-xs hover:bg-[var(--color-bg)] disabled:opacity-50"
+                      aria-label={`Edit HTTP method allowlist for ${row.name}`}
+                      title="Restrict this token to specific HTTP verbs. Pin to GET to mint a true read-only token."
+                    >
+                      <Terminal size={12} weight="duotone" /> method allowlist
                     </button>
                     <button
                       onClick={() => openHistory(row.id)}

@@ -157,6 +157,7 @@ async def require_api_key(
                 # pass for the request to proceed.
                 _enforce_pat_ip_allowlist(request, pat)
                 _enforce_pat_path_prefixes(request, pat)
+                _enforce_pat_http_methods(request, pat)
                 # Per-PAT trusted-device strict mode. When the owner
                 # has flipped this on, only approved device
                 # fingerprints may use the token; everything else is
@@ -498,6 +499,35 @@ def _enforce_pat_path_prefixes(request: Request, pat: pat_store.PAT) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"path {path} not in pat allowlist",
             headers={"X-Pat-Path-Denied": path[:200]},
+        )
+
+
+def _enforce_pat_http_methods(request: Request, pat: pat_store.PAT) -> None:
+    """Reject when the request method is outside the per-PAT allowlist.
+
+    Empty allowlist means "no restriction". Layered on top of scopes
+    (which decide *what* a token can do) and path prefixes (which
+    decide *where* it can reach); the method allowlist decides
+    *how*. This is the cleanest way to mint a true read-only PAT:
+    pin to {GET, HEAD} and a leaked token cannot mutate state
+    regardless of any other policy. We respond with 405 (not 403) so
+    the structured signal matches the underlying constraint and HTTP
+    caches and proxies treat the response correctly.
+    """
+    if not pat.http_methods:
+        return
+    method = (request.method or "").upper()
+    if not pat_store.method_matches_allowlist(method, pat.http_methods):
+        allowed = sorted(pat.http_methods)
+        if "GET" in pat.http_methods and "HEAD" not in pat.http_methods:
+            allowed = sorted(set(allowed) | {"HEAD"})
+        raise HTTPException(
+            status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+            detail=f"method {method} not in pat allowlist",
+            headers={
+                "Allow": ", ".join(allowed),
+                "X-Pat-Method-Denied": method[:16],
+            },
         )
 
 

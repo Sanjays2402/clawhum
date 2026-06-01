@@ -131,6 +131,16 @@ class PAT:
     # from any device. See pat_trusted_devices.py for fingerprint
     # computation and storage details.
     require_device_approval: bool = False
+    # Per-PAT HTTP method allowlist. Each entry is an uppercase HTTP
+    # verb (GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS). Empty set
+    # means "no restriction" so existing PATs minted before this
+    # field stay usable with any verb. When non-empty, requests whose
+    # method is not in the set are rejected with HTTP 405. This is
+    # the cleanest way to mint a true read-only token: pin a PAT to
+    # {GET, HEAD} and a leak cannot mutate state regardless of
+    # scopes or path pinning. Layered on top of scopes (what) and
+    # path_prefixes (where); this gates *how*.
+    http_methods: frozenset[str] = frozenset()
 
     def prior_secret_active(self, now: float | None = None) -> bool:
         if not self.prior_secret_hash or self.prior_secret_expires_at <= 0:
@@ -201,6 +211,7 @@ def _from_record(rec: dict[str, Any]) -> PAT:
         ip_cidrs=normalise_cidrs(rec.get("ip_cidrs") or []),
         path_prefixes=normalise_path_prefixes(rec.get("path_prefixes") or []),
         require_device_approval=bool(rec.get("require_device_approval", False)),
+        http_methods=normalise_http_methods(rec.get("http_methods") or []),
     )
 
 
@@ -304,6 +315,7 @@ def create(
     scopes: frozenset[str] | None = None,
     ip_cidrs: Iterable[str] | None = None,
     path_prefixes: Iterable[str] | None = None,
+    http_methods: Iterable[str] | None = None,
 ) -> tuple[PAT, str]:
     """Mint a new PAT. Returns (record, plaintext_secret_shown_once).
 
@@ -342,6 +354,7 @@ def create(
         pass
     safe_cidrs = normalise_cidrs(ip_cidrs)
     safe_prefixes = normalise_path_prefixes(path_prefixes)
+    safe_methods = normalise_http_methods(http_methods)
     # Workspace concurrent-PAT cap: when an admin has pinned
     # ``max_active`` for this workspace, any mint that would push the
     # live token count over the cap is rejected here so the operator
@@ -394,6 +407,7 @@ def create(
         "ip_cidrs": sorted(safe_cidrs),
         "path_prefixes": sorted(safe_prefixes),
         "require_device_approval": False,
+        "http_methods": sorted(safe_methods),
     }
     _append(rec)
     return _from_record(rec), secret
@@ -474,6 +488,7 @@ def rotate(
         "ip_cidrs": sorted(current.ip_cidrs),
         "path_prefixes": sorted(current.path_prefixes),
         "require_device_approval": current.require_device_approval,
+        "http_methods": sorted(current.http_methods),
         "rotated_at": now,
     }
     _append(rec)
@@ -511,6 +526,7 @@ def revoke(*, tenant_id: str, pat_id: str) -> bool:
         "ip_cidrs": sorted(current.ip_cidrs),
         "path_prefixes": sorted(current.path_prefixes),
         "require_device_approval": current.require_device_approval,
+        "http_methods": sorted(current.http_methods),
         "revoked_at": time.time(),
     }
     _append(rec)
@@ -597,6 +613,7 @@ def touch_last_used(
         "ip_cidrs": sorted(current.ip_cidrs),
         "path_prefixes": sorted(current.path_prefixes),
         "require_device_approval": current.require_device_approval,
+        "http_methods": sorted(current.http_methods),
     }
     _append(rec)
 
@@ -642,6 +659,7 @@ def public_view(p: PAT) -> dict[str, Any]:
         "ip_cidrs": sorted(p.ip_cidrs),
         "path_prefixes": sorted(p.path_prefixes),
         "require_device_approval": p.require_device_approval,
+        "http_methods": sorted(p.http_methods),
         "max_age_minutes": (
             _policy.max_pat_age_minutes if _policy is not None else 0
         ),
@@ -819,6 +837,7 @@ def set_path_prefixes(
         "ip_cidrs": sorted(current.ip_cidrs),
         "path_prefixes": sorted(safe),
         "require_device_approval": current.require_device_approval,
+        "http_methods": sorted(current.http_methods),
         "path_prefixes_updated_at": time.time(),
     }
     _append(rec)
@@ -859,6 +878,7 @@ def set_ip_cidrs(
         "prior_secret_expires_at": current.prior_secret_expires_at,
         "ip_cidrs": sorted(safe),
         "require_device_approval": current.require_device_approval,
+        "http_methods": sorted(current.http_methods),
         "ip_updated_at": time.time(),
     }
     _append(rec)
@@ -900,6 +920,7 @@ def set_require_device_approval(
         "ip_cidrs": sorted(current.ip_cidrs),
         "path_prefixes": sorted(current.path_prefixes),
         "require_device_approval": bool(required),
+        "http_methods": sorted(current.http_methods),
         "device_policy_updated_at": time.time(),
     }
     _append(rec)
@@ -941,7 +962,103 @@ def set_path_prefixes(
         "ip_cidrs": sorted(current.ip_cidrs),
         "path_prefixes": sorted(safe),
         "require_device_approval": current.require_device_approval,
+        "http_methods": sorted(current.http_methods),
         "path_updated_at": time.time(),
+    }
+    _append(rec)
+    return _from_record(rec)
+
+
+_VALID_HTTP_METHODS: frozenset[str] = frozenset({
+    "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS",
+})
+
+
+def normalise_http_methods(raw: Iterable[str] | None) -> frozenset[str]:
+    """Validate and canonicalise a list of HTTP method names.
+
+    Each entry is upper-cased and checked against the set of methods
+    the API actually serves. Unknown verbs raise ``ValueError`` so a
+    typo (\"GETS\", \"POSTT\") surfaces a 400 instead of silently
+    becoming a no-op fence. Duplicates collapse. An empty list (or
+    None) is returned as the empty frozenset which the enforcer
+    treats as \"no restriction\".
+    """
+    if not raw:
+        return frozenset()
+    out: set[str] = set()
+    for entry in raw:
+        s = str(entry or "").strip().upper()
+        if not s:
+            continue
+        if s not in _VALID_HTTP_METHODS:
+            raise ValueError(
+                f"unknown http method: {s!r} (allowed: "
+                + ", ".join(sorted(_VALID_HTTP_METHODS))
+                + ")"
+            )
+        out.add(s)
+    return frozenset(out)
+
+
+def method_matches_allowlist(method: str, methods: Iterable[str]) -> bool:
+    """Return True when ``method`` is permitted under ``methods``.
+
+    Empty ``methods`` means \"no restriction\" and is always True so
+    the field stays backward compatible with PATs minted before it
+    existed. HEAD is always implicitly allowed when GET is, because
+    HTTP requires HEAD to mirror GET semantics and refusing HEAD
+    while permitting GET would break well-behaved clients (caches,
+    monitoring probes) that issue HEAD as a cheap precheck.
+    """
+    method_set = frozenset(m.upper() for m in methods if m)
+    if not method_set:
+        return True
+    m = (method or "").upper()
+    if m in method_set:
+        return True
+    if m == "HEAD" and "GET" in method_set:
+        return True
+    return False
+
+
+def set_http_methods(
+    *, tenant_id: str, pat_id: str, methods: Iterable[str]
+) -> PAT | None:
+    """Replace the per-PAT HTTP method allowlist.
+
+    Empty list clears the restriction (token usable with any verb).
+    Raises ``ValueError`` on unknown verbs so the caller surfaces a
+    structured 400; returns None when the token is unknown or owned
+    by another tenant.
+    """
+    current = _reduce().get(pat_id)
+    if current is None or current.deleted or current.tenant_id != tenant_id:
+        return None
+    safe = normalise_http_methods(list(methods))
+    rec = {
+        "id": current.id,
+        "tenant_id": current.tenant_id,
+        "name": current.name,
+        "roles": sorted(current.roles),
+        "rpm": current.rpm,
+        "created_at": current.created_at,
+        "last_used_at": current.last_used_at,
+        "secret_hash": current.secret_hash,
+        "secret_hint": current.secret_hint,
+        "last_used_ip": current.last_used_ip,
+        "last_used_ua": current.last_used_ua,
+        "deleted": False,
+        "expires_at": current.expires_at,
+        "scopes": sorted(current.scopes),
+        "prior_secret_hash": current.prior_secret_hash,
+        "prior_secret_hint": current.prior_secret_hint,
+        "prior_secret_expires_at": current.prior_secret_expires_at,
+        "ip_cidrs": sorted(current.ip_cidrs),
+        "path_prefixes": sorted(current.path_prefixes),
+        "require_device_approval": current.require_device_approval,
+        "http_methods": sorted(safe),
+        "http_methods_updated_at": time.time(),
     }
     _append(rec)
     return _from_record(rec)
