@@ -640,6 +640,20 @@ export default function AdminConsolePage() {
         </Card>
 
         <Card
+          title="audit chain integrity"
+          icon={<ShieldCheck size={14} weight="duotone" />}
+          href="/admin/audit-chain"
+          hrefLabel="verify now"
+        >
+          <p className="text-xs text-[var(--color-dim)]">
+            Re-derive the SHA-256 hash chain over every audit log file
+            on disk to prove no row was edited, deleted, or reordered.
+            Pin this in your SOC2 evidence pack or schedule it from a
+            SIEM against the same GET /audit/verify endpoint.
+          </p>
+        </Card>
+
+        <Card
           title="data processing agreement"
           icon={<ShieldCheck size={14} weight="duotone" />}
           href="/admin/dpa"

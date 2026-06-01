@@ -104,6 +104,38 @@ def test_deleted_entry_breaks_chain(monkeypatch, tmp_path):
     assert "prev_hash mismatch" in (active["reason"] or "")
 
 
+def test_include_rotated_flag_narrows_to_active_file(monkeypatch, tmp_path):
+    """The include_rotated=false query must skip rotated siblings.
+
+    The admin console toggle relies on this server-side behaviour to
+    let an operator narrow a verification run to the active file when
+    debugging hot writes.
+    """
+    c, audit_path = _client(monkeypatch, tmp_path)
+    _emit_writes(c)
+    # Forge a corrupted rotated sibling on disk. With include_rotated
+    # the chain must report broken; without it the active file alone
+    # is clean.
+    rotated = audit_path.with_name(audit_path.name + ".1")
+    rotated.write_text("{\"not\": \"a real entry\"}\n", encoding="utf-8")
+
+    r_all = c.get("/audit/verify?include_rotated=true",
+                   headers={"X-API-Key": "sk_admin"})
+    assert r_all.status_code == 200
+    body_all = r_all.json()
+    assert body_all["ok"] is False
+    assert any(not f["ok"] for f in body_all["files"])
+    assert len(body_all["files"]) >= 2
+
+    r_active = c.get("/audit/verify?include_rotated=false",
+                       headers={"X-API-Key": "sk_admin"})
+    assert r_active.status_code == 200
+    body_active = r_active.json()
+    assert body_active["ok"] is True
+    assert len(body_active["files"]) == 1
+    assert body_active["files"][0]["ok"] is True
+
+
 def test_verify_requires_admin(monkeypatch, tmp_path):
     spec = "acme_ops:sk_admin:9999:admin:acme,acme_user:sk_member:9999:member:acme"
     monkeypatch.setenv("CLAWHUM_INDEX_PATH", str(tmp_path / "ix.npz"))

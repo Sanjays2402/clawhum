@@ -2,6 +2,20 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Audit log integrity console
+
+Every audit log entry already carries a SHA-256 of its payload plus the previous entry hash; what was missing was a procurement-facing surface to *prove* the chain holds without dropping to curl. The new admin page at [`/admin/audit-chain`](http://127.0.0.1:7452/admin/audit-chain) re-derives the chain across the active audit file and (by default) every rotated sibling on disk, then reports `ok`, `entries`, `valid`, the `first_bad_line` plus a human reason when broken, and the head `prev_hash` and tail `entry_hash` per file so an operator can pin the digests in their SOC2 evidence pack. A non-admin caller gets `403` from the route and a matching message in the UI; the existing role check on `GET /audit/verify` is unchanged. The page calls the same read-only endpoint that a SIEM can cron on a schedule, and the `include_rotated=false` toggle narrows the run to the active file when debugging hot writes. Pinned by `tests/integration/test_audit_chain.py` which proves the clean case, that editing a single field reports the offending line and reason, that deleting a line breaks the next entry, that the `include_rotated` flag actually narrows the scan, and that a member-role caller gets 403.
+
+### Try it (audit chain integrity)
+
+```bash
+curl -s -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  "http://127.0.0.1:7451/audit/verify?include_rotated=true" \
+  | jq '.ok, (.files | map({path, ok, first_bad_line, reason}))'
+```
+
+Then open [`/admin/audit-chain`](http://127.0.0.1:7452/admin/audit-chain) to verify, copy the tail digest, and link the run from your SOC2 evidence pack.
+
 ## Per-workspace webhook signing-secret max age (forced rotation)
 
 Webhook signing secrets are long-lived shared secrets and every SOC2 CC6.1 / ISO 27001 A.10.1.2 / NIST 800-53 SC-12 review wants them rotated on a defined cadence. Workspace owners can now set a per-tenant ceiling on `max_secret_age_days` at `/webhook-secret-rotation`: once any of that workspace's webhook secrets crosses the floor (anchored on the most recent rotation, falling back to `created_at` for hooks that have never rotated), `GET /webhooks` attaches `Sunset` (RFC 8594 IMF-fixdate of the missed deadline for the oldest stale hook), `Deprecation: true` per the IETF deprecation-header draft, an optional `Link: <docs>; rel="sunset"` pointing at the workspace's rotation runbook, plus `X-Clawhum-Webhook-Secret-Stale-Count`, `X-Clawhum-Webhook-Secret-Max-Age-Days`, and `X-Clawhum-Webhook-Secret-Oldest-Rotated-At` for SDKs that prefer structured numbers. A companion `GET /webhook-secret-rotation/stale` lists every offending hook id, URL, and age in days so a dashboard or cron job can prioritise rotations without scraping. Default `max_secret_age_days` is `0` (disabled), so existing tenants are unchanged. Storage is the same append-only JSONL last-writer-wins pattern used by every other per-workspace policy module, keyed by tenant id, so cross-tenant lookups are impossible: workspace A flipping the knob has zero effect on workspace B's hooks or warning headers. The CORS `expose_headers` list is extended so browser SDKs see the headers from cross-origin calls. Mutations require admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `webhook_secret_rotation.update` with before / after state. Pinned by `tests/integration/test_webhook_secret_rotation.py` which proves headers fire when a hook is past the floor, stay silent when it is under, are tenant-scoped (workspace B does not inherit workspace A's policy or its stale list), and malformed policy submissions are rejected with a structured 400.

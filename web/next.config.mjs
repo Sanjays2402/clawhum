@@ -99,6 +99,7 @@ const nextConfig = {
       { source: "/api/sso/discover", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/sso/discover` },
       { source: "/api/audit", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/audit` },
       { source: "/api/audit/export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/audit/export` },
+      { source: "/api/audit/verify", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/audit/verify` },
       { source: "/api/audit-forwarding", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/audit-forwarding` },
       { source: "/api/audit-forwarding/enable", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/audit-forwarding/enable` },
       { source: "/api/audit-forwarding/disable", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/audit-forwarding/disable` },
