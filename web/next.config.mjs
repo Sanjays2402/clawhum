@@ -52,6 +52,7 @@ const nextConfig = {
       { source: "/api/support-grants/:id/revoke", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/support-grants/:id/revoke` },
       { source: "/api/invite-domains", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/invite-domains` },
       { source: "/api/scope-policy", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/scope-policy` },
+      { source: "/api/auth-methods-policy", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/auth-methods-policy` },
       { source: "/api/export-signing", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/export-signing` },
       { source: "/api/export-signing/:action", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/export-signing/:action` },
       { source: "/api/v1/privacy/workspace-export/verify", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/workspace-export/verify` },

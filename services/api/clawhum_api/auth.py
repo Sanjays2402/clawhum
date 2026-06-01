@@ -8,7 +8,29 @@ from clawhum_core.settings import get_settings
 
 from .api_keys import ANON_TENANT_ID, DEV_TENANT_ID, ROLES, SCOPES, scopes_allowed_for_roles, get_registry
 from . import closure as workspace_closure
+from . import auth_methods_policy
 from . import ip_allowlist, pat_store, sessions as session_store, support_access
+
+
+def _enforce_auth_method(tenant_id: str, method: str) -> None:
+    """Reject the request when the workspace has disabled this credential class.
+
+    Returns 401 (not 403) with an ``auth_method_disabled`` detail and a
+    machine-readable ``X-Auth-Method-Disabled`` header naming the blocked
+    method so SDKs can route the error to a runbook ("mint a PAT" or
+    "use the SCIM token instead") without scraping the detail string.
+    The dev / open registry path bypasses this check because there is
+    no real tenant to scope the policy against.
+    """
+    if not tenant_id or tenant_id in {DEV_TENANT_ID, ANON_TENANT_ID}:
+        return
+    if auth_methods_policy.is_allowed(tenant_id, method):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=f"auth_method_disabled: '{method}' is disabled for this workspace",
+        headers={"X-Auth-Method-Disabled": method},
+    )
 
 
 async def require_api_key(
@@ -75,6 +97,7 @@ async def require_api_key(
                             "token from /settings/keys"
                         ),
                     )
+                _enforce_auth_method(pat.tenant_id or ANON_TENANT_ID, "pat")
                 request.state.api_key_name = f"pat:{pat.name}"
                 request.state.api_key_roles = pat.roles
                 request.state.api_key_scopes = pat.effective_scopes()
@@ -132,6 +155,7 @@ async def require_api_key(
                 _enforce_support_actor(request)
                 return x_api_key
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid api key")
+    _enforce_auth_method(key.tenant_id or ANON_TENANT_ID, "env_key")
     request.state.api_key_name = key.name
     request.state.api_key_roles = key.roles
     request.state.api_key_scopes = scopes_allowed_for_roles(key.roles)

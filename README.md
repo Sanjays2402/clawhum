@@ -2,6 +2,38 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace allowed authentication methods
+
+Three credential classes can authenticate against the clawhum API: deploy-time static keys configured via `CLAWHUM_API_KEYS` (`env_key`), personal access tokens minted from the dashboard (`pat`), and SCIM 2.0 bearer tokens issued to the workspace's IdP (`scim`). Enterprise security teams routinely want to disable a class once a stronger one is in place: after rolling out SSO plus SCIM they want PATs off so every machine actor is an IdP-managed service account; after standing up SCIM they want the deploy-time env keys off so every credential is tied to a named human. Each workspace now stores a per-tenant policy of which methods it accepts, exposed at `/auth-methods-policy` and managed from [`/settings/auth-methods`](http://127.0.0.1:7452/settings/auth-methods). When no policy is registered every method is allowed (existing customers are not broken). When `pat` is disabled, existing PATs are rejected on their next request with HTTP 401, `detail: auth_method_disabled`, and an `X-Auth-Method-Disabled: pat` header so SDKs can route to a runbook without scraping strings; new PAT mints at `POST /keys` are rejected with HTTP 403 and the same header. When `scim` is disabled, otherwise-valid SCIM bearer tokens are rejected with 401 so an admin can hard-lock the IdP push surface from the dashboard without rotating the integration. The policy is strictly tenant scoped: tenant A disabling PATs does not affect tenant B. The PUT endpoint refuses an empty methods array so an admin cannot lock the workspace out by accident, and requires admin role plus a fresh MFA step-up. Every change writes a tamper-evident audit event (`auth_methods_policy.update`) with before / after method sets and the request id. Pinned by `tests/integration/test_auth_methods_policy.py` which proves the no-policy default, that disabling PATs blocks both auth and mint with the runbook header, that the policy is tenant scoped, that an empty methods array is rejected at the HTTP edge, and that unknown method ids are silently dropped.
+
+### Try it (auth methods policy)
+
+```bash
+# View current policy (returns enforcing=false when nothing is pinned).
+curl -s http://127.0.0.1:7451/auth-methods-policy \
+  -H "X-API-Key: $CLAWHUM_API_KEY"
+
+# Disable PATs for this workspace, keep env keys and SCIM.
+curl -s -X PUT http://127.0.0.1:7451/auth-methods-policy \
+  -H "X-API-Key: $CLAWHUM_API_KEY" -H "Content-Type: application/json" \
+  -d '{"methods":["env_key","scim"]}'
+
+# An existing PAT now returns 401 with the machine-readable runbook header.
+curl -i http://127.0.0.1:7451/me -H "X-API-Key: $OLD_PAT"
+# HTTP/1.1 401 Unauthorized
+# X-Auth-Method-Disabled: pat
+
+# A fresh mint is rejected with 403 and the same header.
+curl -i -X POST http://127.0.0.1:7451/keys \
+  -H "X-API-Key: $CLAWHUM_API_KEY" -H "Content-Type: application/json" \
+  -d '{"name":"ci","roles":["writer"]}'
+
+# Reset to the open default by pinning every method.
+curl -s -X PUT http://127.0.0.1:7451/auth-methods-policy \
+  -H "X-API-Key: $CLAWHUM_API_KEY" -H "Content-Type: application/json" \
+  -d '{"methods":["env_key","pat","scim"]}'
+```
+
 ## Signed workspace data exports
 
 Enterprise procurement reviews ask the same question every time a GDPR or SOC2 export lands in a buyer's evidence vault: how do we prove this archive came from clawhum, for our workspace, and was not edited between download and review. The plain sha256 we already shipped on the manifest proved internal consistency but did not prove origin. Each workspace now mints a per-workspace HMAC-SHA256 signing key, exposed at `/export-signing` and managed from [`/settings/export-signing`](http://127.0.0.1:7452/settings/export-signing). Every workspace export is signed under the active key over a canonical payload that binds the manifest sha256 to the tenant id and the generation timestamp, so a signature minted for tenant A's bundle is mathematically incapable of validating tenant B's bundle. The signature, key id, and algorithm ride on the response as `x-clawhum-export-signature`, `x-clawhum-export-key-id`, and `x-clawhum-export-signature-alg`, are embedded inside the manifest under a `signature` block, and are written as a standalone `signature.json` so a compliance reviewer never has to parse the manifest to know what was signed. A new verify endpoint at `/v1/privacy/workspace-export/verify` accepts the full manifest dict (the friendliest path for a reviewer who just drags `manifest.json` from the bundle) or the four discrete fields, and is strictly tenant scoped: a verify call from tenant B against tenant A's signature is rejected before the HMAC math even runs. Keys can be rotated at any time; the previous secret stays valid for a 14 day grace window so signatures issued before rotation still verify cleanly. Mint, rotate, and reveal all require the admin role plus a fresh MFA step-up and every action lands in the tamper-evident audit chain as `export_signing.mint`, `export_signing.rotate`, or `export_signing.reveal` with before / after key state. The plaintext secret is shown exactly once on mint and rotate so the workspace owner can verify offline with `openssl dgst -sha256 -hmac` and the on-disk key store is chmod 600 best-effort to keep the secret off shared logs and backups. Pinned by `tests/integration/test_export_signing.py` which proves every export ships with a signature header and `signature.json`, that the manifest body verifies, that a tampered sha256 is rejected, that tenant B cannot verify tenant A's bundle in either upload mode, and that reader role cannot mint, rotate, or reveal.

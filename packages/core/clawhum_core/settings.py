@@ -193,6 +193,7 @@ class Settings(BaseSettings):
     dsar_requests_path: Path = Path("./data/dsar_requests.jsonl")
     invite_domains_path: Path = Path("./data/invite_domains.jsonl")
     scope_policy_path: Path = Path("./data/scope_policy.jsonl")
+    auth_methods_policy_path: Path = Path("./data/auth_methods_policy.jsonl")
     export_signing_keys_path: Path = Path("./data/export_signing_keys.jsonl")
     webhook_policy_path: Path = Path("./data/webhook_policy.jsonl")
     webhook_delivery_rate_path: Path = Path("./data/webhook_delivery_rate.jsonl")

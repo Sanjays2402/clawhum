@@ -36,6 +36,7 @@ from .routes import ip_allowlist as ip_allowlist_routes
 from .routes import trusted_proxies as trusted_proxies_routes
 from .routes import invite_domains as invite_domains_routes
 from .routes import scope_policy as scope_policy_routes
+from .routes import auth_methods_policy as auth_methods_policy_routes
 from .routes import export_signing as export_signing_routes
 from .routes import pat_concurrency as pat_concurrency_routes
 from .routes import webhook_policy as webhook_policy_routes
@@ -91,6 +92,8 @@ async def _lifespan(app: FastAPI):
     _workspace_closure.reset_cache()
     from . import scope_policy as _scope_policy
     _scope_policy.reset_cache()
+    from . import auth_methods_policy as _auth_methods_policy
+    _auth_methods_policy.reset_cache()
     from . import pat_concurrency as _pat_concurrency
     _pat_concurrency.reset_cache()
     from . import webhook_policy as _webhook_policy
@@ -207,6 +210,7 @@ def create_app() -> FastAPI:
     app.include_router(trusted_proxies_routes.router)
     app.include_router(invite_domains_routes.router)
     app.include_router(scope_policy_routes.router)
+    app.include_router(auth_methods_policy_routes.router)
     app.include_router(pat_concurrency_routes.router)
     app.include_router(webhook_policy_routes.router)
     app.include_router(webhook_delivery_rate_routes.router)
@@ -250,6 +254,7 @@ def create_app() -> FastAPI:
     app.include_router(trusted_proxies_routes.router, prefix="/v1")
     app.include_router(invite_domains_routes.router, prefix="/v1")
     app.include_router(scope_policy_routes.router, prefix="/v1")
+    app.include_router(auth_methods_policy_routes.router, prefix="/v1")
     app.include_router(pat_concurrency_routes.router, prefix="/v1")
     app.include_router(webhook_policy_routes.router, prefix="/v1")
     app.include_router(dpa_routes.router, prefix="/v1")

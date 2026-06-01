@@ -156,6 +156,20 @@ async def keys_policy(request: Request) -> dict[str, Any]:
 )
 async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
     tenant = current_tenant_id(request)
+    # Per-workspace allowed-auth-methods policy. When a workspace has
+    # disabled the 'pat' credential class, block mint at the door with
+    # a deterministic 403 so the UI can surface the runbook ("contact
+    # an owner to re-enable PATs or use a SCIM-provisioned account").
+    from .. import auth_methods_policy as _amp
+    if not _amp.is_allowed(tenant, "pat"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "pat_minting_disabled: personal access tokens are "
+                "disabled for this workspace by the auth methods policy"
+            ),
+            headers={"X-Auth-Method-Disabled": "pat"},
+        )
     caller_roles: frozenset[str] = getattr(request.state, "api_key_roles", frozenset())
     # Default to whatever the caller already has, intersected with the
     # canonical role set. This makes the common case (writer mints a

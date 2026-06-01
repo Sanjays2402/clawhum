@@ -540,6 +540,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Allowed authentication methods */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">auth methods</span>
+            <a
+              href="/settings/auth-methods"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            choose which credential classes this workspace accepts: deploy time env keys, personal access tokens, scim bearer tokens. disabled methods are rejected at the auth layer and pat mint is blocked when pats are off. admin role plus MFA required.
+          </p>
+        </section>
+
         {/* Export signing key */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

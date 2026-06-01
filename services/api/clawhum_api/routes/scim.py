@@ -95,6 +95,17 @@ def _require_scim_bearer(request: Request, authorization: str) -> str:
     row = scim_tokens.lookup(token)
     if row is None:
         raise _scim_error("invalid scim bearer token", status.HTTP_401_UNAUTHORIZED)
+    # Per-workspace allowed-auth-methods policy. A workspace that has
+    # disabled scim must reject the bearer even though it is otherwise
+    # valid, so an admin can hard-lock the surface from the dashboard
+    # without rotating the IdP integration. 401 keeps the SCIM client
+    # behaviour identical to a revoked token.
+    from .. import auth_methods_policy as _amp
+    if not _amp.is_allowed(row.tenant_id, "scim"):
+        raise _scim_error(
+            "scim is disabled for this workspace",
+            status.HTTP_401_UNAUTHORIZED,
+        )
     # Stamp request state so AuditLogMiddleware credits the correct
     # tenant and the SCIM actor name shows up in the audit feed.
     request.state.api_key_name = f"scim:{row.tenant_id}"
