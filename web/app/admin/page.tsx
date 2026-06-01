@@ -28,6 +28,7 @@ import {
   Warning,
   Pulse,
   GlobeHemisphereWest,
+  HardDrives,
   CloudArrowUp,
 } from "@phosphor-icons/react/dist/ssr";
 import { getApiKey } from "@/lib/apiKey";
@@ -648,6 +649,20 @@ export default function AdminConsolePage() {
             a rolling 30 day window. Bounds the month while rate limits
             bound the rate. Returns HTTP 402 past the cap or runs in
             audit only mode during rollout. Admin only, MFA gated.
+          </p>
+        </Card>
+
+        <Card
+          title="request body cap"
+          icon={<HardDrives size={14} weight="duotone" />}
+          href="/admin/body-size"
+          hrefLabel="configure"
+        >
+          <p className="text-xs text-[var(--color-dim)]">
+            Workspace ceiling on the size of any inbound request body.
+            Oversized payloads return HTTP 413 before the route runs,
+            so they never touch the worker or count against the
+            monthly quota. Admin only, MFA gated.
           </p>
         </Card>
 

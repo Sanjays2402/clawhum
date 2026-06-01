@@ -2,6 +2,30 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace request body size cap
+
+Enterprise security reviews flag any API that accepts unbounded request bodies as a denial-of-service and storage-cost risk. The match and batch routes already enforce ad-hoc 413s on their own archive uploads, but there was no platform-wide ceiling: a careless caller, a leaked API key, or a malicious integration could POST a half-gigabyte JSON document at any chargeable route and force the worker to buffer the entire payload before validation ran. Each workspace can now pin a single integer cap on the largest request body the API will accept on any chargeable route, exposed at `/body-size` and managed from [`/admin/body-size`](http://127.0.0.1:7452/admin/body-size). A value of 0 is the default and preserves current behaviour for existing tenants; values above the hard ceiling (256 MiB) are rejected with a structured `{code: "body_size_invalid"}` 400. Enforcement runs in a dedicated middleware that resolves the tenant from the API key header before the route dependency chain, in two layers: a pre-flight `Content-Length` check rejects oversized declared payloads without touching the body stream, and a wrapped receive channel cuts off chunked senders that lie about the length the moment the running total crosses the cap. Either path returns HTTP 413 with a structured `{code: "request_body_too_large", max_bytes, observed_bytes}` body and an `X-Body-Size-Limit` header so SDKs can chunk and retry cleanly. Health, readiness, metrics, and the body-size admin surface itself are always exempt so an admin who set the cap too tight can still raise it. The middleware sits alongside the budget middleware (inside the tenant scope and outside idempotency) so a request rejected for size is never billed and never replayed from cache. The cap is strictly per-tenant: tenant A capping at 1 KiB has zero effect on tenant B's POSTs or policy reads. Mutating the cap requires the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `body_size.update` with before / after state. Pinned by `tests/integration/test_body_size.py` which proves the default does not throttle, that an oversized POST is rejected with the structured 413 and the limit header, that the admin surface itself is exempt, that cross-tenant isolation holds in both directions, that negative and out-of-range values are rejected with a structured 400, and that every mutation appears in the audit log with before / after state.
+
+### Try it (request body size cap)
+
+UI: open [`/admin/body-size`](http://127.0.0.1:7452/admin/body-size) to view the current cap, the ceiling, and raise, tighten, or clear it inline. API:
+
+```bash
+# read the current per-workspace body size cap and ceiling
+curl -sS http://127.0.0.1:7451/body-size \
+  -H 'X-API-Key: sk_admin'
+
+# cap every chargeable POST in this workspace at 1 MiB
+curl -sS -X PUT http://127.0.0.1:7451/body-size \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"max_bytes": 1048576}'
+
+# disable the cap (returns to the existing per-route defaults)
+curl -sS -X PUT http://127.0.0.1:7451/body-size \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"max_bytes": 0}'
+```
+
 ## Per-workspace per-hook outbound delivery rate cap
 
 The webhook stack already enforces SSRF safety, HTTPS-only transport, HMAC signing, retries with backoff, and a consecutive-failure circuit breaker. What it did not bound was sender-side delivery *rate*: a runaway producer inside a workspace (a debugging script, a mis-configured batch job, a single match endpoint hammered by a test suite) could fan out thousands of events per minute to a single customer endpoint and trip the receiver's own ingress rate limits or get the deployment classified as an attack. This release adds a per-workspace integer cap on outbound deliveries per individual webhook in any 60 second window, exposed at `/webhook-delivery-rate` and surfaced inline on the workspace `/webhooks` page. A value of 0 is the default and preserves current behaviour for existing tenants; values above the hard ceiling are rejected with a structured `{code: "webhook_delivery_rate_invalid"}` 400. When the cap is exceeded the dispatcher records a synthetic delivery row with `rate_limited=true`, `status=0`, `error="rate_limited_by_policy: N/min cap exceeded"` and skips the HTTP request, so the workspace audit log and the per-hook delivery log still show every suppression for incident review. Synthetic rate-limit rows do not themselves count toward the budget, so they cannot starve a recovered hook forever. Every suppression also writes `webhook.rate_limited` to the tamper-evident audit chain, and every policy mutation writes `webhook_delivery_rate.update` with before/after state. The cap is strictly per-tenant: tenant A capping at 1/min has zero effect on tenant B's deliveries or policy reads. Mutating the cap requires the admin role plus a fresh MFA step-up. Pinned by `tests/integration/test_webhook_delivery_rate.py` which proves the default does not throttle, that the (N+1)th delivery within 60s is suppressed and audited, that cross-tenant isolation holds in both directions, and that negative or out-of-range caps are rejected.
