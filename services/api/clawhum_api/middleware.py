@@ -311,3 +311,38 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if self.hsts_max_age > 0 and self._is_https(request):
             h.setdefault("Strict-Transport-Security", self._hsts_value())
         return resp
+
+
+class PatExpiryWarningMiddleware(BaseHTTPMiddleware):
+    """Attach Sunset / Deprecation headers when a PAT is near expiry.
+
+    Reads ``request.state.tenant_id`` and ``request.state.pat_expires_at``
+    set by ``auth.require_api_key`` after a successful PAT
+    authentication. When no PAT was used (API key auth, dev mode, or an
+    unauthenticated request), or when the workspace has not opted in to
+    the warning policy, no headers are written. See
+    :mod:`clawhum_api.pat_expiry_warning` for the policy semantics.
+    """
+
+    async def dispatch(self, request, call_next):
+        resp = await call_next(request)
+        try:
+            expires_at = float(getattr(request.state, "pat_expires_at", 0.0) or 0.0)
+            tenant_id = getattr(request.state, "tenant_id", "") or ""
+        except Exception:
+            return resp
+        if not tenant_id or expires_at <= 0:
+            return resp
+        try:
+            from . import pat_expiry_warning
+
+            headers = pat_expiry_warning.compute_headers(
+                tenant_id=tenant_id, expires_at=expires_at
+            )
+        except Exception:
+            headers = {}
+        for k, v in headers.items():
+            # Use setdefault so a route that already wrote its own
+            # Sunset (e.g. a share link) wins over the policy default.
+            resp.headers.setdefault(k, v)
+        return resp

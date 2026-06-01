@@ -58,6 +58,7 @@ const nextConfig = {
       { source: "/api/v1/privacy/workspace-export/verify", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/workspace-export/verify` },
       { source: "/api/pat-concurrency", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/pat-concurrency` },
       { source: "/api/pat-secret-prefix", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/pat-secret-prefix` },
+      { source: "/api/pat-expiry-warning", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/pat-expiry-warning` },
       { source: "/api/webhook-policy", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhook-policy` },
       { source: "/api/webhook-delivery-rate", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhook-delivery-rate` },
       { source: "/api/webhook-destination-cap", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhook-destination-cap` },

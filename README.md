@@ -2,6 +2,33 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace PAT expiry advance warning
+
+Personal access tokens are minted with an absolute expiry but SDKs and CI jobs that authenticate with them have no way to learn that a rotation is due until the day the token actually stops working, which is how 03:00 outage pages get written. Workspace owners can now set a per-tenant warning window at [`/settings/pat-expiry-warning`](http://127.0.0.1:7452/settings/pat-expiry-warning): when a PAT-authenticated response is within N days of its `expires_at`, every response (including reads, writes, and error responses) carries standards-compliant warning headers: `Sunset` as an IMF-fixdate per RFC 8594, `Deprecation: true` per the IETF deprecation-header draft, an optional `Link: <docs>; rel="sunset"` pointing at the workspace's rotation runbook, plus `X-Clawhum-Token-Expires-In` (integer seconds) and `X-Clawhum-Token-Expires-At` (ISO-8601 UTC) for clients that do not parse Sunset dates. Outside the window, no headers are written, so quiet days stay quiet. Default `warn_within_days` is `0` (disabled), so existing tenants keep working unchanged. The store is keyed by tenant id with append-only JSONL like every other policy module here, so cross-tenant lookups are impossible: workspace A opting in does not surface headers on workspace B's PATs. The middleware reads the PAT expiry that `auth.require_api_key` already stashes on `request.state` so there is no extra database hit per request, and it uses `setdefault` on the response headers so a route that already wrote its own `Sunset` (e.g. a share-link expiry) still wins over the policy default. The CORS `expose_headers` list is extended so browser SDKs see the headers from cross-origin calls. Mutations require admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `pat_expiry_warning.update` with before / after state. Pinned by `tests/integration/test_pat_expiry_warning.py` which proves headers fire inside the window, stay silent outside it, are tenant-scoped (workspace B does not inherit workspace A's policy), and malformed policy submissions are rejected with a structured 400.
+
+### Try it (PAT expiry warning)
+
+UI: open [`/settings/pat-expiry-warning`](http://127.0.0.1:7452/settings/pat-expiry-warning) to set the threshold from preset chips, paste your runbook URL, and preview the headers an SDK will see. API:
+
+```bash
+# Read current policy (reader role)
+curl -sS http://127.0.0.1:7451/pat-expiry-warning \
+  -H "X-API-Key: $CLAWHUM_API_KEY"
+
+# Warn within 30 days, point SDKs at a runbook (admin + MFA)
+curl -sS -X PUT http://127.0.0.1:7451/pat-expiry-warning \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d '{"warn_within_days":30,"docs_url":"https://docs.example.com/pat-rotation"}'
+
+# See the headers a near-expiry PAT receives on any call
+curl -sSI http://127.0.0.1:7451/me -H "X-API-Key: $NEAR_EXPIRY_PAT" | grep -iE 'sunset|deprecation|expires|^link:'
+
+# Disable the policy
+curl -sS -X PUT http://127.0.0.1:7451/pat-expiry-warning \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d '{"warn_within_days":0}'
+```
+
 ## Per-IP PAT auth brute-force lockout
 
 Personal access token auth had no rate limit on the front door: a script could submit thousands of random `pat_xxxxxxxx` values per second and get back `401 invalid api key` with no record visible to the workspace admin. Enterprise security reviews (SOC2 CC6.7, ISO 27001 A.9.4.2) flag the missing control on principle and a misconfigured proxy could amplify the risk. ClawHum now counts failed `pat_`-prefixed auth attempts per source IP inside a sliding window. When the threshold trips, subsequent PAT auth attempts from that IP are short-circuited with `HTTP 429 Too Many Requests` plus a `Retry-After` header until cooldown expires or an admin force-unlocks the IP from [`/admin/pat-auth-lockout`](http://127.0.0.1:7452/admin/pat-auth-lockout). A successful auth from the same IP clears the counter so a legitimate user who pasted the wrong secret once is not punished. The trusted-proxy aware IP resolver is reused so an `X-Forwarded-For` spoofer cannot trivially launder attempts across IPs. Locks are tenant-scoped in the admin UI: an admin only sees locks attributed to their workspace plus anonymous probes that have no attribution yet; cross-tenant locks are hidden and DELETE on a foreign IP returns 404. Force-unlocks are admin-only with MFA step-up and every change is written to the tamper-evident audit chain as `pat_auth_lockout.unlock` with before/after state. Defaults: 10 failures within 300s trip the lock, cooldown is 900s; tune via `CLAWHUM_PAT_AUTH_LOCKOUT_THRESHOLD`, `_WINDOW_SECONDS`, `_COOLDOWN_SECONDS`. Pinned by `tests/integration/test_pat_auth_lockout.py` which proves the lock trips after the threshold and rejects an otherwise-valid PAT, that an admin unlock restores access and emits an audit event, and that attributed locks are isolated across tenants.

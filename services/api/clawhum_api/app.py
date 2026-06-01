@@ -16,7 +16,12 @@ from .budget_middleware import BudgetMiddleware
 from .idempotency import IdempotencyMiddleware, build_store, register as _register_idem_store
 from .metrics import PrometheusMiddleware, register_app_collector
 from .metrics import router as metrics_router
-from .middleware import RequestIDMiddleware, SecurityHeadersMiddleware, SimpleRateLimit
+from .middleware import (
+    PatExpiryWarningMiddleware,
+    RequestIDMiddleware,
+    SecurityHeadersMiddleware,
+    SimpleRateLimit,
+)
 from .residency import ResidencyMiddleware
 from .routes import activity as activity_routes
 from .routes import audit as audit_routes
@@ -41,6 +46,7 @@ from .routes import pat_auth_lockout as pat_auth_lockout_routes
 from .routes import export_signing as export_signing_routes
 from .routes import pat_concurrency as pat_concurrency_routes
 from .routes import pat_secret_prefix as pat_secret_prefix_routes
+from .routes import pat_expiry_warning as pat_expiry_warning_routes
 from .routes import webhook_destination_cap as webhook_destination_cap_routes
 from .routes import webhook_policy as webhook_policy_routes
 from .routes import webhook_delivery_rate as webhook_delivery_rate_routes
@@ -101,6 +107,8 @@ async def _lifespan(app: FastAPI):
     _pat_concurrency.reset_cache()
     from . import pat_secret_prefix as _pat_secret_prefix
     _pat_secret_prefix.reset_cache()
+    from . import pat_expiry_warning as _pat_expiry_warning
+    _pat_expiry_warning.reset_cache()
     from . import webhook_destination_cap as _webhook_destination_cap
     _webhook_destination_cap.reset_cache()
     from . import webhook_policy as _webhook_policy
@@ -135,6 +143,11 @@ def create_app() -> FastAPI:
     # Audit runs innermost so it sees the final status code, but is added
     # before RequestID so request_id is already attached to request.state.
     app.add_middleware(AuditLogMiddleware, enabled=settings.audit_enabled)
+    # PAT expiry warning runs as close to the response edge as the
+    # audit middleware so it sees the final response object and can
+    # set Sunset/Deprecation headers on every PAT-authenticated
+    # response, including 4xx and 5xx, without changing status codes.
+    app.add_middleware(PatExpiryWarningMiddleware)
     app.add_middleware(UsageRecorderMiddleware)
     # Budget enforcement runs after Usage records the event so a request
     # blocked at the cap is never charged, and inside TenantScope so
@@ -177,7 +190,7 @@ def create_app() -> FastAPI:
         allow_methods=settings.cors_methods_list(),
         allow_headers=settings.cors_headers_list(),
         allow_credentials=cors_allow_credentials,
-        expose_headers=["X-Request-ID", "traceparent", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-RateLimit-Scope", "X-RateLimit-Plan", "X-RateLimit-Limit-Day", "X-RateLimit-Remaining-Day", "X-Data-Region", "X-Workspace-Region", "Retry-After", "Idempotent-Replayed", "X-Original-Request-ID", "X-Budget-Limit", "X-Budget-Used", "X-Budget-Remaining", "X-Budget-Status", "X-Budget-Enforcement"],
+        expose_headers=["X-Request-ID", "traceparent", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-RateLimit-Scope", "X-RateLimit-Plan", "X-RateLimit-Limit-Day", "X-RateLimit-Remaining-Day", "X-Data-Region", "X-Workspace-Region", "Retry-After", "Idempotent-Replayed", "X-Original-Request-ID", "X-Budget-Limit", "X-Budget-Used", "X-Budget-Remaining", "X-Budget-Status", "X-Budget-Enforcement", "Sunset", "Deprecation", "X-Clawhum-Token-Expires-In", "X-Clawhum-Token-Expires-At", "Link"],
         max_age=600,
     )
     # Security headers run outermost so they apply to every response,
@@ -221,6 +234,7 @@ def create_app() -> FastAPI:
     app.include_router(pat_auth_lockout_routes.router)
     app.include_router(pat_concurrency_routes.router)
     app.include_router(pat_secret_prefix_routes.router)
+    app.include_router(pat_expiry_warning_routes.router)
     app.include_router(webhook_destination_cap_routes.router)
     app.include_router(webhook_policy_routes.router)
     app.include_router(webhook_delivery_rate_routes.router)
@@ -267,6 +281,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_methods_policy_routes.router, prefix="/v1")
     app.include_router(pat_concurrency_routes.router, prefix="/v1")
     app.include_router(pat_secret_prefix_routes.router, prefix="/v1")
+    app.include_router(pat_expiry_warning_routes.router, prefix="/v1")
     app.include_router(webhook_destination_cap_routes.router, prefix="/v1")
     app.include_router(webhook_policy_routes.router, prefix="/v1")
     app.include_router(dpa_routes.router, prefix="/v1")

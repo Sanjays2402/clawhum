@@ -146,6 +146,10 @@ async def require_api_key(
                 request.state.api_key_scopes = pat.effective_scopes()
                 request.state.tenant_id = pat.tenant_id or ANON_TENANT_ID
                 request.state.pat_id = pat.id
+                # Stash the absolute expiry so the response-side
+                # PAT expiry warning middleware can attach Sunset /
+                # Deprecation headers without re-loading the PAT.
+                request.state.pat_expires_at = float(pat.expires_at or 0.0)
                 # Enforce the per-PAT IP allowlist BEFORE touching
                 # last_used so a denied request does not look like a
                 # successful use of the token. The workspace allowlist

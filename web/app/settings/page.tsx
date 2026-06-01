@@ -604,6 +604,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* PAT expiry warning */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">pat expiry warning</span>
+            <a
+              href="/settings/pat-expiry-warning"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            attach standards-based sunset and deprecation headers to every response authenticated by a pat that is within N days of expiry, so SDKs and CI pipelines can rotate before 03:00 outage night. tunable per workspace; off by default. admin role plus MFA required.
+          </p>
+        </section>
+
         {/* Workspace embed origin allowlist */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">
