@@ -161,6 +161,13 @@ class PAT:
     # is leaked?") without crawling chat history. Default empty so
     # every PAT minted before this field shipped keeps working.
     owner_email: str = ""
+    # Free-text purpose / runbook note for the credential. Procurement
+    # and SOC2 reviewers ask "what does this token do?" during access
+    # reviews; storing the answer next to the credential keeps the
+    # workspace owner from grepping ticket history. Capped at 200
+    # chars, control characters stripped. Default empty so PATs minted
+    # before this field shipped keep working unchanged.
+    description: str = ""
 
     def prior_secret_active(self, now: float | None = None) -> bool:
         if not self.prior_secret_hash or self.prior_secret_expires_at <= 0:
@@ -234,6 +241,7 @@ def _from_record(rec: dict[str, Any]) -> PAT:
         http_methods=normalise_http_methods(rec.get("http_methods") or []),
         usage_windows=normalise_usage_windows(rec.get("usage_windows") or []),
         owner_email=normalise_owner_email(rec.get("owner_email") or "", allow_blank=True),
+        description=normalise_description(rec.get("description") or ""),
     )
 
 
@@ -340,6 +348,7 @@ def create(
     http_methods: Iterable[str] | None = None,
     usage_windows: Iterable[str] | None = None,
     owner_email: str | None = None,
+    description: str | None = None,
 ) -> tuple[PAT, str]:
     """Mint a new PAT. Returns (record, plaintext_secret_shown_once).
 
@@ -381,6 +390,7 @@ def create(
     safe_methods = normalise_http_methods(http_methods)
     safe_windows = normalise_usage_windows(usage_windows)
     safe_owner_email = normalise_owner_email(owner_email or "", allow_blank=True)
+    safe_description = normalise_description(description or "")
     # Workspace concurrent-PAT cap: when an admin has pinned
     # ``max_active`` for this workspace, any mint that would push the
     # live token count over the cap is rejected here so the operator
@@ -436,6 +446,7 @@ def create(
         "http_methods": sorted(safe_methods),
         "usage_windows": sorted(safe_windows),
         "owner_email": safe_owner_email,
+        "description": safe_description,
     }
     _append(rec)
     return _from_record(rec), secret
@@ -520,6 +531,7 @@ def rotate(
         "usage_windows": sorted(current.usage_windows),
         "rotated_at": now,
         "owner_email": current.owner_email,
+        "description": current.description,
     }
     _append(rec)
     return _from_record(rec), new_secret
@@ -560,6 +572,7 @@ def revoke(*, tenant_id: str, pat_id: str) -> bool:
         "usage_windows": sorted(current.usage_windows),
         "revoked_at": time.time(),
         "owner_email": current.owner_email,
+        "description": current.description,
     }
     _append(rec)
     return True
@@ -648,6 +661,7 @@ def touch_last_used(
         "http_methods": sorted(current.http_methods),
         "usage_windows": sorted(current.usage_windows),
         "owner_email": current.owner_email,
+        "description": current.description,
     }
     _append(rec)
 
@@ -696,6 +710,7 @@ def public_view(p: PAT) -> dict[str, Any]:
         "http_methods": sorted(p.http_methods),
         "usage_windows": sorted(p.usage_windows),
         "owner_email": p.owner_email,
+        "description": p.description,
         "max_age_minutes": (
             _policy.max_pat_age_minutes if _policy is not None else 0
         ),
@@ -877,6 +892,7 @@ def set_path_prefixes(
         "usage_windows": sorted(current.usage_windows),
         "path_prefixes_updated_at": time.time(),
         "owner_email": current.owner_email,
+        "description": current.description,
     }
     _append(rec)
     return _from_record(rec)
@@ -920,6 +936,7 @@ def set_ip_cidrs(
         "usage_windows": sorted(current.usage_windows),
         "ip_updated_at": time.time(),
         "owner_email": current.owner_email,
+        "description": current.description,
     }
     _append(rec)
     return _from_record(rec)
@@ -964,6 +981,7 @@ def set_require_device_approval(
         "usage_windows": sorted(current.usage_windows),
         "device_policy_updated_at": time.time(),
         "owner_email": current.owner_email,
+        "description": current.description,
     }
     _append(rec)
     return _from_record(rec)
@@ -1008,6 +1026,7 @@ def set_path_prefixes(
         "usage_windows": sorted(current.usage_windows),
         "path_updated_at": time.time(),
         "owner_email": current.owner_email,
+        "description": current.description,
     }
     _append(rec)
     return _from_record(rec)
@@ -1105,6 +1124,7 @@ def set_http_methods(
         "usage_windows": sorted(current.usage_windows),
         "http_methods_updated_at": time.time(),
         "owner_email": current.owner_email,
+        "description": current.description,
     }
     _append(rec)
     return _from_record(rec)
@@ -1178,6 +1198,80 @@ def set_owner_email(
         "usage_windows": sorted(current.usage_windows),
         "owner_email": safe_email,
         "owner_email_updated_at": time.time(),
+        "description": current.description,
+    }
+    _append(rec)
+    return _from_record(rec)
+
+
+# --- Description / purpose note --------------------------------------
+
+_DESCRIPTION_MAX = 200
+
+
+def normalise_description(raw: str | None) -> str:
+    """Validate and canonicalise a PAT description / purpose note.
+
+    Empty / None becomes empty string (the field is optional so legacy
+    tokens stay legal). Non-empty input is stripped, has ASCII control
+    characters removed (newlines collapsed to single spaces so the
+    inventory UI renders one line cleanly), and length-capped to
+    :data:`_DESCRIPTION_MAX`. Raises :class:`ValueError` on overlong
+    input so callers surface a structured 400.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    s = "".join(ch if ch >= " " or ch == " " else " " for ch in s)
+    s = " ".join(s.split())
+    if len(s) > _DESCRIPTION_MAX:
+        raise ValueError(
+            f"description must be <= {_DESCRIPTION_MAX} chars"
+        )
+    return s
+
+
+def set_description(
+    *, tenant_id: str, pat_id: str, description: str
+) -> "PAT | None":
+    """Replace the per-PAT description / purpose note.
+
+    Empty string clears the value. Returns None when the token is
+    unknown or owned by another tenant so the caller surfaces a 404
+    without leaking existence across tenants. Raises :class:`ValueError`
+    when ``description`` exceeds the length cap.
+    """
+    current = _reduce().get(pat_id)
+    if current is None or current.deleted or current.tenant_id != tenant_id:
+        return None
+    safe = normalise_description(description)
+    rec = {
+        "id": current.id,
+        "tenant_id": current.tenant_id,
+        "name": current.name,
+        "roles": sorted(current.roles),
+        "rpm": current.rpm,
+        "created_at": current.created_at,
+        "last_used_at": current.last_used_at,
+        "secret_hash": current.secret_hash,
+        "secret_hint": current.secret_hint,
+        "last_used_ip": current.last_used_ip,
+        "last_used_ua": current.last_used_ua,
+        "deleted": False,
+        "expires_at": current.expires_at,
+        "scopes": sorted(current.scopes),
+        "prior_secret_hash": current.prior_secret_hash,
+        "prior_secret_hint": current.prior_secret_hint,
+        "prior_secret_expires_at": current.prior_secret_expires_at,
+        "ip_cidrs": sorted(current.ip_cidrs),
+        "path_prefixes": sorted(current.path_prefixes),
+        "require_device_approval": current.require_device_approval,
+        "http_methods": sorted(current.http_methods),
+        "usage_windows": sorted(current.usage_windows),
+        "owner_email": current.owner_email,
+        "description": current.description,
+        "description": safe,
+        "description_updated_at": time.time(),
     }
     _append(rec)
     return _from_record(rec)
@@ -1395,6 +1489,7 @@ def set_usage_windows(
         "http_methods": sorted(current.http_methods),
         "usage_windows": sorted(safe),
         "owner_email": current.owner_email,
+        "description": current.description,
         "usage_windows_updated_at": time.time(),
     }
     _append(rec)

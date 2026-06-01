@@ -113,6 +113,19 @@ class CreateKeyBody(BaseModel):
             "the credential is leaked."
         ),
     )
+    description: str | None = Field(
+        default=None,
+        max_length=200,
+        description=(
+            "Optional free-text purpose / runbook note for the token "
+            "(e.g. 'CI deploy bot, owned by platform-eng'). Empty / "
+            "omitted is allowed; non-empty input is whitespace-collapsed, "
+            "control-character stripped, and capped at 200 chars. "
+            "Surfaced in the credential inventory so SOC2 / ISO 27001 "
+            "reviewers can answer 'what does this token do?' during "
+            "an access review without grepping ticket history."
+        ),
+    )
 
 
 class KeyView(BaseModel):
@@ -138,6 +151,7 @@ class KeyView(BaseModel):
     http_methods: list[str] = Field(default_factory=list)
     usage_windows: list[str] = Field(default_factory=list)
     owner_email: str = ""
+    description: str = ""
     # Force-rotation policy state (populated from active workspace
     # SessionPolicy on read). 0 / None mean the policy is unset.
     max_age_minutes: int = 0
@@ -254,6 +268,7 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
             http_methods=body.http_methods or [],
             usage_windows=body.usage_windows or [],
             owner_email=body.owner_email,
+            description=body.description,
         )
     except ValueError as exc:
         # scope_policy.ScopeNotAllowedError is a ValueError subclass;
@@ -1147,12 +1162,85 @@ async def set_key_owner_email(
     return {"ok": True, "id": updated.id, "owner_email": updated.owner_email}
 
 
+class DescriptionBody(BaseModel):
+    description: str = Field(
+        default="",
+        max_length=200,
+        description=(
+            "Free-text purpose / runbook note for this token. Pass an "
+            "empty string to clear the value. Non-empty input is "
+            "whitespace-collapsed and capped at 200 chars."
+        ),
+    )
+
+
+class DescriptionView(BaseModel):
+    ok: bool
+    id: str
+    description: str
+
+
+@router.put(
+    "/admin/keys/{key_id}/description",
+    response_model=DescriptionView,
+    dependencies=[Depends(require_roles("admin")), Depends(require_mfa())],
+)
+async def set_key_description(
+    key_id: str, body: DescriptionBody, request: Request
+) -> dict[str, Any]:
+    """Set or clear the purpose / runbook description on a PAT.
+
+    Admin role plus a fresh MFA step-up is required because the
+    description is the answer a SOC2 reviewer reads to decide whether
+    a credential's continued existence is justified, and a stale or
+    misleading description silently weakens that review. Tenant scoping
+    is enforced inside ``pat_store`` so a cross-workspace id returns
+    404 without leaking existence. The mutation is captured by the
+    audit middleware automatically.
+    """
+    from ..dry_run import is_dry_run, preview
+    tenant = current_tenant_id(request)
+    existing = next(
+        (p for p in pat_store.live_for_tenant(tenant) if p.id == key_id), None
+    )
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    try:
+        safe = pat_store.normalise_description(body.description)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "invalid_description", "message": str(exc)},
+        )
+    if is_dry_run(request):
+        return preview(
+            "api_key_description_set",
+            key_id,
+            tenant_id=tenant,
+            name=existing.name,
+            previous_description=existing.description,
+            description=safe,
+        )
+    updated = pat_store.set_description(
+        tenant_id=tenant, pat_id=key_id, description=safe
+    )
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    return {"ok": True, "id": updated.id, "description": updated.description}
+
+
 class InventoryRow(BaseModel):
     id: str
     name: str
     roles: list[str]
     owner_email: str
     has_owner: bool
+    description: str = ""
+    has_description: bool = False
     created_at: float
     last_used_at: float
     expires_at: float
@@ -1163,6 +1251,8 @@ class InventoryResponse(BaseModel):
     total: int
     with_owner: int
     without_owner: int
+    with_description: int = 0
+    without_description: int = 0
     rows: list[InventoryRow]
 
 
@@ -1182,16 +1272,22 @@ async def keys_inventory(request: Request) -> dict[str, Any]:
     pats = pat_store.live_for_tenant(tenant)
     rows: list[dict[str, Any]] = []
     with_owner = 0
+    with_description = 0
     for p in pats:
         has_owner = bool(p.owner_email)
+        has_description = bool(p.description)
         if has_owner:
             with_owner += 1
+        if has_description:
+            with_description += 1
         rows.append({
             "id": p.id,
             "name": p.name,
             "roles": sorted(p.roles),
             "owner_email": p.owner_email,
             "has_owner": has_owner,
+            "description": p.description,
+            "has_description": has_description,
             "created_at": p.created_at,
             "last_used_at": p.last_used_at,
             "expires_at": p.expires_at,
@@ -1202,5 +1298,7 @@ async def keys_inventory(request: Request) -> dict[str, Any]:
         "total": len(rows),
         "with_owner": with_owner,
         "without_owner": len(rows) - with_owner,
+        "with_description": with_description,
+        "without_description": len(rows) - with_description,
         "rows": rows,
     }

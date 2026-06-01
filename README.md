@@ -79,6 +79,30 @@ curl -sS -X POST http://127.0.0.1:7451/incidents/$INC_ID/regulator-notified \
   -d '{"regulator_name":"ICO (UK)","regulator_reference":"REF-2025-0042"}'
 ```
 
+## Per-PAT purpose note and documented-credential inventory
+
+When a SOC2 access reviewer points at a six-month-old personal access token and asks "what does this one actually do?" the answer should not require grepping ticket history. Every PAT now carries an optional free-text `description` (up to 200 chars, whitespace collapsed, control characters stripped) that documents the credential's purpose in line with the credential itself. The field is optional at mint time, surfaced on every PAT view, and editable after the fact via `PUT /admin/keys/{id}/description` (admin role plus a fresh MFA step-up because a stale or misleading description silently weakens the next access review). The workspace inventory at [`/settings/keys/inventory`](http://127.0.0.1:7452/settings/keys/inventory) now shows the purpose alongside the owner contact and counts `with_description` vs `without_description` so undocumented credentials get a runbook attached before the next audit. Tenant scoping is enforced inside `pat_store.set_description`: cross-workspace ids return 404 so existence never leaks. Existing PATs minted before this field shipped keep working unchanged (default `""`). Pinned by `tests/integration/test_pat_description.py` which proves the field is captured at mint with whitespace collapsed, overlong input is rejected, the admin setter is tenant-scoped, the inventory only counts the calling workspace's tokens, and writer-role callers are denied with 403.
+
+### Try it (PAT purpose note)
+
+UI: open [`/settings/keys/inventory`](http://127.0.0.1:7452/settings/keys/inventory), look at the `purpose` column, and click `set purpose` on any row to attach a runbook note. API:
+
+```bash
+# Mint a PAT with a purpose note
+curl -sS -X POST http://127.0.0.1:7451/keys \
+  -H "X-API-Key: $CLAWHUM_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"name":"ci-bot","description":"CI deploy bot, owned by platform-eng"}'
+
+# Attach or update a purpose note on an existing PAT (admin + MFA)
+curl -sS -X PUT http://127.0.0.1:7451/admin/keys/$KEY_ID/description \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d '{"description":"nightly index refresh job"}'
+
+# Read the workspace credential inventory (now includes purpose + counts)
+curl -sS http://127.0.0.1:7451/admin/keys/inventory \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+```
+
 ## Per-PAT owner email and workspace credential inventory
 
 When a SOC2 or ISO 27001 reviewer asks "who owns each of your personal access tokens?" the honest answer used to be "grep chat history". Workspace owners can now tag every PAT with the contact email of the human who owns it (the on-call engineer for the CI job using it, the data scientist who pasted it into a notebook, etc.). The field is optional at mint time, validated to look like an email, and stored lowercased; existing tokens keep working unchanged. A new admin-only inventory at [`/settings/keys/inventory`](http://127.0.0.1:7452/settings/keys/inventory) lists every live PAT with its owner email and surfaces a `without_owner` count so the orphans get assigned before the next compliance review. Setting or clearing the owner email after the fact requires admin role plus a fresh MFA step-up because reassigning accountability for a live credential is a sensitive operation. Tenant scoping is enforced inside `pat_store.set_owner_email`: workspace A cannot read or mutate workspace B's tokens, and a cross-tenant id returns 404 so existence does not leak. Pinned by `tests/integration/test_pat_owner_email.py` which proves the field is captured at mint, malformed addresses are rejected with a structured 400, the setter is tenant-scoped, the inventory only counts the calling workspace's tokens, and reader-role callers are denied with 403.

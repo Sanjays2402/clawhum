@@ -24,6 +24,7 @@ import {
   At,
   Key,
   PencilSimple,
+  Note,
 } from "@phosphor-icons/react/dist/ssr";
 import { getApiKey, useApiKey } from "@/lib/apiKey";
 
@@ -33,6 +34,8 @@ interface InventoryRow {
   roles: string[];
   owner_email: string;
   has_owner: boolean;
+  description: string;
+  has_description: boolean;
   created_at: number;
   last_used_at: number;
   expires_at: number;
@@ -43,6 +46,8 @@ interface InventoryResponse {
   total: number;
   with_owner: number;
   without_owner: number;
+  with_description: number;
+  without_description: number;
   rows: InventoryRow[];
 }
 
@@ -69,7 +74,9 @@ export default function KeysInventoryPage() {
   useApiKey();
   const [state, setState] = useState<State>({ kind: "loading" });
   const [editing, setEditing] = useState<InventoryRow | null>(null);
+  const [editMode, setEditMode] = useState<"owner" | "description">("owner");
   const [draftEmail, setDraftEmail] = useState<string>("");
+  const [draftDescription, setDraftDescription] = useState<string>("");
   const [saving, setSaving] = useState<boolean>(false);
   const [saveError, setSaveError] = useState<string>("");
 
@@ -104,13 +111,24 @@ export default function KeysInventoryPage() {
 
   function openEdit(row: InventoryRow) {
     setEditing(row);
+    setEditMode("owner");
     setDraftEmail(row.owner_email);
+    setDraftDescription(row.description);
+    setSaveError("");
+  }
+
+  function openEditDescription(row: InventoryRow) {
+    setEditing(row);
+    setEditMode("description");
+    setDraftEmail(row.owner_email);
+    setDraftDescription(row.description);
     setSaveError("");
   }
 
   function closeEdit() {
     setEditing(null);
     setDraftEmail("");
+    setDraftDescription("");
     setSaveError("");
     setSaving(false);
   }
@@ -120,14 +138,18 @@ export default function KeysInventoryPage() {
     setSaving(true);
     setSaveError("");
     try {
-      const r = await fetch(
-        `/api/admin/keys/${encodeURIComponent(editing.id)}/owner-email`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
-          body: JSON.stringify({ owner_email: draftEmail }),
-        },
-      );
+      const isOwner = editMode === "owner";
+      const url = isOwner
+        ? `/api/admin/keys/${encodeURIComponent(editing.id)}/owner-email`
+        : `/api/admin/keys/${encodeURIComponent(editing.id)}/description`;
+      const payload = isOwner
+        ? { owner_email: draftEmail }
+        : { description: draftDescription };
+      const r = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify(payload),
+      });
       if (!r.ok) {
         let msg = await r.text();
         try {
@@ -187,13 +209,23 @@ export default function KeysInventoryPage() {
 
       {state.kind === "ready" && (
         <>
-          <div className="mb-4 grid grid-cols-3 gap-3">
+          <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-5">
             <Stat label="total" value={state.data.total} />
             <Stat label="with owner" value={state.data.with_owner} good />
             <Stat
               label="without owner"
               value={state.data.without_owner}
               bad={state.data.without_owner > 0}
+            />
+            <Stat
+              label="documented"
+              value={state.data.with_description}
+              good
+            />
+            <Stat
+              label="undocumented"
+              value={state.data.without_description}
+              bad={state.data.without_description > 0}
             />
           </div>
 
@@ -207,6 +239,7 @@ export default function KeysInventoryPage() {
                     <th className="px-4 py-2">name</th>
                     <th className="px-4 py-2">roles</th>
                     <th className="px-4 py-2">owner</th>
+                    <th className="px-4 py-2">purpose</th>
                     <th className="px-4 py-2">last used</th>
                     <th className="px-4 py-2 text-right" />
                   </tr>
@@ -241,18 +274,43 @@ export default function KeysInventoryPage() {
                           </span>
                         )}
                       </td>
+                      <td className="px-4 py-3">
+                        {row.has_description ? (
+                          <span
+                            className="line-clamp-2 max-w-xs text-xs text-zinc-300"
+                            title={row.description}
+                          >
+                            {row.description}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 rounded bg-amber-950/40 px-2 py-0.5 text-xs font-medium text-amber-300">
+                            <Warning size={12} weight="duotone" />
+                            undocumented
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-xs text-zinc-400">
                         {fmtTs(row.last_used_at)}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => openEdit(row)}
-                          className="inline-flex items-center gap-1.5 rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
-                        >
-                          <PencilSimple size={12} weight="duotone" />
-                          set owner
-                        </button>
+                        <div className="inline-flex flex-col items-end gap-1">
+                          <button
+                            type="button"
+                            onClick={() => openEdit(row)}
+                            className="inline-flex items-center gap-1.5 rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+                          >
+                            <PencilSimple size={12} weight="duotone" />
+                            set owner
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openEditDescription(row)}
+                            className="inline-flex items-center gap-1.5 rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+                          >
+                            <Note size={12} weight="duotone" />
+                            set purpose
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -273,30 +331,61 @@ export default function KeysInventoryPage() {
           }}
         >
           <div className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-950 p-5 shadow-xl">
-            <h2 className="mb-1 text-lg font-medium">set owner email</h2>
+            <h2 className="mb-1 text-lg font-medium">
+              {editMode === "owner" ? "set owner email" : "set purpose"}
+            </h2>
             <p className="mb-3 text-xs text-zinc-500">
               token{" "}
               <span className="font-mono text-zinc-300">{editing.name}</span>{" "}
               ({editing.id})
             </p>
-            <label
-              htmlFor="owner-email"
-              className="mb-1 block text-xs uppercase tracking-wider text-zinc-500"
-            >
-              contact email
-            </label>
-            <input
-              id="owner-email"
-              type="email"
-              value={draftEmail}
-              onChange={(e) => setDraftEmail(e.target.value)}
-              placeholder="oncall@example.com"
-              className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-zinc-500"
-              autoFocus
-            />
-            <p className="mt-1 text-xs text-zinc-500">
-              leave blank to clear. admin role plus MFA step-up.
-            </p>
+            {editMode === "owner" ? (
+              <>
+                <label
+                  htmlFor="owner-email"
+                  className="mb-1 block text-xs uppercase tracking-wider text-zinc-500"
+                >
+                  contact email
+                </label>
+                <input
+                  id="owner-email"
+                  type="email"
+                  value={draftEmail}
+                  onChange={(e) => setDraftEmail(e.target.value)}
+                  placeholder="oncall@example.com"
+                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-zinc-500"
+                  autoFocus
+                />
+                <p className="mt-1 text-xs text-zinc-500">
+                  leave blank to clear. admin role plus MFA step-up.
+                </p>
+              </>
+            ) : (
+              <>
+                <label
+                  htmlFor="purpose-note"
+                  className="mb-1 block text-xs uppercase tracking-wider text-zinc-500"
+                >
+                  purpose / runbook note
+                </label>
+                <textarea
+                  id="purpose-note"
+                  value={draftDescription}
+                  onChange={(e) => setDraftDescription(e.target.value)}
+                  placeholder="CI deploy bot, owned by platform-eng"
+                  rows={3}
+                  maxLength={200}
+                  className="w-full rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-zinc-500"
+                  autoFocus
+                />
+                <p className="mt-1 flex items-center justify-between text-xs text-zinc-500">
+                  <span>leave blank to clear. admin role plus MFA step-up.</span>
+                  <span className="tabular-nums">
+                    {draftDescription.length}/200
+                  </span>
+                </p>
+              </>
+            )}
             {saveError && (
               <div className="mt-3 rounded border border-red-900/60 bg-red-950/30 p-2 text-xs text-red-200">
                 {saveError}
