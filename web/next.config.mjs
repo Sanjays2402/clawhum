@@ -65,6 +65,12 @@ const nextConfig = {
       { source: "/api/invite-domains/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/invite-domains/:id` },
       { source: "/api/dpa", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/dpa` },
       { source: "/api/dpa/accept", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/dpa/accept` },
+      { source: "/api/incidents", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/incidents` },
+      { source: "/api/incidents/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/incidents/:id` },
+      { source: "/api/incidents/:id/notes", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/incidents/:id/notes` },
+      { source: "/api/incidents/:id/advance", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/incidents/:id/advance` },
+      { source: "/api/incidents/:id/regulator-notified", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/incidents/:id/regulator-notified` },
+      { source: "/api/incidents/:id/subjects-notified", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/incidents/:id/subjects-notified` },
       { source: "/api/sessions", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/sessions` },
       { source: "/api/sessions/policy", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/sessions/policy` },
       { source: "/api/sessions/revoke-all", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/sessions/revoke-all` },
@@ -113,6 +119,8 @@ const nextConfig = {
       { source: "/api/v1/privacy/export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/export` },
       { source: "/api/v1/privacy/workspace-export", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/workspace-export` },
       { source: "/api/v1/privacy/me", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/v1/privacy/me` },
+      { source: "/api/incidents", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/incidents` },
+      { source: "/api/incidents/:path*", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/incidents/:path*` },
       // Stable v1 public API: forward everything under /api/v1/* to the
       // backend /v1/* surface. Integrators target this prefix from curl,
       // python, JS, etc. and we promise not to break paths under it.

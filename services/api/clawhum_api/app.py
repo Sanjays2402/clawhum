@@ -53,6 +53,7 @@ from .routes import webhook_delivery_rate as webhook_delivery_rate_routes
 from .routes import body_size as body_size_routes
 from .routes import dpa as dpa_routes
 from .routes import dsar as dsar_routes
+from .routes import incidents as incidents_routes
 from .routes import keys as keys_routes
 from .routes import library as library_routes
 from .routes import match as match_routes
@@ -242,6 +243,7 @@ def create_app() -> FastAPI:
     app.include_router(body_size_routes.router, prefix="/v1")
     app.include_router(dpa_routes.router)
     app.include_router(dsar_routes.router)
+    app.include_router(incidents_routes.router)
     app.include_router(mfa_routes.router)
     app.include_router(members_routes.router)
     app.include_router(sso_routes.router)
@@ -286,6 +288,7 @@ def create_app() -> FastAPI:
     app.include_router(webhook_policy_routes.router, prefix="/v1")
     app.include_router(dpa_routes.router, prefix="/v1")
     app.include_router(dsar_routes.router, prefix="/v1")
+    app.include_router(incidents_routes.router, prefix="/v1")
     app.include_router(mfa_routes.router, prefix="/v1")
     app.include_router(members_routes.router, prefix="/v1")
     app.include_router(sso_routes.router, prefix="/v1")

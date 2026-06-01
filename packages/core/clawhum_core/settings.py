@@ -219,6 +219,7 @@ class Settings(BaseSettings):
     embed_origins_path: Path = Path("./data/embed_origins.jsonl")
     security_contacts_path: Path = Path("./data/security_contacts.jsonl")
     dsar_requests_path: Path = Path("./data/dsar_requests.jsonl")
+    incidents_path: Path = Path("./data/security_incidents.jsonl")
     invite_domains_path: Path = Path("./data/invite_domains.jsonl")
     scope_policy_path: Path = Path("./data/scope_policy.jsonl")
     auth_methods_policy_path: Path = Path("./data/auth_methods_policy.jsonl")

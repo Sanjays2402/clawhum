@@ -30,6 +30,7 @@ import {
   GlobeHemisphereWest,
   HardDrives,
   CloudArrowUp,
+  Siren,
 } from "@phosphor-icons/react/dist/ssr";
 import { getApiKey } from "@/lib/apiKey";
 
@@ -647,6 +648,21 @@ export default function AdminConsolePage() {
           <p className="text-xs text-[var(--color-dim)]">
             Record the workspace acceptance of the vendor DPA. Required
             by most enterprise procurement and GDPR Article 28 reviews.
+            Admin only, MFA gated, and written to the audit chain.
+          </p>
+        </Card>
+
+        <Card
+          title="security incidents"
+          icon={<Siren size={14} weight="duotone" />}
+          href="/admin/incidents"
+          hrefLabel="open queue"
+        >
+          <p className="text-xs text-[var(--color-dim)]">
+            Declare, triage, and close personal data breaches with a
+            72 hour regulator clock per incident. Records the response
+            timeline, regulator notification, and data subject
+            notification for GDPR Articles 33 and 34 and SOC2 CC7.3.
             Admin only, MFA gated, and written to the audit chain.
           </p>
         </Card>

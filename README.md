@@ -2,6 +2,30 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Security incident (breach notification) tracker
+
+A personal data breach starts a 72 hour clock under GDPR Article 33 to notify the supervisory authority, and Article 34 obligates direct notification to affected data subjects when the risk is high. CCPA section 1798.82 and most US state breach laws impose similar duties. SOC2 criterion CC7.3 requires the entity to evaluate and act on security events. Procurement reviewers ask "what is your incident response process and where do you log incidents?" and without a system of record the only honest answer used to be "we cannot prove one." Workspace owners can now declare an incident with a severity (`low`, `medium`, `high`, `critical`), a short title, an optional discovery timestamp (defaults to now), and free-text detail. Each entry surfaces its 72 hour regulator-notify deadline so the queue at [`/admin/incidents`](http://127.0.0.1:7452/admin/incidents) shows what is approaching or past the GDPR Article 33 window. The detail pane appends timeline notes, advances status through `open` then `contained` then `resolved` or `closed_no_action` (the latter requires a non-empty justification so the audit trail explains the legal basis), records regulator notification with authority name and reference number, and records data subject notification with an affected count. Reads and mutations are tenant scoped at both the route layer and inside `incidents.py` for defense in depth; tenant A cannot list, fetch, advance, or notify against tenant B's incidents and a cross-tenant id returns 404 so existence does not leak. Every mutation requires the `admin` role plus a fresh MFA step-up and is written to the workspace audit log via the existing audit middleware. Terminal incidents cannot be reopened; declare a new one if related events surface. Pinned by `tests/integration/test_incidents.py` which proves the full declare to close flow with regulator + data subject notification, rejects non-admin mutations with 403, rejects cross-tenant reads and mutations with 404, rejects invalid input with 400, and rejects reopening or double-notifying with 409.
+
+### Try it (security incidents)
+
+UI: open [`/admin/incidents`](http://127.0.0.1:7452/admin/incidents), click `declare incident`, fill in a title and severity, then drill into the row to advance status, append notes, and record regulator + data subject notification. API:
+
+```bash
+# Declare a new incident (admin + MFA)
+curl -sS -X POST http://127.0.0.1:7451/incidents \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d '{"title":"Suspicious S3 access from unknown IP","severity":"high","detail":"Unfamiliar IP enumerated audio bucket at 03:14 UTC."}'
+
+# List the open queue with the 72h notify clock per incident
+curl -sS http://127.0.0.1:7451/incidents \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+
+# Record regulator notification for an incident
+curl -sS -X POST http://127.0.0.1:7451/incidents/$INC_ID/regulator-notified \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d '{"regulator_name":"ICO (UK)","regulator_reference":"REF-2025-0042"}'
+```
+
 ## Per-PAT owner email and workspace credential inventory
 
 When a SOC2 or ISO 27001 reviewer asks "who owns each of your personal access tokens?" the honest answer used to be "grep chat history". Workspace owners can now tag every PAT with the contact email of the human who owns it (the on-call engineer for the CI job using it, the data scientist who pasted it into a notebook, etc.). The field is optional at mint time, validated to look like an email, and stored lowercased; existing tokens keep working unchanged. A new admin-only inventory at [`/settings/keys/inventory`](http://127.0.0.1:7452/settings/keys/inventory) lists every live PAT with its owner email and surfaces a `without_owner` count so the orphans get assigned before the next compliance review. Setting or clearing the owner email after the fact requires admin role plus a fresh MFA step-up because reassigning accountability for a live credential is a sensitive operation. Tenant scoping is enforced inside `pat_store.set_owner_email`: workspace A cannot read or mutate workspace B's tokens, and a cross-tenant id returns 404 so existence does not leak. Pinned by `tests/integration/test_pat_owner_email.py` which proves the field is captured at mint, malformed addresses are rejected with a structured 400, the setter is tenant-scoped, the inventory only counts the calling workspace's tokens, and reader-role callers are denied with 403.

@@ -684,6 +684,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Security incidents (breach notification tracker) */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">security incidents</span>
+            <a
+              href="/admin/incidents"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            declare, track, and close security incidents with a 72 hour regulator notification clock for GDPR article 33. record regulator and data subject notification per article 34, append timeline notes, and close with a required justification. every state change is tenant scoped and audit logged. admin role plus MFA required.
+          </p>
+        </section>
+
         {/* Per-workspace vendor support access grants */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">
