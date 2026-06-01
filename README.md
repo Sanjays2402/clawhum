@@ -71,6 +71,29 @@ curl -sS http://127.0.0.1:7451/admin/keys/inventory \
   -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
 ```
 
+## Per-PAT UTC usage windows
+
+Method allowlists and path prefixes pin *what* a token can do and *where* it can reach; usage windows pin *when*. A CI key minted with `usage_windows=["mon-fri:06:00-20:00"]` (UTC) authenticates only during the listed UTC windows and is rejected with `403`, an `X-Pat-Window-Denied: 1` header, and an `X-Pat-Windows` breadcrumb every other minute of the week, so a leak that surfaces on a weekend or at 3am is mechanically useless without the workspace owner having to rotate. Each window is `<days>:HH:MM-HH:MM` in UTC, where `<days>` is `mon..sun`, `all`, or a contiguous range like `mon-fri`; windows where end < start wrap past midnight (e.g. `all:22:00-02:00` covers late-night plus early-morning batch jobs). Up to 16 windows per token, validated at mint and on PUT with a structured `400 invalid usage_windows: ...` so the UI can surface the offending entry inline. Empty list means no restriction so every PAT minted before this field shipped keeps working unchanged. Enforcement runs inside `auth.require_api_key` before `last_used` is touched, so out-of-window requests do not light up the token in the activity timeline. Mutations require `writer` role plus a fresh MFA step-up because both tightening and widening the fence are destructive. Cross-tenant safety matches the rest of the PAT surface: `set_usage_windows` returns `None` when the id is unknown or owned by a different workspace and the route surfaces that as `404` so existence is never leaked. Pinned by `tests/integration/test_pat_usage_window.py` which proves out-of-window requests get 403 with the headers populated, parser garbage returns 400, clearing restores 24x7 access, and umbrella admins cannot widen acme's tokens.
+
+### Try it (PAT usage windows)
+
+```bash
+# Mint a weekday-business-hours PAT (09:00-17:00 UTC, Mon-Fri).
+curl -sS -X POST http://127.0.0.1:7451/keys \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" -H "Content-Type: application/json" \
+  -d '{"name":"weekday-bot","usage_windows":["mon-fri:09:00-17:00"]}'
+
+# Tighten an existing PAT to a nightly batch window that wraps midnight.
+curl -sS -X PUT http://127.0.0.1:7451/keys/$KEY_ID/usage-window \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" -H "Content-Type: application/json" \
+  -d '{"usage_windows":["all:22:00-02:00"]}'
+
+# Clear the restriction (back to 24x7).
+curl -sS -X PUT http://127.0.0.1:7451/keys/$KEY_ID/usage-window \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" -H "Content-Type: application/json" \
+  -d '{"usage_windows":[]}'
+```
+
 ## Per-PAT HTTP method allowlist
 
 Scopes decide what a token can do, path prefixes decide where it can reach, but neither lets a workspace mint a credential that is mechanically incapable of mutating state. A leaked `writer` PAT that should only ever issue `GET /match` calls can still drive a `POST /feedback` or a `DELETE /library/{id}` because role-based scopes are method-agnostic. Workspace owners can now pin any PAT to a list of HTTP verbs from `/settings/keys`: tick `GET` (or hit the read only preset) and a leak cannot mutate anything regardless of how broad the scopes were when it was minted. The allowlist accepts any of `GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS`; `HEAD` is implicitly allowed whenever `GET` is so monitoring probes and HTTP caches do not break. Off-method requests are rejected with `405 Method Not Allowed`, a populated `Allow:` header listing the permitted verbs, and an `X-Pat-Method-Denied` breadcrumb so a misconfigured client surfaces the constraint in its own logs instead of looking like a server bug. Enforcement runs inside `auth.require_api_key` before `last_used` is touched, so a denied request does not light up the token in the activity timeline and a leak attempting blind writes cannot grease its way past the per-IP brute-force lockout either. The empty list means no restriction, which keeps every PAT minted before this field shipped working unchanged. Cross-tenant safety is the same shape as every other PAT setting here: `set_http_methods` returns `None` when the id is unknown or owned by a different workspace and the route surfaces that as `404` so existence is never leaked. Mutations require `writer` role plus a fresh MFA step-up because tightening or loosening the fence is destructive (a too-narrow set bricks a CI deploy; a loosened set widens the blast radius on a leak). Pinned by `tests/integration/test_pat_method_allowlist.py` which proves writes are blocked with 405 and the `Allow` header populated, the list can be tightened and cleared, unknown verbs return 400, and umbrella admins cannot widen acme's tokens.

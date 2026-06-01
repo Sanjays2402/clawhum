@@ -158,6 +158,7 @@ async def require_api_key(
                 _enforce_pat_ip_allowlist(request, pat)
                 _enforce_pat_path_prefixes(request, pat)
                 _enforce_pat_http_methods(request, pat)
+                _enforce_pat_usage_window(request, pat)
                 # Per-PAT trusted-device strict mode. When the owner
                 # has flipped this on, only approved device
                 # fingerprints may use the token; everything else is
@@ -527,6 +528,33 @@ def _enforce_pat_http_methods(request: Request, pat: pat_store.PAT) -> None:
             headers={
                 "Allow": ", ".join(allowed),
                 "X-Pat-Method-Denied": method[:16],
+            },
+        )
+
+
+def _enforce_pat_usage_window(request: Request, pat: pat_store.PAT) -> None:
+    """Reject when the current UTC time is outside the PAT's usage windows.
+
+    Empty window list means "no restriction". Layered on top of
+    scopes, path prefixes, and method allowlists: those decide what
+    the token may do; this decides *when*. A CI key pinned to
+    ``mon-fri:14:00-04:00`` (UTC business hours covering Pacific
+    daytime and wrapping past midnight) becomes useless to an
+    attacker on a weekend without the workspace owner having to
+    rotate. Reject with HTTP 403 and a structured header so SDKs can
+    surface a useful error and so audit search can filter for the
+    failure mode.
+    """
+    if not pat.usage_windows:
+        return
+    import time as _time
+    if not pat_store.usage_window_matches(_time.time(), pat.usage_windows):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="current time outside pat usage window",
+            headers={
+                "X-Pat-Window-Denied": "1",
+                "X-Pat-Windows": ",".join(sorted(pat.usage_windows))[:256],
             },
         )
 

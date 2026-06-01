@@ -141,6 +141,19 @@ class PAT:
     # scopes or path pinning. Layered on top of scopes (what) and
     # path_prefixes (where); this gates *how*.
     http_methods: frozenset[str] = frozenset()
+    # Per-PAT usage windows. Each entry is a string of the form
+    # ``<days>:HH:MM-HH:MM`` where ``<days>`` is one of ``mon``,
+    # ``tue``, ``wed``, ``thu``, ``fri``, ``sat``, ``sun``, ``all``,
+    # or a dash range like ``mon-fri``. Times are 24h UTC. A request
+    # is accepted when the current UTC weekday and HH:MM fall inside
+    # at least one window. Empty set means "no restriction" so
+    # existing PATs minted before this field shipped stay usable
+    # 24x7. Windows shrink the leak blast-radius for tokens that
+    # only need to work during business hours or for a nightly job:
+    # a CI key pinned to ``mon-fri:06:00-20:00`` becomes useless to
+    # an attacker after 8pm Pacific without the workspace owner
+    # having to rotate.
+    usage_windows: frozenset[str] = frozenset()
     # Per-PAT owner contact email. Optional free-text (validated as a
     # syntactically reasonable address when non-empty). Surfacing this
     # in the workspace key inventory lets a CISO answer the standard
@@ -219,6 +232,7 @@ def _from_record(rec: dict[str, Any]) -> PAT:
         path_prefixes=normalise_path_prefixes(rec.get("path_prefixes") or []),
         require_device_approval=bool(rec.get("require_device_approval", False)),
         http_methods=normalise_http_methods(rec.get("http_methods") or []),
+        usage_windows=normalise_usage_windows(rec.get("usage_windows") or []),
         owner_email=normalise_owner_email(rec.get("owner_email") or "", allow_blank=True),
     )
 
@@ -324,6 +338,7 @@ def create(
     ip_cidrs: Iterable[str] | None = None,
     path_prefixes: Iterable[str] | None = None,
     http_methods: Iterable[str] | None = None,
+    usage_windows: Iterable[str] | None = None,
     owner_email: str | None = None,
 ) -> tuple[PAT, str]:
     """Mint a new PAT. Returns (record, plaintext_secret_shown_once).
@@ -364,6 +379,7 @@ def create(
     safe_cidrs = normalise_cidrs(ip_cidrs)
     safe_prefixes = normalise_path_prefixes(path_prefixes)
     safe_methods = normalise_http_methods(http_methods)
+    safe_windows = normalise_usage_windows(usage_windows)
     safe_owner_email = normalise_owner_email(owner_email or "", allow_blank=True)
     # Workspace concurrent-PAT cap: when an admin has pinned
     # ``max_active`` for this workspace, any mint that would push the
@@ -418,6 +434,7 @@ def create(
         "path_prefixes": sorted(safe_prefixes),
         "require_device_approval": False,
         "http_methods": sorted(safe_methods),
+        "usage_windows": sorted(safe_windows),
         "owner_email": safe_owner_email,
     }
     _append(rec)
@@ -500,6 +517,7 @@ def rotate(
         "path_prefixes": sorted(current.path_prefixes),
         "require_device_approval": current.require_device_approval,
         "http_methods": sorted(current.http_methods),
+        "usage_windows": sorted(current.usage_windows),
         "rotated_at": now,
         "owner_email": current.owner_email,
     }
@@ -539,6 +557,7 @@ def revoke(*, tenant_id: str, pat_id: str) -> bool:
         "path_prefixes": sorted(current.path_prefixes),
         "require_device_approval": current.require_device_approval,
         "http_methods": sorted(current.http_methods),
+        "usage_windows": sorted(current.usage_windows),
         "revoked_at": time.time(),
         "owner_email": current.owner_email,
     }
@@ -627,6 +646,7 @@ def touch_last_used(
         "path_prefixes": sorted(current.path_prefixes),
         "require_device_approval": current.require_device_approval,
         "http_methods": sorted(current.http_methods),
+        "usage_windows": sorted(current.usage_windows),
         "owner_email": current.owner_email,
     }
     _append(rec)
@@ -674,6 +694,7 @@ def public_view(p: PAT) -> dict[str, Any]:
         "path_prefixes": sorted(p.path_prefixes),
         "require_device_approval": p.require_device_approval,
         "http_methods": sorted(p.http_methods),
+        "usage_windows": sorted(p.usage_windows),
         "owner_email": p.owner_email,
         "max_age_minutes": (
             _policy.max_pat_age_minutes if _policy is not None else 0
@@ -853,6 +874,7 @@ def set_path_prefixes(
         "path_prefixes": sorted(safe),
         "require_device_approval": current.require_device_approval,
         "http_methods": sorted(current.http_methods),
+        "usage_windows": sorted(current.usage_windows),
         "path_prefixes_updated_at": time.time(),
         "owner_email": current.owner_email,
     }
@@ -895,6 +917,7 @@ def set_ip_cidrs(
         "ip_cidrs": sorted(safe),
         "require_device_approval": current.require_device_approval,
         "http_methods": sorted(current.http_methods),
+        "usage_windows": sorted(current.usage_windows),
         "ip_updated_at": time.time(),
         "owner_email": current.owner_email,
     }
@@ -938,6 +961,7 @@ def set_require_device_approval(
         "path_prefixes": sorted(current.path_prefixes),
         "require_device_approval": bool(required),
         "http_methods": sorted(current.http_methods),
+        "usage_windows": sorted(current.usage_windows),
         "device_policy_updated_at": time.time(),
         "owner_email": current.owner_email,
     }
@@ -981,6 +1005,7 @@ def set_path_prefixes(
         "path_prefixes": sorted(safe),
         "require_device_approval": current.require_device_approval,
         "http_methods": sorted(current.http_methods),
+        "usage_windows": sorted(current.usage_windows),
         "path_updated_at": time.time(),
         "owner_email": current.owner_email,
     }
@@ -1077,6 +1102,7 @@ def set_http_methods(
         "path_prefixes": sorted(current.path_prefixes),
         "require_device_approval": current.require_device_approval,
         "http_methods": sorted(safe),
+        "usage_windows": sorted(current.usage_windows),
         "http_methods_updated_at": time.time(),
         "owner_email": current.owner_email,
     }
@@ -1149,8 +1175,227 @@ def set_owner_email(
         "path_prefixes": sorted(current.path_prefixes),
         "require_device_approval": current.require_device_approval,
         "http_methods": sorted(current.http_methods),
+        "usage_windows": sorted(current.usage_windows),
         "owner_email": safe_email,
         "owner_email_updated_at": time.time(),
+    }
+    _append(rec)
+    return _from_record(rec)
+
+
+# --- Per-PAT usage windows ------------------------------------------
+
+_DAY_INDEX = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+_DAY_ORDER = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
+def _parse_days(spec: str) -> frozenset[int]:
+    """Parse ``mon``, ``mon-fri``, or ``all`` into a set of weekday ints (Mon=0)."""
+    s = spec.strip().lower()
+    if not s:
+        raise ValueError("empty day spec")
+    if s == "all":
+        return frozenset(range(7))
+    if "-" in s:
+        a, b = s.split("-", 1)
+        if a not in _DAY_INDEX or b not in _DAY_INDEX:
+            raise ValueError(f"unknown day in range: {spec!r}")
+        i, j = _DAY_INDEX[a], _DAY_INDEX[b]
+        if i <= j:
+            return frozenset(range(i, j + 1))
+        # Wrap, e.g. fri-mon means Fri, Sat, Sun, Mon.
+        return frozenset(list(range(i, 7)) + list(range(0, j + 1)))
+    if s not in _DAY_INDEX:
+        raise ValueError(f"unknown day: {spec!r}")
+    return frozenset({_DAY_INDEX[s]})
+
+
+def _parse_hhmm(spec: str) -> int:
+    """Return minutes since midnight, or raise ValueError."""
+    if len(spec) != 5 or spec[2] != ":":
+        raise ValueError(f"time must be HH:MM, got {spec!r}")
+    try:
+        h = int(spec[:2])
+        m = int(spec[3:])
+    except ValueError:
+        raise ValueError(f"time must be HH:MM, got {spec!r}")
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        raise ValueError(f"time out of range: {spec!r}")
+    return h * 60 + m
+
+
+def _parse_window(spec: str) -> tuple[frozenset[int], int, int]:
+    """Parse a single ``<days>:HH:MM-HH:MM`` window. UTC.
+
+    Returns (days_set, start_minute, end_minute). End is inclusive on
+    the minute. If end < start the window is treated as wrapping past
+    midnight by the matcher.
+    """
+    s = (spec or "").strip().lower()
+    if not s:
+        raise ValueError("empty usage window")
+    # Split on first ':' between days and the time range.
+    idx = s.find(":")
+    if idx < 0 or idx == len(s) - 1:
+        raise ValueError(
+            f"usage window must be <days>:HH:MM-HH:MM, got {spec!r}"
+        )
+    days_part = s[:idx]
+    time_part = s[idx + 1 :]
+    if "-" not in time_part:
+        raise ValueError(
+            f"usage window time range must be HH:MM-HH:MM, got {spec!r}"
+        )
+    start_s, end_s = time_part.split("-", 1)
+    days = _parse_days(days_part)
+    start = _parse_hhmm(start_s)
+    end = _parse_hhmm(end_s)
+    return days, start, end
+
+
+def normalise_usage_windows(raw: Iterable[str] | None) -> frozenset[str]:
+    """Validate and canonicalise a list of usage-window specs.
+
+    Each entry is lowercased, parsed, and re-rendered in the canonical
+    ``<days>:HH:MM-HH:MM`` form (days expanded back into the shortest
+    valid spec: ``all`` for all 7 days, a single day token when only
+    one weekday is set, or the original dash range form when
+    contiguous). Garbage strings raise :class:`ValueError`. Empty
+    input is the empty frozenset which the enforcer treats as
+    \"no restriction\".
+
+    Hard cap: 16 windows per PAT. More than that is almost always a
+    misconfiguration and we'd rather fail closed than carry an
+    unbounded list around.
+    """
+    if not raw:
+        return frozenset()
+    items = list(raw)
+    if len(items) > 16:
+        raise ValueError("at most 16 usage windows per token")
+    out: set[str] = set()
+    for entry in items:
+        days, start, end = _parse_window(str(entry))
+        # Canonicalise the day token.
+        if len(days) == 7:
+            day_token = "all"
+        elif len(days) == 1:
+            (only,) = days
+            day_token = _DAY_ORDER[only]
+        else:
+            # Try to render as a contiguous range (no wrap) for
+            # readability; fall back to a comma-joined list (which the
+            # parser does NOT accept, so split into one window per day
+            # in that case to keep round-tripping honest).
+            sorted_days = sorted(days)
+            contiguous = all(
+                sorted_days[i] + 1 == sorted_days[i + 1]
+                for i in range(len(sorted_days) - 1)
+            )
+            if contiguous:
+                day_token = f"{_DAY_ORDER[sorted_days[0]]}-{_DAY_ORDER[sorted_days[-1]]}"
+            else:
+                # Emit one window per day rather than invent a list
+                # syntax the parser doesn't accept.
+                for d in sorted_days:
+                    out.add(
+                        f"{_DAY_ORDER[d]}:{start // 60:02d}:{start % 60:02d}-"
+                        f"{end // 60:02d}:{end % 60:02d}"
+                    )
+                continue
+        canon = (
+            f"{day_token}:{start // 60:02d}:{start % 60:02d}-"
+            f"{end // 60:02d}:{end % 60:02d}"
+        )
+        out.add(canon)
+    if len(out) > 16:
+        raise ValueError("at most 16 usage windows per token")
+    return frozenset(out)
+
+
+def usage_window_matches(now_epoch: float, windows: Iterable[str]) -> bool:
+    """Return True when ``now_epoch`` falls inside at least one window.
+
+    Empty / missing windows means \"no restriction\" and is always
+    True so existing PATs stay backward compatible. All comparisons
+    are in UTC: usage windows are a server-side fence and a tenant
+    that wants Pacific business hours can express them as the
+    corresponding UTC range. Windows where end < start are treated as
+    wrapping past midnight (e.g. ``all:22:00-02:00``); in that case
+    the weekday gate matches if *either* the current UTC weekday or
+    the previous UTC weekday is in the day set so a window spanning
+    midnight covers both halves.
+    """
+    win_list = [w for w in windows if w]
+    if not win_list:
+        return True
+    import time as _time
+    t = _time.gmtime(now_epoch)
+    # Python's tm_wday is already Mon=0 ... Sun=6, matching _DAY_INDEX.
+    today = t.tm_wday
+    yesterday = (today - 1) % 7
+    minute_of_day = t.tm_hour * 60 + t.tm_min
+    for w in win_list:
+        try:
+            days, start, end = _parse_window(str(w))
+        except ValueError:
+            # Treat unparseable persisted windows as deny rather than
+            # accidentally opening the gate.
+            continue
+        if start <= end:
+            # Non-wrapping: today must be in the day set and minute
+            # must fall within [start, end] inclusive.
+            if today in days and start <= minute_of_day <= end:
+                return True
+        else:
+            # Wrapping past midnight.
+            if today in days and minute_of_day >= start:
+                return True
+            if yesterday in days and minute_of_day <= end:
+                return True
+    return False
+
+
+def set_usage_windows(
+    *, tenant_id: str, pat_id: str, windows: Iterable[str]
+) -> "PAT | None":
+    """Replace the per-PAT usage window list.
+
+    Empty list clears the restriction (token usable any time).
+    Raises :class:`ValueError` on malformed specs so the route
+    surfaces a structured 400; returns None when the token is
+    unknown or owned by another tenant so the route can respond
+    with 404 without leaking cross-tenant existence.
+    """
+    current = _reduce().get(pat_id)
+    if current is None or current.deleted or current.tenant_id != tenant_id:
+        return None
+    safe = normalise_usage_windows(list(windows))
+    rec = {
+        "id": current.id,
+        "tenant_id": current.tenant_id,
+        "name": current.name,
+        "roles": sorted(current.roles),
+        "rpm": current.rpm,
+        "created_at": current.created_at,
+        "last_used_at": current.last_used_at,
+        "secret_hash": current.secret_hash,
+        "secret_hint": current.secret_hint,
+        "last_used_ip": current.last_used_ip,
+        "last_used_ua": current.last_used_ua,
+        "deleted": False,
+        "expires_at": current.expires_at,
+        "scopes": sorted(current.scopes),
+        "prior_secret_hash": current.prior_secret_hash,
+        "prior_secret_hint": current.prior_secret_hint,
+        "prior_secret_expires_at": current.prior_secret_expires_at,
+        "ip_cidrs": sorted(current.ip_cidrs),
+        "path_prefixes": sorted(current.path_prefixes),
+        "require_device_approval": current.require_device_approval,
+        "http_methods": sorted(current.http_methods),
+        "usage_windows": sorted(safe),
+        "owner_email": current.owner_email,
+        "usage_windows_updated_at": time.time(),
     }
     _append(rec)
     return _from_record(rec)

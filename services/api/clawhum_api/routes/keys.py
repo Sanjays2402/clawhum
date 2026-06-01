@@ -88,6 +88,19 @@ class CreateKeyBody(BaseModel):
             "not break."
         ),
     )
+    usage_windows: list[str] | None = Field(
+        default=None,
+        max_length=16,
+        description=(
+            "Optional list of UTC time windows during which this "
+            "token may authenticate. Each entry is "
+            "'<days>:HH:MM-HH:MM' where days is mon..sun, 'all', or "
+            "a range like 'mon-fri'. Empty / omitted means no time "
+            "restriction. Use this to shrink the leak blast-radius "
+            "for tokens that only run during business hours or a "
+            "nightly job; outside the window the API returns 403."
+        ),
+    )
     owner_email: str | None = Field(
         default=None,
         max_length=128,
@@ -123,6 +136,7 @@ class KeyView(BaseModel):
     path_prefixes: list[str] = Field(default_factory=list)
     require_device_approval: bool = False
     http_methods: list[str] = Field(default_factory=list)
+    usage_windows: list[str] = Field(default_factory=list)
     owner_email: str = ""
     # Force-rotation policy state (populated from active workspace
     # SessionPolicy on read). 0 / None mean the policy is unset.
@@ -238,6 +252,7 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
             ip_cidrs=body.ip_cidrs or [],
             path_prefixes=body.path_prefixes or [],
             http_methods=body.http_methods or [],
+            usage_windows=body.usage_windows or [],
             owner_email=body.owner_email,
         )
     except ValueError as exc:
@@ -647,6 +662,85 @@ async def set_key_method_allowlist(
         "ok": True,
         "id": updated.id,
         "http_methods": sorted(updated.http_methods),
+    }
+
+
+class UsageWindowBody(BaseModel):
+    usage_windows: list[str] = Field(
+        default_factory=list,
+        max_length=16,
+        description=(
+            "Replacement list of UTC usage windows for the token. "
+            "Each entry is '<days>:HH:MM-HH:MM' where days is one of "
+            "mon..sun, 'all', or a contiguous range like 'mon-fri'. "
+            "Pass an empty list to clear the restriction. Bad input "
+            "returns 400 with the parser message so the UI can show "
+            "the offending entry inline."
+        ),
+    )
+
+
+class UsageWindowResponse(BaseModel):
+    ok: bool
+    id: str
+    usage_windows: list[str]
+
+
+@router.put(
+    "/keys/{key_id}/usage-window",
+    response_model=UsageWindowResponse,
+    dependencies=[Depends(require_roles("writer")), Depends(require_mfa())],
+)
+async def set_key_usage_window(
+    key_id: str,
+    body: UsageWindowBody,
+    request: Request,
+) -> dict[str, Any]:
+    """Pin a PAT to a list of UTC usage windows.
+
+    Empty list clears the restriction. Step-up MFA is required
+    because widening the window weakens the leak fence and shrinking
+    it can lock a running CI job out mid-deploy; both directions are
+    destructive enough to warrant the same gate as the other PAT
+    fences. Dry-run preview returns the previous and requested
+    windows so an operator can confirm intent before flipping.
+    """
+    from ..dry_run import is_dry_run, preview
+    tenant = current_tenant_id(request)
+    existing = next(
+        (p for p in pat_store.live_for_tenant(tenant) if p.id == key_id),
+        None,
+    )
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    if is_dry_run(request):
+        return preview(
+            "api_key_usage_window",
+            key_id,
+            tenant_id=tenant,
+            name=existing.name,
+            previous=sorted(existing.usage_windows),
+            requested=list(body.usage_windows),
+        )
+    try:
+        updated = pat_store.set_usage_windows(
+            tenant_id=tenant, pat_id=key_id, windows=body.usage_windows
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid usage_windows: {exc}",
+        )
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    return {
+        "ok": True,
+        "id": updated.id,
+        "usage_windows": sorted(updated.usage_windows),
     }
 
 
