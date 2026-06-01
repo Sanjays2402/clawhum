@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from ..auth import require_api_key, require_mfa, require_roles
+from .. import classification_store
 from ..privacy import actor_id_for, collect_events, redact_actor, redact_tenant_feedback
 from ..tenant import current_tenant_id, scope_rows
 from ..workspace_export import build_export, export_filename
@@ -85,14 +86,40 @@ async def workspace_export(request: Request) -> Any:
     dry-runs and procurement review checklists.
     """
     tenant_id = current_tenant_id(request)
+    classification = classification_store.get(tenant_id)
+    if classification_store.requires_ack(classification.level):
+        ack = (request.headers.get("x-classification-ack") or "").strip().lower()
+        if ack != classification.level:
+            raise HTTPException(
+                status_code=428,
+                detail={
+                    "error": "classification_ack_required",
+                    "message": (
+                        "workspace data is classified "
+                        f"'{classification.level}'; resend with header "
+                        f"X-Classification-Ack: {classification.level} "
+                        "to confirm handling responsibility"
+                    ),
+                    "classification": classification.to_dict(),
+                },
+                headers={
+                    "X-Data-Classification": classification.level,
+                    "X-Data-Classification-Label": classification.label,
+                },
+            )
     blob, manifest = build_export(tenant_id)
+    classification_payload = classification.to_dict()
     fmt = (request.query_params.get("format") or "").lower()
     accept = request.headers.get("accept", "")
     if fmt == "json" or ("application/json" in accept and "application/zip" not in accept):
         return JSONResponse({
             "manifest": manifest.to_dict(),
+            "classification": classification_payload,
             "size_bytes": len(blob),
             "filename": export_filename(tenant_id, manifest.generated_at),
+        }, headers={
+            "X-Data-Classification": classification.level,
+            "X-Data-Classification-Label": classification.label,
         })
     filename = export_filename(tenant_id, manifest.generated_at)
     headers = {
@@ -100,6 +127,8 @@ async def workspace_export(request: Request) -> Any:
         "x-clawhum-export-rows": str(manifest.total_rows),
         "x-clawhum-export-sha256": manifest.sha256,
         "x-clawhum-export-tenant": tenant_id,
+        "X-Data-Classification": classification.level,
+        "X-Data-Classification-Label": classification.label,
         "cache-control": "no-store",
     }
     if manifest.signature_hex:

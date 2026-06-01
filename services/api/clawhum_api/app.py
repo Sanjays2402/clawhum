@@ -35,6 +35,7 @@ from .routes import support_access as support_access_routes
 from .routes import subprocessors as subprocessors_routes
 from .routes import legal_hold as legal_hold_routes
 from .routes import closure as closure_routes
+from .routes import classification as classification_routes
 from .routes import feedback as feedback_routes
 from .routes import health as health_routes
 from .routes import history as history_routes
@@ -141,6 +142,8 @@ async def _lifespan(app: FastAPI):
     _reset_month_cache()
     from . import residency_store as _residency_store
     _residency_store.reset_cache()
+    from . import classification_store as _classification_store
+    _classification_store.reset_cache()
     app.state.clawhum = AppState.boot(prefer_clap=False)  # default to fallback at startup; reindex can flip
     log.info("clawhum_boot", version=__version__,
              tracks=len(app.state.clawhum.tracks),
@@ -283,6 +286,7 @@ def create_app() -> FastAPI:
     app.include_router(support_access_routes.router)
     app.include_router(legal_hold_routes.router)
     app.include_router(closure_routes.router)
+    app.include_router(classification_routes.router)
     app.include_router(export_signing_routes.router)
     # Stable, version-pinned public API surface. The same routers are
     # mounted again under /v1 so integrators can target a URL we will not
@@ -333,6 +337,7 @@ def create_app() -> FastAPI:
     app.include_router(support_access_routes.router, prefix="/v1")
     app.include_router(legal_hold_routes.router, prefix="/v1")
     app.include_router(closure_routes.router, prefix="/v1")
+    app.include_router(classification_routes.router, prefix="/v1")
     app.include_router(metrics_router)
     register_app_collector(app)
     return app

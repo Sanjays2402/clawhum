@@ -23,6 +23,28 @@ curl -s -X PUT -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
 
 Once the active token crosses 90 days, every SCIM 2.0 response will carry `Sunset`, `Deprecation: true`, and the structured `X-Clawhum-SCIM-Token-*` headers, so the buyer's IdP adapter can alert before the audit does.
 
+## Workspace data classification
+
+Procurement and information security reviewers ask every SaaS vendor the same question: how is the customer's data classified, and what happens when someone tries to export all of it? ClawHum now answers both. Each workspace pins itself to one of `public`, `internal` (default), `confidential`, or `restricted`. The label is surfaced in the workspace-wide export response payload, on the `X-Data-Classification` response header, and inside the audit log diff so reviewers can see exactly who set it and when. When the workspace is marked `restricted` the GDPR/SOC2 workspace export endpoint returns `428 Precondition Required` until the caller resends the request with `X-Classification-Ack: restricted`, so a bulk pull of sensitive data is always an intentional act. Admins read the policy at `GET /v1/classification`; admins with MFA change it at `PUT /v1/classification`; the change is recorded in the audit log with the before/after diff. Pinned by `tests/integration/test_classification.py` which proves the default level, role enforcement, the ack gate (missing, wrong, and correct values), and that lower levels stay self serve.
+
+### Try it (data classification)
+
+```bash
+uv run python -m clawhum_api  # http://127.0.0.1:7451
+curl -s -X PUT http://127.0.0.1:7451/v1/classification \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "X-MFA-Code: $TOTP" \
+  -H "Content-Type: application/json" \
+  -d '{"level":"restricted","label":"PII - EU customers","handling_contact":"dpo@example.com"}'
+curl -s "http://127.0.0.1:7451/v1/privacy/workspace-export?format=json" \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"            # 428 classification_ack_required
+curl -s "http://127.0.0.1:7451/v1/privacy/workspace-export?format=json" \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "X-Classification-Ack: restricted"          # 200, classification payload included
+```
+
+Then open [`/settings/classification`](http://127.0.0.1:7452/settings/classification) to change the level, label and handling contact.
+
 ## Audit log integrity console
 
 Every audit log entry already carries a SHA-256 of its payload plus the previous entry hash; what was missing was a procurement-facing surface to *prove* the chain holds without dropping to curl. The new admin page at [`/admin/audit-chain`](http://127.0.0.1:7452/admin/audit-chain) re-derives the chain across the active audit file and (by default) every rotated sibling on disk, then reports `ok`, `entries`, `valid`, the `first_bad_line` plus a human reason when broken, and the head `prev_hash` and tail `entry_hash` per file so an operator can pin the digests in their SOC2 evidence pack. A non-admin caller gets `403` from the route and a matching message in the UI; the existing role check on `GET /audit/verify` is unchanged. The page calls the same read-only endpoint that a SIEM can cron on a schedule, and the `include_rotated=false` toggle narrows the run to the active file when debugging hot writes. Pinned by `tests/integration/test_audit_chain.py` which proves the clean case, that editing a single field reports the offending line and reason, that deleting a line breaks the next entry, that the `include_rotated` flag actually narrows the scan, and that a member-role caller gets 403.

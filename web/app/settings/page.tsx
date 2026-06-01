@@ -492,6 +492,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Workspace data classification */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">data classification</span>
+            <a
+              href="/settings/classification"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            declare this workspace as public, internal, confidential, or restricted. restricted forces bulk export calls to send an X-Classification-Ack header. admin role plus MFA required to change.
+          </p>
+        </section>
+
         {/* Workspace IP allowlist */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">
