@@ -2,6 +2,27 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace webhook signing-secret max age (forced rotation)
+
+Webhook signing secrets are long-lived shared secrets and every SOC2 CC6.1 / ISO 27001 A.10.1.2 / NIST 800-53 SC-12 review wants them rotated on a defined cadence. Workspace owners can now set a per-tenant ceiling on `max_secret_age_days` at `/webhook-secret-rotation`: once any of that workspace's webhook secrets crosses the floor (anchored on the most recent rotation, falling back to `created_at` for hooks that have never rotated), `GET /webhooks` attaches `Sunset` (RFC 8594 IMF-fixdate of the missed deadline for the oldest stale hook), `Deprecation: true` per the IETF deprecation-header draft, an optional `Link: <docs>; rel="sunset"` pointing at the workspace's rotation runbook, plus `X-Clawhum-Webhook-Secret-Stale-Count`, `X-Clawhum-Webhook-Secret-Max-Age-Days`, and `X-Clawhum-Webhook-Secret-Oldest-Rotated-At` for SDKs that prefer structured numbers. A companion `GET /webhook-secret-rotation/stale` lists every offending hook id, URL, and age in days so a dashboard or cron job can prioritise rotations without scraping. Default `max_secret_age_days` is `0` (disabled), so existing tenants are unchanged. Storage is the same append-only JSONL last-writer-wins pattern used by every other per-workspace policy module, keyed by tenant id, so cross-tenant lookups are impossible: workspace A flipping the knob has zero effect on workspace B's hooks or warning headers. The CORS `expose_headers` list is extended so browser SDKs see the headers from cross-origin calls. Mutations require admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `webhook_secret_rotation.update` with before / after state. Pinned by `tests/integration/test_webhook_secret_rotation.py` which proves headers fire when a hook is past the floor, stay silent when it is under, are tenant-scoped (workspace B does not inherit workspace A's policy or its stale list), and malformed policy submissions are rejected with a structured 400.
+
+### Try it (webhook secret rotation)
+
+UI: open [`/settings/webhook-secret-rotation`](http://127.0.0.1:7452/settings/webhook-secret-rotation) to set the ceiling from preset chips (Off, 30, 60, 90, 180, 365 days) or a custom value, paste your rotation runbook URL, and see the live list of stale hooks plus the example headers an SDK will receive. API:
+
+```bash
+curl -sS http://127.0.0.1:7451/webhook-secret-rotation \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+
+curl -sS -X PUT http://127.0.0.1:7451/webhook-secret-rotation \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"max_secret_age_days": 90, "docs_url": "https://runbooks.example.com/rotate-webhooks"}'
+
+curl -sS -D - http://127.0.0.1:7451/webhook-secret-rotation/stale \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY"
+```
+
 ## Security incident (breach notification) tracker
 
 A personal data breach starts a 72 hour clock under GDPR Article 33 to notify the supervisory authority, and Article 34 obligates direct notification to affected data subjects when the risk is high. CCPA section 1798.82 and most US state breach laws impose similar duties. SOC2 criterion CC7.3 requires the entity to evaluate and act on security events. Procurement reviewers ask "what is your incident response process and where do you log incidents?" and without a system of record the only honest answer used to be "we cannot prove one." Workspace owners can now declare an incident with a severity (`low`, `medium`, `high`, `critical`), a short title, an optional discovery timestamp (defaults to now), and free-text detail. Each entry surfaces its 72 hour regulator-notify deadline so the queue at [`/admin/incidents`](http://127.0.0.1:7452/admin/incidents) shows what is approaching or past the GDPR Article 33 window. The detail pane appends timeline notes, advances status through `open` then `contained` then `resolved` or `closed_no_action` (the latter requires a non-empty justification so the audit trail explains the legal basis), records regulator notification with authority name and reference number, and records data subject notification with an affected count. Reads and mutations are tenant scoped at both the route layer and inside `incidents.py` for defense in depth; tenant A cannot list, fetch, advance, or notify against tenant B's incidents and a cross-tenant id returns 404 so existence does not leak. Every mutation requires the `admin` role plus a fresh MFA step-up and is written to the workspace audit log via the existing audit middleware. Terminal incidents cannot be reopened; declare a new one if related events surface. Pinned by `tests/integration/test_incidents.py` which proves the full declare to close flow with regulator + data subject notification, rejects non-admin mutations with 403, rejects cross-tenant reads and mutations with 404, rejects invalid input with 400, and rejects reopening or double-notifying with 409.

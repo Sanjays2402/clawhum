@@ -844,6 +844,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Webhook secret rotation */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">webhook secret rotation</span>
+            <a
+              href="/settings/webhook-secret-rotation"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              configure
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            declare a maximum age for webhook signing secrets. GET /webhooks responses for stale hooks attach Sunset, Deprecation, and X-Clawhum-Webhook-Secret-Stale-Count headers so SDKs and dashboards can drive rotation before SOC2 audits flag long-lived secrets.
+          </p>
+        </section>
+
         {/* Onboarding controls */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

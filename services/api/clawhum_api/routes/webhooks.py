@@ -30,7 +30,7 @@ from typing import Any, Iterable
 import httpx
 from clawhum_core.logging import get_logger
 from clawhum_core.settings import get_settings
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field, HttpUrl
 
 from ..auth import require_api_key, require_mfa, require_roles
@@ -386,10 +386,20 @@ async def create_webhook(
     dependencies=[Depends(require_api_key)],
 )
 async def list_webhooks(
+    response: Response,
     tenant_id: str = Depends(current_tenant),
 ) -> WebhookListResponse:
-    items = [WebhookListItem(**_public_view(r)) for r in _live_hooks(tenant_id)]
+    hooks = _live_hooks(tenant_id)
+    items = [WebhookListItem(**_public_view(r)) for r in hooks]
     items.sort(key=lambda i: i.created_at, reverse=True)
+    # Per-workspace forced rotation policy: when any of this tenant's
+    # webhook secrets has aged past the configured ceiling, attach
+    # Sunset/Deprecation headers so SDKs and dashboards can act on
+    # the SOC2 CC6.1 rotation requirement without polling a side endpoint.
+    from .. import webhook_secret_rotation as _wsr
+
+    for k, v in _wsr.compute_headers(tenant_id=tenant_id, hooks=hooks).items():
+        response.headers[k] = v
     return WebhookListResponse(webhooks=items)
 
 
