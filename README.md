@@ -77,7 +77,7 @@ curl -sS -X PUT http://127.0.0.1:7451/webhook-delivery-rate \
 
 ## Per-workspace HTTPS-only webhook policy
 
-SSRF protections already block private and cloud-metadata destinations, but the global default still allows plaintext `http://` receivers because some on-prem deployments terminate TLS at a load balancer one hop away. That default fails enterprise procurement: SOC2 CC6.7 and most DPAs require that webhook payloads (which carry signed records of customer data and an HMAC secret in every header) only ever cross TLS, and an `http://` delivery defeats the point of HMAC signing because an on-path attacker can read the same bytes the signature is meant to authenticate. Each workspace can now flip a single `require_https` policy under `/settings/webhook-policy`. While the policy is on, `POST /webhooks` rejects plaintext URLs with `HTTP 400` and a structured `{code: "webhook_https_required"}` body, and every delivery attempt re-checks the scheme right before send so a later policy flip starts failing pre-existing `http://` endpoints with the same code in their delivery log instead of leaking the payload. The settings page surfaces the count of existing plaintext endpoints before you flip the switch, so admins are warned which deliveries will start failing. Strictly per-workspace: tenant A turning enforcement on has zero effect on tenant B. Toggling the policy requires the admin role plus a fresh MFA step-up and is written to the audit log with before / after state. Pinned by `tests/integration/test_webhook_https_policy.py` which proves the 400 gate, the per-tenant isolation, and that https deliveries continue to flow once the policy is on.
+SSRF protections already block private and cloud-metadata destinations, but the global default still allows plaintext `http://` receivers because some on-prem deployments terminate TLS at a load balancer one hop away. That default fails enterprise procurement: SOC2 CC6.7 and most DPAs require that webhook payloads (which carry signed records of customer data and an HMAC secret in every header) only ever cross TLS, and an `http://` delivery defeats the point of HMAC signing because an on-path attacker can read the same bytes the signature is meant to authenticate. Each workspace can now flip a single `require_https` policy under `/settings/webhook-policy`. While the policy is on, `POST /webhooks` rejects plaintext URLs with `HTTP 400` and a structured `{code: "webhook_https_required"}` body, and every delivery attempt re-checks the scheme right before send so a later policy flip starts failing pre-existing `http://` endpoints with the same code in their delivery log instead of leaking the payload. The same settings page also pins a per-workspace **minimum TLS version** for outbound deliveries (`""`, `"1.2"`, or `"1.3"`); when set, the outbound `httpx` client is built with an SSLContext whose `minimum_version` matches, so receivers that cannot negotiate the floor fail the handshake before any payload is sent. Setting any TLS floor implicitly requires https since plaintext has no TLS to pin, and an invalid version is rejected with `{code: "webhook_policy_invalid"}`. The settings page surfaces the count of existing plaintext endpoints before you flip the switch, so admins are warned which deliveries will start failing. Strictly per-workspace: tenant A turning enforcement on has zero effect on tenant B. Toggling the policy requires the admin role plus a fresh MFA step-up and is written to the audit log with before / after state. Pinned by `tests/integration/test_webhook_https_policy.py` which proves the 400 gate, the per-tenant isolation, the TLS floor validation, that the SSLContext actually pins `minimum_version`, and that https deliveries continue to flow once the policy is on.
 
 ### Try it (webhook HTTPS policy)
 
@@ -99,6 +99,14 @@ curl -sS -i -X POST http://127.0.0.1:7451/webhooks \
   -d '{"url":"http://example.com/hook","events":["match.completed"]}'
 # HTTP/1.1 400 Bad Request
 # {"detail":{"code":"webhook_https_required","message":"workspace policy requires https for webhook destinations"}}
+```
+
+Pin a TLS floor for outbound deliveries (any floor implies https):
+
+```bash
+curl -sS -X PUT http://127.0.0.1:7451/webhook-policy \
+  -H 'X-API-Key: $YOUR_KEY' -H 'Content-Type: application/json' \
+  -d '{"require_https": true, "min_tls_version": "1.2"}'
 ```
 
 ## Per-PAT trusted device approval

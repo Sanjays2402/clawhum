@@ -23,7 +23,9 @@ import { getApiKey, useApiKey } from "@/lib/apiKey";
 
 interface PolicyResp {
   require_https: boolean;
+  min_tls_version: string;
   plaintext_endpoint_count: number;
+  allowed_min_tls_versions: string[];
   updated_at: number;
   updated_by: string;
 }
@@ -77,14 +79,26 @@ export default function WebhookHttpsPolicyPage() {
     refresh();
   }, [refresh, storedKey]);
 
-  async function setPolicy(require_https: boolean) {
+  async function setPolicy(
+    next: { require_https?: boolean; min_tls_version?: string },
+  ) {
+    if (state.kind !== "ready") return;
     setSaving(true);
     setSaveError(null);
     try {
       const r = await fetch("/api/webhook-policy", {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ require_https }),
+        body: JSON.stringify({
+          require_https:
+            next.require_https !== undefined
+              ? next.require_https
+              : state.data.require_https,
+          min_tls_version:
+            next.min_tls_version !== undefined
+              ? next.min_tls_version
+              : state.data.min_tls_version,
+        }),
       });
       if (!r.ok) {
         const body = await r.json().catch(() => ({}));
@@ -210,7 +224,7 @@ export default function WebhookHttpsPolicyPage() {
               {state.data.require_https ? (
                 <button
                   type="button"
-                  onClick={() => setPolicy(false)}
+                  onClick={() => setPolicy({ require_https: false })}
                   disabled={saving}
                   className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -219,7 +233,7 @@ export default function WebhookHttpsPolicyPage() {
               ) : (
                 <button
                   type="button"
-                  onClick={() => setPolicy(true)}
+                  onClick={() => setPolicy({ require_https: true })}
                   disabled={saving}
                   className="inline-flex items-center gap-1 rounded-md bg-emerald-500 px-4 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -235,6 +249,65 @@ export default function WebhookHttpsPolicyPage() {
               <Warning size={14} weight="duotone" /> {saveError}
             </p>
           )}
+        </section>
+      )}
+
+      {state.kind === "ready" && (
+        <section className="mt-6 rounded-xl border border-zinc-800 bg-zinc-950/60">
+          <header className="flex items-center justify-between border-b border-zinc-800 px-5 py-3">
+            <h2 className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+              <LockKey size={16} weight="duotone" /> Minimum TLS version
+            </h2>
+            <span
+              className={`rounded-full px-2 py-0.5 text-[11px] ${
+                state.data.min_tls_version
+                  ? "bg-emerald-500/15 text-emerald-300"
+                  : "bg-zinc-800 text-zinc-400"
+              }`}
+            >
+              {state.data.min_tls_version
+                ? `TLS ${state.data.min_tls_version}+`
+                : "no floor"}
+            </span>
+          </header>
+
+          <div className="space-y-4 px-5 py-5 text-sm text-zinc-300">
+            <p className="leading-relaxed text-zinc-400">
+              Pin the minimum negotiated TLS version for outbound
+              webhook deliveries. Receivers that cannot negotiate the
+              floor fail the handshake before any payload is sent.
+              Setting any floor implicitly requires https since
+              plaintext has no TLS to pin.
+            </p>
+
+            <div
+              role="radiogroup"
+              aria-label="Minimum TLS version"
+              className="flex flex-wrap gap-2"
+            >
+              {state.data.allowed_min_tls_versions.map((v) => {
+                const active = state.data.min_tls_version === v;
+                const label = v ? `TLS ${v}+` : "no floor";
+                return (
+                  <button
+                    key={v || "none"}
+                    role="radio"
+                    aria-checked={active}
+                    type="button"
+                    onClick={() => setPolicy({ min_tls_version: v })}
+                    disabled={saving}
+                    className={`rounded-md border px-3 py-1.5 text-xs transition focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60 disabled:cursor-not-allowed disabled:opacity-50 ${
+                      active
+                        ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-200"
+                        : "border-zinc-700 text-zinc-300 hover:bg-zinc-900"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </section>
       )}
     </main>

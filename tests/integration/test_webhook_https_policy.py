@@ -145,3 +145,85 @@ def test_plaintext_count_warns_before_flip(monkeypatch, tmp_path):
         r = c.get("/webhook-policy", headers={"X-API-Key": "acmekey"})
         assert r.status_code == 200, r.text
         assert r.json()["plaintext_endpoint_count"] == 2
+
+
+def test_min_tls_version_round_trip_and_validation(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as c:
+        # Default is no floor.
+        r = c.get("/webhook-policy", headers={"X-API-Key": "acmekey"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["min_tls_version"] == ""
+        assert "1.2" in body["allowed_min_tls_versions"]
+        assert "1.3" in body["allowed_min_tls_versions"]
+
+        # Set TLS 1.2 floor; it implicitly requires https.
+        r = c.put(
+            "/webhook-policy",
+            json={"require_https": False, "min_tls_version": "1.2"},
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 200, r.text
+        # Plaintext URLs are now rejected because the TLS floor implies https.
+        r = c.post(
+            "/webhooks",
+            json={
+                "url": "http://example.com/hook",
+                "events": ["match.completed"],
+            },
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"]["code"] == "webhook_https_required"
+
+        # https still works
+        r = c.post(
+            "/webhooks",
+            json={
+                "url": "https://example.com/hook",
+                "events": ["match.completed"],
+            },
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 200, r.text
+
+        # Invalid TLS version is rejected with a structured code.
+        r = c.put(
+            "/webhook-policy",
+            json={"require_https": True, "min_tls_version": "1.1"},
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 400, r.text
+        assert r.json()["detail"]["code"] == "webhook_policy_invalid"
+
+
+def test_min_tls_version_is_tenant_scoped(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as c:
+        # Acme pins TLS 1.3
+        r = c.put(
+            "/webhook-policy",
+            json={"require_https": True, "min_tls_version": "1.3"},
+            headers={"X-API-Key": "acmekey"},
+        )
+        assert r.status_code == 200, r.text
+        # Globex must NOT see acme's TLS floor.
+        r = c.get("/webhook-policy", headers={"X-API-Key": "globexkey"})
+        assert r.status_code == 200, r.text
+        gb = r.json()
+        assert gb["min_tls_version"] == ""
+        assert gb["require_https"] is False
+
+
+def test_build_ssl_context_pins_minimum_version(monkeypatch, tmp_path):
+    # No HTTP needed: validate the SSLContext builder used by the
+    # delivery worker so a floor actually translates to an OS-level pin.
+    import ssl
+    from clawhum_api import webhook_policy
+
+    assert webhook_policy.build_ssl_context("") is None
+    ctx12 = webhook_policy.build_ssl_context("1.2")
+    assert ctx12 is not None
+    assert ctx12.minimum_version == ssl.TLSVersion.TLSv1_2
+    ctx13 = webhook_policy.build_ssl_context("1.3")
+    assert ctx13 is not None
+    assert ctx13.minimum_version == ssl.TLSVersion.TLSv1_3

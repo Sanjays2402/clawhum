@@ -21,7 +21,11 @@ router = APIRouter(tags=["webhook-policy"], prefix="/webhook-policy")
 
 class WebhookPolicyResponse(BaseModel):
     require_https: bool
+    min_tls_version: str = ""
     plaintext_endpoint_count: int = 0
+    allowed_min_tls_versions: list[str] = Field(
+        default_factory=lambda: ["", "1.2", "1.3"]
+    )
     updated_at: float = 0.0
     updated_by: str = ""
 
@@ -31,6 +35,13 @@ class WebhookPolicyUpdate(BaseModel):
         ..., description=(
             "When true, every webhook registration and every delivery "
             "attempt rejects plaintext http:// destinations."
+        )
+    )
+    min_tls_version: str = Field(
+        "", description=(
+            "Minimum negotiated TLS version for outbound deliveries. "
+            "One of \"\", \"1.2\", or \"1.3\". Setting any value here "
+            "implicitly also requires https."
         )
     )
 
@@ -63,7 +74,11 @@ def _to_response(request: Request) -> WebhookPolicyResponse:
     pol = webhook_policy.get_policy(tenant)
     return WebhookPolicyResponse(
         require_https=pol.require_https,
+        min_tls_version=pol.min_tls_version,
         plaintext_endpoint_count=_count_plaintext_for(tenant),
+        allowed_min_tls_versions=sorted(
+            webhook_policy.ALLOWED_TLS_VERSIONS, key=lambda v: (v != "", v)
+        ),
         updated_at=pol.updated_at,
         updated_by=pol.updated_by,
     )
@@ -90,11 +105,22 @@ async def set_webhook_policy(
     tenant = current_tenant_id(request)
     actor = _actor_id(request)
     before = webhook_policy.get_policy(tenant)
-    saved = webhook_policy.set_policy(
-        tenant_id=tenant,
-        require_https=body.require_https,
-        updated_by=actor,
-    )
+    try:
+        saved = webhook_policy.set_policy(
+            tenant_id=tenant,
+            require_https=body.require_https,
+            min_tls_version=body.min_tls_version,
+            updated_by=actor,
+        )
+    except ValueError as e:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "webhook_policy_invalid",
+                "message": str(e),
+            },
+        )
     write_event(
         {
             "ts": saved.updated_at,

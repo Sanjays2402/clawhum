@@ -828,6 +828,19 @@ def sign_body(secret: str, body: bytes) -> str:
     return f"sha256={mac}"
 
 
+def _client_verify(tenant_id: str):
+    """Return an SSLContext (or True) for outbound webhook deliveries.
+
+    Honors the per-workspace ``min_tls_version`` policy by pinning the
+    SSLContext's ``minimum_version``. Falls back to httpx's default
+    (system trust + TLS defaults) when no floor is configured.
+    """
+    from .. import webhook_policy as _wp
+    floor = _wp.min_tls_version(tenant_id)
+    ctx = _wp.build_ssl_context(floor) if floor else None
+    return ctx if ctx is not None else True
+
+
 async def _post_once(
     client: httpx.AsyncClient,
     url: str,
@@ -1004,7 +1017,7 @@ async def _deliver_one(
                     webhook_id=hook["id"],
                 )
             return delivery_id
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(verify=_client_verify(tenant_id)) as client:
         for attempt in range(1, s.webhook_max_attempts + 1):
             t0 = time.perf_counter()
             status, err = await _post_once(
