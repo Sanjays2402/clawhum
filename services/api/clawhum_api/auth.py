@@ -109,6 +109,7 @@ async def require_api_key(
                 # is still enforced separately below; both gates must
                 # pass for the request to proceed.
                 _enforce_pat_ip_allowlist(request, pat)
+                _enforce_pat_path_prefixes(request, pat)
                 # Per-PAT trusted-device strict mode. When the owner
                 # has flipped this on, only approved device
                 # fingerprints may use the token; everything else is
@@ -389,6 +390,28 @@ def _enforce_pat_ip_allowlist(request: Request, pat: pat_store.PAT) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"ip {client_ip} not in pat allowlist",
+        )
+
+
+def _enforce_pat_path_prefixes(request: Request, pat: pat_store.PAT) -> None:
+    """Reject when the request path is outside the per-PAT allowlist.
+
+    Empty allowlist means "no restriction". The allowlist is layered
+    on top of scopes so a token holder cannot bypass a wider scope
+    grant by hitting an unrelated route. A small carve-out (see
+    ``pat_store._PATH_PREFIX_ALWAYS_ALLOWED``) keeps /me, /mfa,
+    /sessions, and /keys/policy reachable so a pinned token can
+    always rotate itself; if those went dark the runbook for a
+    leaked token would deadlock.
+    """
+    if not pat.path_prefixes:
+        return
+    path = request.url.path or ""
+    if not pat_store.path_matches_allowlist(path, pat.path_prefixes):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"path {path} not in pat allowlist",
+            headers={"X-Pat-Path-Denied": path[:200]},
         )
 
 

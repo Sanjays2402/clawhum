@@ -63,6 +63,18 @@ class CreateKeyBody(BaseModel):
             "build farm or office VPN range."
         ),
     )
+    path_prefixes: list[str] | None = Field(
+        default=None,
+        max_length=32,
+        description=(
+            "Optional list of URL path prefixes the token may reach. "
+            "Empty or omitted means no path restriction. Each entry "
+            "must start with '/'; a request matches when its path "
+            "equals the prefix or is followed by '/'. Use this for "
+            "least-privilege: pin a CI token to '/match' so a leak "
+            "cannot also drain '/library' or '/exports'."
+        ),
+    )
 
 
 class KeyView(BaseModel):
@@ -83,6 +95,7 @@ class KeyView(BaseModel):
     prior_secret_expires_at: float = 0.0
     rotation_active: bool = False
     ip_cidrs: list[str] = Field(default_factory=list)
+    path_prefixes: list[str] = Field(default_factory=list)
     require_device_approval: bool = False
     # Force-rotation policy state (populated from active workspace
     # SessionPolicy on read). 0 / None mean the policy is unset.
@@ -196,6 +209,7 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
             expires_in_days=body.expires_in_days,
             scopes=normalise_scopes(body.scopes or []),
             ip_cidrs=body.ip_cidrs or [],
+            path_prefixes=body.path_prefixes or [],
         )
     except ValueError as exc:
         # scope_policy.ScopeNotAllowedError is a ValueError subclass;
@@ -454,6 +468,81 @@ async def set_key_ip_allowlist(
             status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
         )
     return {"ok": True, "id": updated.id, "ip_cidrs": sorted(updated.ip_cidrs)}
+
+
+class PathPrefixesBody(BaseModel):
+    path_prefixes: list[str] = Field(
+        default_factory=list,
+        max_length=32,
+        description=(
+            "Replacement list of URL path prefixes the token may "
+            "reach. Pass an empty list to clear the restriction. "
+            "Each entry must start with '/'. Invalid input returns "
+            "400 with the offending value."
+        ),
+    )
+
+
+class PathPrefixesResponse(BaseModel):
+    ok: bool
+    id: str
+    path_prefixes: list[str]
+
+
+@router.put(
+    "/keys/{key_id}/path-allowlist",
+    response_model=PathPrefixesResponse,
+    dependencies=[Depends(require_roles("writer")), Depends(require_mfa())],
+)
+async def set_key_path_allowlist(
+    key_id: str,
+    body: PathPrefixesBody,
+    request: Request,
+) -> dict[str, Any]:
+    """Pin a PAT to a list of URL path prefixes.
+
+    The empty list clears the restriction. Step-up MFA is required
+    because tightening or loosening the path fence is destructive: a
+    misconfigured prefix can lock a CI pipeline out, and a loosened
+    fence widens the blast radius if the token leaks.
+    """
+    from ..dry_run import is_dry_run, preview
+    tenant = current_tenant_id(request)
+    existing = next(
+        (p for p in pat_store.live_for_tenant(tenant) if p.id == key_id),
+        None,
+    )
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    if is_dry_run(request):
+        return preview(
+            "api_key_path_allowlist",
+            key_id,
+            tenant_id=tenant,
+            name=existing.name,
+            previous=sorted(existing.path_prefixes),
+            requested=list(body.path_prefixes),
+        )
+    try:
+        updated = pat_store.set_path_prefixes(
+            tenant_id=tenant, pat_id=key_id, prefixes=body.path_prefixes
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"invalid path_prefixes: {exc}",
+        )
+    if updated is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="key not found"
+        )
+    return {
+        "ok": True,
+        "id": updated.id,
+        "path_prefixes": sorted(updated.path_prefixes),
+    }
 
 
 

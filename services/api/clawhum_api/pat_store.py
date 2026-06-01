@@ -103,6 +103,17 @@ class PAT:
     # per-credential narrowing layered on top of the workspace-wide
     # ip_allowlist; both must pass.
     ip_cidrs: frozenset[str] = frozenset()
+    # Per-PAT URL path-prefix allowlist. Each entry is a string that
+    # the request path must startwith (with a '/' boundary) for the
+    # token to be accepted. Empty set means "no restriction" so PATs
+    # minted before this field stay usable on any route. When non-
+    # empty, requests whose path does not match at least one prefix
+    # (or the always-allowed carve-out) are rejected with 403. This
+    # is a least-privilege narrowing layered on top of scopes:
+    # scopes decide *what* a token can do, path prefixes decide
+    # *where* it can reach. /me, /mfa, /sessions, and /keys/policy
+    # are always reachable so a pinned token can rotate itself.
+    path_prefixes: frozenset[str] = frozenset()
     # Per-PAT trusted-device strict mode. When True, the auth layer
     # rejects any request whose computed device fingerprint is not
     # on the approved list for this PAT; the unknown device is
@@ -179,6 +190,7 @@ def _from_record(rec: dict[str, Any]) -> PAT:
         prior_secret_hint=str(rec.get("prior_secret_hint", "") or ""),
         prior_secret_expires_at=float(rec.get("prior_secret_expires_at", 0.0) or 0.0),
         ip_cidrs=normalise_cidrs(rec.get("ip_cidrs") or []),
+        path_prefixes=normalise_path_prefixes(rec.get("path_prefixes") or []),
         require_device_approval=bool(rec.get("require_device_approval", False)),
     )
 
@@ -282,6 +294,7 @@ def create(
     expires_in_days: int | None = None,
     scopes: frozenset[str] | None = None,
     ip_cidrs: Iterable[str] | None = None,
+    path_prefixes: Iterable[str] | None = None,
 ) -> tuple[PAT, str]:
     """Mint a new PAT. Returns (record, plaintext_secret_shown_once).
 
@@ -319,6 +332,7 @@ def create(
     except ImportError:
         pass
     safe_cidrs = normalise_cidrs(ip_cidrs)
+    safe_prefixes = normalise_path_prefixes(path_prefixes)
     # Workspace concurrent-PAT cap: when an admin has pinned
     # ``max_active`` for this workspace, any mint that would push the
     # live token count over the cap is rejected here so the operator
@@ -358,6 +372,7 @@ def create(
         "prior_secret_hint": "",
         "prior_secret_expires_at": 0.0,
         "ip_cidrs": sorted(safe_cidrs),
+        "path_prefixes": sorted(safe_prefixes),
         "require_device_approval": False,
     }
     _append(rec)
@@ -426,6 +441,7 @@ def rotate(
         "prior_secret_hint": current.secret_hint if grace > 0 else "",
         "prior_secret_expires_at": grace_expires,
         "ip_cidrs": sorted(current.ip_cidrs),
+        "path_prefixes": sorted(current.path_prefixes),
         "require_device_approval": current.require_device_approval,
         "rotated_at": now,
     }
@@ -462,6 +478,7 @@ def revoke(*, tenant_id: str, pat_id: str) -> bool:
         "prior_secret_hint": "",
         "prior_secret_expires_at": 0.0,
         "ip_cidrs": sorted(current.ip_cidrs),
+        "path_prefixes": sorted(current.path_prefixes),
         "require_device_approval": current.require_device_approval,
         "revoked_at": time.time(),
     }
@@ -547,6 +564,7 @@ def touch_last_used(
         "prior_secret_hint": current.prior_secret_hint,
         "prior_secret_expires_at": current.prior_secret_expires_at,
         "ip_cidrs": sorted(current.ip_cidrs),
+        "path_prefixes": sorted(current.path_prefixes),
         "require_device_approval": current.require_device_approval,
     }
     _append(rec)
@@ -591,6 +609,7 @@ def public_view(p: PAT) -> dict[str, Any]:
         "prior_secret_expires_at": p.prior_secret_expires_at,
         "rotation_active": p.prior_secret_active(),
         "ip_cidrs": sorted(p.ip_cidrs),
+        "path_prefixes": sorted(p.path_prefixes),
         "require_device_approval": p.require_device_approval,
         "max_age_minutes": (
             _policy.max_pat_age_minutes if _policy is not None else 0
@@ -633,6 +652,87 @@ def normalise_cidrs(raw: Iterable[str] | None) -> frozenset[str]:
     return frozenset(out)
 
 
+# Paths that stay reachable even when a PAT has a path-prefix
+# allowlist set. Without these, a token pinned to '/match' could not
+# introspect itself, rotate its own secret, or read its workspace
+# policy, which would make path pinning a footgun. Keep this list
+# short and read-only; never put a mutating route here.
+_PAT_PATH_ALWAYS_ALLOWED: frozenset[str] = frozenset({
+    "/me",
+    "/mfa",
+    "/sessions",
+    "/keys/policy",
+})
+
+
+def normalise_path_prefixes(raw: Iterable[str] | None) -> frozenset[str]:
+    """Validate and canonicalise a list of URL path prefixes.
+
+    Rules:
+    * Each entry must start with '/'.
+    * No spaces, no '?', no '#', no '..', no NUL.
+    * Stripped of any trailing '/' so '/match/' and '/match' collapse.
+    * Length capped per entry and total list size capped (defence in
+      depth on top of the route's pydantic ``max_length``).
+    Raises ``ValueError`` on malformed input so the caller surfaces a
+    400 instead of a 500. Returns an empty frozenset when ``raw`` is
+    None or empty.
+    """
+    if not raw:
+        return frozenset()
+    out: set[str] = set()
+    for entry in raw:
+        s = str(entry or "").strip()
+        if not s:
+            continue
+        if not s.startswith("/"):
+            raise ValueError(f"prefix must start with '/': {s!r}")
+        if any(ch in s for ch in (" ", "\t", "\n", "\r", "?", "#", "\x00")):
+            raise ValueError(f"prefix contains forbidden char: {s!r}")
+        if ".." in s:
+            raise ValueError(f"prefix may not contain '..': {s!r}")
+        if len(s) > 200:
+            raise ValueError("prefix too long (max 200 chars)")
+        # Collapse trailing slash so '/match/' == '/match'. We keep the
+        # root '/' as a degenerate "allow everything" entry; harmless
+        # because that means the owner explicitly opted out of pinning.
+        if s != "/" and s.endswith("/"):
+            s = s.rstrip("/") or "/"
+        out.add(s)
+        if len(out) > 32:
+            raise ValueError("too many path prefixes (max 32 per pat)")
+    return frozenset(out)
+
+
+def path_matches_allowlist(path: str, prefixes: Iterable[str]) -> bool:
+    """Return True when ``path`` is permitted under ``prefixes``.
+
+    Matching is exact-or-'/'-bounded so '/match' allows '/match' and
+    '/match/anything' but never '/matches' or '/matchbox'. The root
+    '/' prefix degenerates to "match anything". The always-allowed
+    carve-out (``_PAT_PATH_ALWAYS_ALLOWED``) is checked first so a
+    pinned token can still hit '/me', '/mfa', '/sessions', and
+    '/keys/policy'. An empty allowlist also returns True so callers
+    can use this as the sole gate.
+    """
+    p = path or "/"
+    # Strip a trailing slash so '/match/' matches a '/match' rule;
+    # never strip the root.
+    norm = p.rstrip("/") or "/"
+    for always in _PAT_PATH_ALWAYS_ALLOWED:
+        if norm == always or norm.startswith(always + "/"):
+            return True
+    prefix_set = frozenset(prefixes)
+    if not prefix_set:
+        return True
+    for rule in prefix_set:
+        if rule == "/":
+            return True
+        if norm == rule or norm.startswith(rule + "/"):
+            return True
+    return False
+
+
 def ip_in_cidrs(client_ip: str, cidrs: Iterable[str]) -> bool:
     """Return True when ``client_ip`` matches any CIDR in ``cidrs``.
 
@@ -654,6 +754,44 @@ def ip_in_cidrs(client_ip: str, cidrs: Iterable[str]) -> bool:
         except ValueError:
             continue
     return False
+
+
+def set_path_prefixes(
+    *, tenant_id: str, pat_id: str, prefixes: Iterable[str]
+) -> PAT | None:
+    """Replace the per-PAT path-prefix allowlist. Returns updated PAT
+    or None when the id is unknown or owned by another tenant. Empty
+    list clears the restriction (token usable on any route).
+    """
+    current = _reduce().get(pat_id)
+    if current is None or current.deleted or current.tenant_id != tenant_id:
+        return None
+    safe = normalise_path_prefixes(list(prefixes))
+    rec = {
+        "id": current.id,
+        "tenant_id": current.tenant_id,
+        "name": current.name,
+        "roles": sorted(current.roles),
+        "rpm": current.rpm,
+        "created_at": current.created_at,
+        "last_used_at": current.last_used_at,
+        "secret_hash": current.secret_hash,
+        "secret_hint": current.secret_hint,
+        "last_used_ip": current.last_used_ip,
+        "last_used_ua": current.last_used_ua,
+        "deleted": False,
+        "expires_at": current.expires_at,
+        "scopes": sorted(current.scopes),
+        "prior_secret_hash": current.prior_secret_hash,
+        "prior_secret_hint": current.prior_secret_hint,
+        "prior_secret_expires_at": current.prior_secret_expires_at,
+        "ip_cidrs": sorted(current.ip_cidrs),
+        "path_prefixes": sorted(safe),
+        "require_device_approval": current.require_device_approval,
+        "path_prefixes_updated_at": time.time(),
+    }
+    _append(rec)
+    return _from_record(rec)
 
 
 def set_ip_cidrs(
@@ -729,8 +867,50 @@ def set_require_device_approval(
         "prior_secret_hint": current.prior_secret_hint,
         "prior_secret_expires_at": current.prior_secret_expires_at,
         "ip_cidrs": sorted(current.ip_cidrs),
+        "path_prefixes": sorted(current.path_prefixes),
         "require_device_approval": bool(required),
         "device_policy_updated_at": time.time(),
+    }
+    _append(rec)
+    return _from_record(rec)
+
+
+def set_path_prefixes(
+    *, tenant_id: str, pat_id: str, prefixes: Iterable[str]
+) -> PAT | None:
+    """Replace the per-PAT URL path-prefix allowlist.
+
+    Empty list clears the restriction (token usable on any route).
+    Raises ``ValueError`` when any entry is malformed so the caller
+    surfaces 400; returns None when the token is unknown or owned by
+    another tenant.
+    """
+    current = _reduce().get(pat_id)
+    if current is None or current.deleted or current.tenant_id != tenant_id:
+        return None
+    safe = normalise_path_prefixes(list(prefixes))
+    rec = {
+        "id": current.id,
+        "tenant_id": current.tenant_id,
+        "name": current.name,
+        "roles": sorted(current.roles),
+        "rpm": current.rpm,
+        "created_at": current.created_at,
+        "last_used_at": current.last_used_at,
+        "secret_hash": current.secret_hash,
+        "secret_hint": current.secret_hint,
+        "last_used_ip": current.last_used_ip,
+        "last_used_ua": current.last_used_ua,
+        "deleted": False,
+        "expires_at": current.expires_at,
+        "scopes": sorted(current.scopes),
+        "prior_secret_hash": current.prior_secret_hash,
+        "prior_secret_hint": current.prior_secret_hint,
+        "prior_secret_expires_at": current.prior_secret_expires_at,
+        "ip_cidrs": sorted(current.ip_cidrs),
+        "path_prefixes": sorted(safe),
+        "require_device_approval": current.require_device_approval,
+        "path_updated_at": time.time(),
     }
     _append(rec)
     return _from_record(rec)

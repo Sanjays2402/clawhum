@@ -22,6 +22,29 @@ curl -sS -X PUT http://127.0.0.1:7451/webhook-destination-cap \
   -d '{"max_active": 5}'
 ```
 
+## Per-PAT URL path-prefix allowlist
+
+Scopes decide what a personal access token can do; path prefixes decide where it can reach. A CI bot that only needs to call `/match` should never be able to drain `/library` or `/exports` if its secret leaks. Each PAT can now be pinned to a list of URL path prefixes from [`/settings/keys`](http://127.0.0.1:7452/settings/keys); the auth layer rejects any request whose path is outside the list with `HTTP 403`, `detail: path /usage not in pat allowlist`, and an `X-Pat-Path-Denied` response header so SDKs and SIEM can attribute the denial without scraping bodies. Matching is exact or `/`-bounded, so `/match` allows `/match` and `/match/123` but never `/matches` (prefix confusion is blocked). A small read-only carve-out (`/me`, `/mfa`, `/sessions`, `/keys/policy`) is always reachable so a pinned token can introspect and rotate itself even when its operating prefix is taken down. Empty list means no restriction, so existing PATs are not broken. Mutating the allowlist requires the writer role plus a fresh MFA step-up, supports `?dry_run=true` for a preview without persistence, and writes an audit event with the previous and requested prefix sets. The allowlist is strictly per (tenant_id, pat_id); tenant A cannot list or mutate tenant B's PAT prefixes. Pinned by `tests/integration/test_pat_path_allowlist.py` which proves the on-route allow, off-route 403, prefix-confusion defence, structured 400 on malformed input, and that clearing the list restores access.
+
+### Try it (PAT path allowlist)
+
+```bash
+cd /tmp/clawhum && make dev   # API on http://127.0.0.1:7451, web on http://127.0.0.1:7452
+
+# Mint a PAT pinned to /match only.
+curl -s -X POST http://127.0.0.1:7451/keys \
+  -H "X-API-Key: $ADMIN_KEY" -H "content-type: application/json" \
+  -d '{"name":"ci-bot","path_prefixes":["/match"]}'
+
+# Calls to /usage are now rejected with 403 + X-Pat-Path-Denied.
+curl -i http://127.0.0.1:7451/usage -H "X-API-Key: $PAT_SECRET"
+
+# Clear the allowlist to restore unrestricted access.
+curl -X PUT http://127.0.0.1:7451/keys/$PAT_ID/path-allowlist \
+  -H "X-API-Key: $ADMIN_KEY" -H "content-type: application/json" \
+  -d '{"path_prefixes":[]}'
+```
+
 ## Per-workspace allowed authentication methods
 
 Three credential classes can authenticate against the clawhum API: deploy-time static keys configured via `CLAWHUM_API_KEYS` (`env_key`), personal access tokens minted from the dashboard (`pat`), and SCIM 2.0 bearer tokens issued to the workspace's IdP (`scim`). Enterprise security teams routinely want to disable a class once a stronger one is in place: after rolling out SSO plus SCIM they want PATs off so every machine actor is an IdP-managed service account; after standing up SCIM they want the deploy-time env keys off so every credential is tied to a named human. Each workspace now stores a per-tenant policy of which methods it accepts, exposed at `/auth-methods-policy` and managed from [`/settings/auth-methods`](http://127.0.0.1:7452/settings/auth-methods). When no policy is registered every method is allowed (existing customers are not broken). When `pat` is disabled, existing PATs are rejected on their next request with HTTP 401, `detail: auth_method_disabled`, and an `X-Auth-Method-Disabled: pat` header so SDKs can route to a runbook without scraping strings; new PAT mints at `POST /keys` are rejected with HTTP 403 and the same header. When `scim` is disabled, otherwise-valid SCIM bearer tokens are rejected with 401 so an admin can hard-lock the IdP push surface from the dashboard without rotating the integration. The policy is strictly tenant scoped: tenant A disabling PATs does not affect tenant B. The PUT endpoint refuses an empty methods array so an admin cannot lock the workspace out by accident, and requires admin role plus a fresh MFA step-up. Every change writes a tamper-evident audit event (`auth_methods_policy.update`) with before / after method sets and the request id. Pinned by `tests/integration/test_auth_methods_policy.py` which proves the no-policy default, that disabling PATs blocks both auth and mint with the runbook header, that the policy is tenant scoped, that an empty methods array is rejected at the HTTP edge, and that unknown method ids are silently dropped.

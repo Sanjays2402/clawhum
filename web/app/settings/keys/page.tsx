@@ -44,6 +44,7 @@ interface KeyRow {
   prior_secret_expires_at?: number;
   rotation_active?: boolean;
   ip_cidrs?: string[];
+  path_prefixes?: string[];
   require_device_approval?: boolean;
   max_age_minutes?: number;
   age_seconds_remaining?: number | null;
@@ -168,6 +169,10 @@ export default function KeysPage() {
   const [ipDraft, setIpDraft] = useState<string>("");
   const [ipSaving, setIpSaving] = useState<string | null>(null);
   const [ipError, setIpError] = useState<string | null>(null);
+  const [pathId, setPathId] = useState<string | null>(null);
+  const [pathDraft, setPathDraft] = useState<string>("");
+  const [pathSaving, setPathSaving] = useState<string | null>(null);
+  const [pathError, setPathError] = useState<string | null>(null);
   const [revokeAllError, setRevokeAllError] = useState<string | null>(null);
   const [historyId, setHistoryId] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState<string | null>(null);
@@ -339,6 +344,37 @@ export default function KeysPage() {
       setIpError(e?.message || String(e));
     } finally {
       setIpSaving(null);
+    }
+  }
+
+  async function savePathAllowlist(id: string) {
+    if (pathSaving) return;
+    setPathSaving(id);
+    setPathError(null);
+    // Split on commas, whitespace, or newlines so paste from a wiki
+    // or a CI yaml file works without manual cleanup.
+    const path_prefixes = pathDraft
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    try {
+      const r = await fetch(`/api/keys/${id}/path-allowlist`, {
+        method: "PUT",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ path_prefixes }),
+      });
+      if (!r.ok) {
+        const msg = await r.text().catch(() => "");
+        setPathError(msg || `failed with ${r.status}`);
+        return;
+      }
+      setPathId(null);
+      setPathDraft("");
+      await refresh();
+    } catch (e: any) {
+      setPathError(e?.message || String(e));
+    } finally {
+      setPathSaving(null);
     }
   }
 
@@ -952,6 +988,25 @@ export default function KeysPage() {
                           : `${row.ip_cidrs!.length} ranges`
                         : "any"}
                     </span>
+                    <span
+                      title={
+                        (row.path_prefixes?.length ?? 0) > 0
+                          ? `Token only reaches: ${row.path_prefixes!.join(", ")}`
+                          : "Token usable on any route. Click 'path allowlist' to restrict."
+                      }
+                      className={
+                        (row.path_prefixes?.length ?? 0) > 0
+                          ? "text-[var(--color-accent)]"
+                          : undefined
+                      }
+                    >
+                      paths:{" "}
+                      {(row.path_prefixes?.length ?? 0) > 0
+                        ? row.path_prefixes!.length === 1
+                          ? row.path_prefixes![0]
+                          : `${row.path_prefixes!.length} prefixes`
+                        : "any"}
+                    </span>
                   </div>
                 </div>
                 {confirmId === row.id ? (
@@ -1057,6 +1112,56 @@ export default function KeysPage() {
                       Empty list removes the restriction. Step-up MFA is required when the workspace enforces it.
                     </p>
                   </div>
+                ) : pathId === row.id ? (
+                  <div className="flex flex-col gap-2 w-full sm:w-[28rem]">
+                    <label
+                      htmlFor={`path-prefixes-${row.id}`}
+                      className="text-[11px] text-[var(--color-muted)] font-mono uppercase tracking-wider"
+                    >
+                      allowed url path prefixes (one per line)
+                    </label>
+                    <textarea
+                      id={`path-prefixes-${row.id}`}
+                      value={pathDraft}
+                      onChange={(e) => setPathDraft(e.target.value)}
+                      rows={3}
+                      spellCheck={false}
+                      placeholder={"/match\n/feedback"}
+                      className="w-full px-2 py-1 rounded border border-[var(--color-line)] bg-[var(--color-bg)] text-xs font-mono"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        onClick={() => savePathAllowlist(row.id)}
+                        disabled={pathSaving === row.id}
+                        className="px-3 py-1.5 rounded bg-[var(--color-accent)] text-[var(--color-bg)] text-xs font-medium hover:opacity-90 disabled:opacity-50"
+                      >
+                        {pathSaving === row.id ? "saving..." : "save"}
+                      </button>
+                      <button
+                        onClick={() => setPathDraft("")}
+                        className="px-3 py-1.5 rounded border border-[var(--color-line)] text-xs"
+                        title="Clear the editor (empty list removes the path restriction when saved)"
+                      >
+                        clear
+                      </button>
+                      <button
+                        onClick={() => {
+                          setPathId(null);
+                          setPathDraft("");
+                          setPathError(null);
+                        }}
+                        className="px-3 py-1.5 rounded border border-[var(--color-line)] text-xs"
+                      >
+                        cancel
+                      </button>
+                      {pathError && (
+                        <span className="text-[11px] text-red-500 break-all">{pathError}</span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-[var(--color-muted)]">
+                      Each entry must start with '/'. A request matches when its path equals the prefix or is followed by '/'. The token can always reach /me, /mfa, /sessions, and /keys/policy so it can rotate itself.
+                    </p>
+                  </div>
                 ) : (
                   <div className="flex items-center gap-2">
                     <button
@@ -1084,6 +1189,19 @@ export default function KeysPage() {
                       title="Restrict this token to specific source IP ranges (CIDR). Empty list means usable from any IP."
                     >
                       <GlobeHemisphereWest size={12} weight="duotone" /> ip allowlist
+                    </button>
+                    <button
+                      onClick={() => {
+                        setPathId(row.id);
+                        setPathDraft((row.path_prefixes ?? []).join("\n"));
+                        setPathError(null);
+                      }}
+                      disabled={row.expired}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded border border-[var(--color-line)] text-xs hover:bg-[var(--color-bg)] disabled:opacity-50"
+                      aria-label={`Edit URL path allowlist for ${row.name}`}
+                      title="Restrict this token to specific URL path prefixes. Empty list means usable on any route."
+                    >
+                      <Terminal size={12} weight="duotone" /> path allowlist
                     </button>
                     <button
                       onClick={() => openHistory(row.id)}
