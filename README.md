@@ -2,6 +2,28 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace retention floor
+
+The `retention` policy lets a workspace admin set per category TTLs for history, feedback, audit, and webhook delivery records. Nothing previously stopped a future admin (rushed, careless, or compromised) from coming back and shrinking `audit_days` from 365 to 7 right before deleting evidence of misuse, which is exactly the insider tampering scenario SOC2 CC7.2 and ISO 27001 A.12.4.1 ask you to defend against. Workspace admins can now pin a per category minimum number of days at [`/retention-floor`](http://127.0.0.1:7451/retention-floor), managed from [`/admin/retention-floor`](http://127.0.0.1:7452/admin/retention-floor). Once set, `PUT /retention` refuses any positive value that falls below the corresponding floor with `400 retention_floor_violation` naming each offending field, while value `0` (keep forever) is always allowed because it strictly increases retention. With no floor row the policy is opt in and existing tenants are not broken. The floor is strictly per tenant: workspace A's floor is invisible to workspace B and does not block workspace B's retention updates. Mutations require the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `retention_floor.update` with before / after state. Pinned by `tests/integration/test_retention_floor.py` which proves the opt-in default, that a pinned floor blocks below-floor reductions while still allowing `0` (keep forever), that one tenant's floor does not bleed into another, and that the update writes a structured audit event.
+
+### Try it (retention floor)
+
+```bash
+uv run python -m clawhum_api  # http://127.0.0.1:7451
+pnpm --filter clawhum-web dev # http://127.0.0.1:7452/admin/retention-floor
+
+curl -sS -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  http://127.0.0.1:7451/retention-floor | jq
+
+curl -sS -X PUT http://127.0.0.1:7451/retention-floor \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "X-MFA-Code: $TOTP" \
+  -H "Content-Type: application/json" \
+  -d '{"audit_days": 365, "history_days": 0, "feedback_days": 0, "webhook_deliveries_days": 30}' | jq
+```
+
+With that floor in place, a follow-up `PUT /retention` with `audit_days: 7` is rejected with `400 retention_floor_violation` and the audit trail records who tried.
+
 ## Per-workspace webhook retry envelope
 
 The outbound webhook dispatcher retries failed deliveries with exponential backoff up to `webhook_max_attempts`, a single global setting. That global is the wrong shape for a multi-tenant SaaS: a sandbox tenant typically wants `1` so a broken receiver fails fast and a human looks at it, while a production tenant with a flaky on prem ITSM endpoint wants `5` or more so transient blips self heal without paging anyone. Each workspace can now pin its own attempt count at [`/webhook-max-attempts-policy`](http://127.0.0.1:7451/webhook-max-attempts-policy), managed from [`/admin/webhook-max-attempts-policy`](http://127.0.0.1:7452/admin/webhook-max-attempts-policy). Pins must be at least 1 (rejected with 400 otherwise so events are never silently dropped) and at most 12 (the hard ceiling that bounds the worst case wall clock retry envelope given the 8s backoff cap). With no policy row the deployment-wide `webhook_max_attempts` applies, so existing tenants behave exactly as before; with a pin the dispatcher consults `webhook_max_attempts_policy.effective_max_attempts(tenant_id)` on every event, so changes take effect immediately with no restart. The policy is strictly per-tenant: tenant A pinning 1 attempt has zero effect on tenant B's retry budget. Mutations require the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `webhook_max_attempts_policy.update` with before/after state. Pinned by `tests/integration/test_webhook_max_attempts_policy.py` which proves the global default applies without a policy row, that a per-workspace pin actually changes the number of delivery rows the dispatcher writes against a failing receiver (4 rows for a pin of 4, 1 row for a pin of 1), that 0 is rejected so events are never silently dropped, that one tenant's pin is invisible to another tenant, and that the update writes a structured audit event.

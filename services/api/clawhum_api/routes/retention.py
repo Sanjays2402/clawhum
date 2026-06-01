@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from ..auth import require_api_key, require_mfa, require_roles
 from ..tenant import current_tenant
 from .. import retention
+from .. import retention_floor
 
 router = APIRouter(
     tags=["retention"],
@@ -87,6 +88,22 @@ async def update_my_policy(
     tenant_id: str = Depends(current_tenant),
     x_api_key: str = Header(default=""),
 ) -> PolicyOut:
+    try:
+        retention_floor.assert_policy_meets_floor(
+            tenant_id=tenant_id,
+            history_days=body.history_days,
+            feedback_days=body.feedback_days,
+            audit_days=body.audit_days,
+            webhook_deliveries_days=body.webhook_deliveries_days,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "retention_floor_violation",
+                "message": str(e),
+            },
+        )
     pol = retention.set_policy(
         tenant_id,
         history_days=body.history_days,

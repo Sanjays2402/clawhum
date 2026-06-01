@@ -774,6 +774,23 @@ export default function AdminConsolePage() {
         </Card>
 
         <Card
+          title="retention floor"
+          icon={<Lock size={14} weight="duotone" />}
+          href="/admin/retention-floor"
+          hrefLabel="configure"
+        >
+          <p className="text-xs text-[var(--color-dim)]">
+            Pin a per category minimum number of days the
+            workspace must retain history, feedback, audit, and
+            webhook delivery records. Once set, the retention form
+            refuses to drop any positive value below the floor. 0
+            (keep forever) is always allowed. Defends audit trails
+            against careless or compromised admins. MFA gated,
+            audit logged.
+          </p>
+        </Card>
+
+        <Card
           title="recent activity"
           icon={<ListMagnifyingGlass size={14} weight="duotone" />}
           href="/settings/audit"

@@ -76,6 +76,7 @@ from .routes import quotas as quotas_routes
 from .routes import budget as budget_routes
 from .routes import residency as residency_routes
 from .routes import retention as retention_routes
+from .routes import retention_floor as retention_floor_routes
 from .routes import scim as scim_routes
 from .routes import scim_admin as scim_admin_routes
 from .routes import sessions as sessions_routes
@@ -136,6 +137,8 @@ async def _lifespan(app: FastAPI):
     _webhook_auto_disable_policy.reset_cache()
     from . import webhook_max_attempts_policy as _webhook_max_attempts_policy
     _webhook_max_attempts_policy.reset_cache()
+    from . import retention_floor as _retention_floor
+    _retention_floor.reset_cache()
     from . import webhook_policy as _webhook_policy
     _webhook_policy.reset_cache()
     from . import webhook_delivery_rate as _webhook_delivery_rate
@@ -296,6 +299,7 @@ def create_app() -> FastAPI:
     app.include_router(members_routes.router)
     app.include_router(sso_routes.router)
     app.include_router(retention_routes.router)
+    app.include_router(retention_floor_routes.router)
     app.include_router(audit_routes.router)
     app.include_router(audit_forwarder_routes.router)
     app.include_router(quotas_routes.router)
