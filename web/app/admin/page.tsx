@@ -33,6 +33,7 @@ import {
   CloudArrowUp,
   Siren,
   Plugs,
+  ArrowsClockwise,
 } from "@phosphor-icons/react/dist/ssr";
 import { getApiKey } from "@/lib/apiKey";
 
@@ -753,6 +754,22 @@ export default function AdminConsolePage() {
             bounded expiry, IP CIDR scope. Existing tokens are not
             touched. Non compliant mints are rejected with a structured
             400. Admin only, MFA gated, audit logged.
+          </p>
+        </Card>
+
+        <Card
+          title="webhook retry envelope"
+          icon={<ArrowsClockwise size={14} weight="duotone" />}
+          href="/admin/webhook-max-attempts-policy"
+          hrefLabel="configure"
+        >
+          <p className="text-xs text-[var(--color-dim)]">
+            Per workspace cap on how many times the dispatcher
+            retries a failed delivery before giving up. Sandbox
+            tenants pin it to 1 so broken receivers fail fast;
+            production tenants raise it so flaky receivers self
+            heal. Every change is audit logged. Admin only, MFA
+            gated.
           </p>
         </Card>
 

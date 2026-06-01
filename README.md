@@ -2,6 +2,28 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace webhook retry envelope
+
+The outbound webhook dispatcher retries failed deliveries with exponential backoff up to `webhook_max_attempts`, a single global setting. That global is the wrong shape for a multi-tenant SaaS: a sandbox tenant typically wants `1` so a broken receiver fails fast and a human looks at it, while a production tenant with a flaky on prem ITSM endpoint wants `5` or more so transient blips self heal without paging anyone. Each workspace can now pin its own attempt count at [`/webhook-max-attempts-policy`](http://127.0.0.1:7451/webhook-max-attempts-policy), managed from [`/admin/webhook-max-attempts-policy`](http://127.0.0.1:7452/admin/webhook-max-attempts-policy). Pins must be at least 1 (rejected with 400 otherwise so events are never silently dropped) and at most 12 (the hard ceiling that bounds the worst case wall clock retry envelope given the 8s backoff cap). With no policy row the deployment-wide `webhook_max_attempts` applies, so existing tenants behave exactly as before; with a pin the dispatcher consults `webhook_max_attempts_policy.effective_max_attempts(tenant_id)` on every event, so changes take effect immediately with no restart. The policy is strictly per-tenant: tenant A pinning 1 attempt has zero effect on tenant B's retry budget. Mutations require the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `webhook_max_attempts_policy.update` with before/after state. Pinned by `tests/integration/test_webhook_max_attempts_policy.py` which proves the global default applies without a policy row, that a per-workspace pin actually changes the number of delivery rows the dispatcher writes against a failing receiver (4 rows for a pin of 4, 1 row for a pin of 1), that 0 is rejected so events are never silently dropped, that one tenant's pin is invisible to another tenant, and that the update writes a structured audit event.
+
+### Try it (webhook retry envelope)
+
+```bash
+uv run python -m clawhum_api  # http://127.0.0.1:7451
+pnpm --filter clawhum-web dev # http://127.0.0.1:7452/admin/webhook-max-attempts-policy
+
+curl -sS -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  http://127.0.0.1:7451/webhook-max-attempts-policy | jq
+
+curl -sS -X PUT http://127.0.0.1:7451/webhook-max-attempts-policy \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "X-MFA-Code: $TOTP" \
+  -H "Content-Type: application/json" \
+  -d '{"max_attempts": 5}' | jq
+```
+
+Pair with `/webhook-auto-disable-policy` (failure streak before the breaker opens) and `/webhook-delivery-rate` (per-hook rate cap) to shape the full outbound retry envelope from the admin console.
+
 ## Per-workspace API key minimum requirements
 
 SOC2 CC6.1 and ISO 27001 A.9.2.1 ask whether logical access credentials carry an identifiable owner, a bounded lifetime, and network scope. The PAT surface already accepts `owner_email`, `expires_in_days`, and `ip_cidrs`, but until now nothing required them, so a workspace admin could quietly mint a long lived, unscoped, anonymous token and only an after the fact inventory review would catch it. Workspace owners can now pin a per-tenant floor at [`/pat-min-requirements`](http://127.0.0.1:7451/pat-min-requirements), managed from [`/admin/pat-min-requirements`](http://127.0.0.1:7452/admin/pat-min-requirements). The policy toggles three independent requirements: `require_owner_email` (mints without a non blank owner email are rejected), `require_expiry` paired with `max_expiry_days` (mints without a positive expiry, or with an expiry past the cap, are rejected; 0 means no cap), and `require_ip_cidrs` (mints with no IP CIDR scope are rejected). With no policy row the workspace behaves exactly as before so existing customers are not broken. Enforcement happens inside `pat_store.create` *before* any secret is hashed or row is written, so a violating mint at `POST /keys` returns `400 pat_min_requirements_violation` with a machine parseable `violations[]` list naming each broken rule and the route never reaches the JSONL writer. Existing tokens minted before the policy was set are untouched so a rollout does not pull the rug out of production. The policy is strictly per tenant: workspace A's floor is invisible to workspace B and does not block workspace B's mints. Mutations require the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `pat_min_requirements.update` with before / after state. Pinned by `tests/integration/test_pat_min_requirements.py` which proves the opt-in default, that each requirement rejects the matching missing attribute with the correct violation code, that `max_expiry_days` caps over-long tokens with `expiry_exceeds_max:<n>`, that compliant mints succeed, and that tenant A's policy does not bleed into tenant B.

@@ -294,6 +294,9 @@ class Settings(BaseSettings):
     webhook_auto_disable_policy_path: Path = Path(
         "./data/webhook_auto_disable_policy.jsonl"
     )
+    webhook_max_attempts_policy_path: Path = Path(
+        "./data/webhook_max_attempts_policy.jsonl"
+    )
     webhook_allowlist_path: Path = Path("./data/webhook_allowlist.jsonl")
     webhook_egress_ips: str = Field(
         default="",

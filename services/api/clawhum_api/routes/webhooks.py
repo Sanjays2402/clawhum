@@ -37,6 +37,7 @@ from ..auth import require_api_key, require_mfa, require_roles
 from ..tenant import current_tenant
 from .. import webhook_safety
 from .. import webhook_delivery_rate
+from .. import webhook_max_attempts_policy
 from ..audit import write_event as audit_write_event
 
 router = APIRouter(tags=["webhooks"])
@@ -1044,8 +1045,13 @@ async def _deliver_one(
                     webhook_id=hook["id"],
                 )
             return delivery_id
+    # Per-workspace pin overrides the deployment-wide attempt count.
+    # Falls back to s.webhook_max_attempts when no policy row exists.
+    max_attempts = webhook_max_attempts_policy.effective_max_attempts(
+        tenant_id or hook.get("tenant_id", "")
+    )
     async with httpx.AsyncClient(verify=_client_verify(tenant_id)) as client:
-        for attempt in range(1, s.webhook_max_attempts + 1):
+        for attempt in range(1, max_attempts + 1):
             t0 = time.perf_counter()
             status, err = await _post_once(
                 client, hook["url"], body, base_headers, s.webhook_timeout_sec
@@ -1082,7 +1088,7 @@ async def _deliver_one(
                 "webhook_delivery_failed",
                 webhook_id=hook["id"], attempt=attempt, status=status, error=err,
             )
-            if attempt < s.webhook_max_attempts:
+            if attempt < max_attempts:
                 await asyncio.sleep(min(2 ** (attempt - 1), 8))
     # All attempts in this dispatch failed. Evaluate the circuit breaker
     # so a permanently broken receiver does not keep burning retry budget

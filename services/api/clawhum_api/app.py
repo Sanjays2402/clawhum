@@ -55,6 +55,7 @@ from .routes import webhook_secret_rotation as webhook_secret_rotation_routes
 from .routes import scim_token_rotation as scim_token_rotation_routes
 from .routes import webhook_destination_cap as webhook_destination_cap_routes
 from .routes import webhook_auto_disable_policy as webhook_auto_disable_policy_routes
+from .routes import webhook_max_attempts_policy as webhook_max_attempts_policy_routes
 from .routes import webhook_policy as webhook_policy_routes
 from .routes import webhook_delivery_rate as webhook_delivery_rate_routes
 from .routes import body_size as body_size_routes
@@ -133,6 +134,8 @@ async def _lifespan(app: FastAPI):
     _webhook_destination_cap.reset_cache()
     from . import webhook_auto_disable_policy as _webhook_auto_disable_policy
     _webhook_auto_disable_policy.reset_cache()
+    from . import webhook_max_attempts_policy as _webhook_max_attempts_policy
+    _webhook_max_attempts_policy.reset_cache()
     from . import webhook_policy as _webhook_policy
     _webhook_policy.reset_cache()
     from . import webhook_delivery_rate as _webhook_delivery_rate
@@ -277,6 +280,7 @@ def create_app() -> FastAPI:
     app.include_router(scim_token_rotation_routes.router)
     app.include_router(webhook_destination_cap_routes.router)
     app.include_router(webhook_auto_disable_policy_routes.router)
+    app.include_router(webhook_max_attempts_policy_routes.router)
     app.include_router(webhook_policy_routes.router)
     app.include_router(webhook_delivery_rate_routes.router)
     app.include_router(body_size_routes.router)
@@ -337,6 +341,7 @@ def create_app() -> FastAPI:
     app.include_router(scim_token_rotation_routes.router, prefix="/v1")
     app.include_router(webhook_destination_cap_routes.router, prefix="/v1")
     app.include_router(webhook_auto_disable_policy_routes.router, prefix="/v1")
+    app.include_router(webhook_max_attempts_policy_routes.router, prefix="/v1")
     app.include_router(webhook_policy_routes.router, prefix="/v1")
     app.include_router(dpa_routes.router, prefix="/v1")
     app.include_router(dsar_routes.router, prefix="/v1")
