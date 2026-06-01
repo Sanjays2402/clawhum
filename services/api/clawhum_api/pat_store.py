@@ -48,9 +48,18 @@ def _new_id() -> str:
     return "".join(secrets.choice(_ID_ALPHABET) for _ in range(_ID_LEN))
 
 
-def new_secret() -> str:
-    """Return a fresh PAT secret. Shown to the user exactly once."""
-    return PAT_PREFIX + secrets.token_urlsafe(24)
+def new_secret(*, tenant_prefix: str = "") -> str:
+    """Return a fresh PAT secret. Shown to the user exactly once.
+
+    When ``tenant_prefix`` is supplied, the minted secret is shaped as
+    ``pat_<tenant_prefix>_<random>`` so workspace-scoped secret
+    scanners can attribute a leaked token to the right tenant. Empty
+    ``tenant_prefix`` keeps the legacy ``pat_<random>`` shape.
+    """
+    body = secrets.token_urlsafe(24)
+    if tenant_prefix:
+        return f"{PAT_PREFIX}{tenant_prefix}_{body}"
+    return PAT_PREFIX + body
 
 
 def hash_secret(secret: str) -> str:
@@ -342,7 +351,18 @@ def create(
         _pat_concurrency.assert_capacity(tenant_id)
     except ImportError:
         pass
-    secret = new_secret()
+    # Workspace PAT secret prefix policy: when an admin has set a
+    # custom prefix, every newly minted secret is shaped
+    # ``pat_<prefix>_<random>`` so the workspace's secret scanner
+    # can claim leaked tokens unambiguously. Existing tokens are
+    # untouched because rewriting them would break live deployments.
+    tenant_prefix = ""
+    try:
+        from . import pat_secret_prefix as _pat_secret_prefix
+        tenant_prefix = _pat_secret_prefix.get_prefix(tenant_id)
+    except ImportError:
+        pass
+    secret = new_secret(tenant_prefix=tenant_prefix)
     now = time.time()
     expires_at = resolve_expiry(requested_days=expires_in_days, now=now)
     # Enforce the workspace session policy cap on PAT lifetime. Import
@@ -415,7 +435,18 @@ def rotate(
     if cap > 0:
         grace = min(grace, cap)
     now = time.time()
-    new_secret = new_secret_token()
+    # Honour the workspace PAT secret prefix policy on rotation too,
+    # so a rotated secret carries the same tenant prefix shape new
+    # mints get. If a tenant cleared their prefix policy after the
+    # original mint, rotation falls back to the legacy ``pat_``
+    # shape with no migration drama.
+    tenant_prefix = ""
+    try:
+        from . import pat_secret_prefix as _pat_secret_prefix
+        tenant_prefix = _pat_secret_prefix.get_prefix(current.tenant_id)
+    except ImportError:
+        pass
+    new_secret = new_secret_token(tenant_prefix=tenant_prefix)
     grace_expires = (now + grace * 60.0) if grace > 0 else 0.0
     rec = {
         "id": current.id,

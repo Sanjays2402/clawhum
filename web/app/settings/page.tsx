@@ -588,6 +588,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Workspace PAT secret prefix */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">pat secret prefix</span>
+            <a
+              href="/settings/pat-secret-prefix"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            shape new pat secrets as pat_&lt;workspace_prefix&gt;_&lt;random&gt; so your secret scanner can attribute a leaked token to this workspace without paging every other clawhum customer. ships with a copy-pasteable regex you can hand to github secret scanning or trufflehog. existing tokens keep working; rotate to adopt the new shape. admin role plus MFA required.
+          </p>
+        </section>
+
         {/* Workspace embed origin allowlist */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

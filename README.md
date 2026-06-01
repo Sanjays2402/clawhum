@@ -156,6 +156,30 @@ curl -sS -X PUT http://127.0.0.1:7451/pat-concurrency \
   -d '{"max_active": 0}'
 ```
 
+## Per-workspace PAT secret prefix
+
+Every clawhum personal access token already starts with the global `pat_` marker so credential scanners can recognise it. What enterprise procurement actually asks for is one step beyond that: when a developer accidentally commits a clawhum token to a public repository, can our secret scanner tell immediately that the token belongs to *our* workspace, route the leak to *our* incident channel, and rotate *our* credential, without paging every other clawhum customer? With the global prefix the answer is no. Workspace owners can now register a short custom prefix at [`/settings/pat-secret-prefix`](http://127.0.0.1:7452/settings/pat-secret-prefix); every PAT minted or rotated after that point is shaped `pat_<workspace_prefix>_<random>`. The prefix is constrained to lower-case `[a-z0-9-]`, 2 to 16 chars, no underscore, no leading or trailing dash, so it is safe to embed in scanner regex catalogues like `pat_acme_[A-Za-z0-9_-]{20,}`. The admin surface returns a copy-pasteable example secret and scanner regex alongside the policy state so the security team can drop the pattern straight into GitHub secret scanning, Trufflehog, or a custom pre-commit hook. Existing tokens are deliberately left alone because rewriting their secret value would break live deployments; rotating a token gives it the new shape on the same id. Empty / unset policy preserves the legacy `pat_` shape so existing tenants keep working. Strictly per-tenant: tenant A pinning `acme` has zero effect on tenant B's mint shape. Mutations require the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `pat_secret_prefix.update` with before / after state. Pinned by `tests/integration/test_pat_secret_prefix.py` which proves new mints carry the workspace prefix, rotation honours the prefix, malformed prefixes are rejected with a structured 400, cross-tenant isolation holds, and clearing the policy returns to the legacy shape.
+
+### Try it (PAT secret prefix)
+
+UI: open [`/settings/pat-secret-prefix`](http://127.0.0.1:7452/settings/pat-secret-prefix) to view the prefix, the example secret, the scanner regex, and to set or clear the prefix inline. API:
+
+```bash
+# read the current per-workspace PAT secret prefix policy
+curl -sS http://127.0.0.1:7451/pat-secret-prefix \
+  -H 'X-API-Key: sk_admin'
+
+# pin every newly minted PAT in this workspace to shape pat_acme_<random>
+curl -sS -X PUT http://127.0.0.1:7451/pat-secret-prefix \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"prefix": "acme"}'
+
+# clear the policy and fall back to the legacy pat_<random> shape
+curl -sS -X PUT http://127.0.0.1:7451/pat-secret-prefix \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"prefix": ""}'
+```
+
 ## Per-workspace request body size cap
 
 Enterprise security reviews flag any API that accepts unbounded request bodies as a denial-of-service and storage-cost risk. The match and batch routes already enforce ad-hoc 413s on their own archive uploads, but there was no platform-wide ceiling: a careless caller, a leaked API key, or a malicious integration could POST a half-gigabyte JSON document at any chargeable route and force the worker to buffer the entire payload before validation ran. Each workspace can now pin a single integer cap on the largest request body the API will accept on any chargeable route, exposed at `/body-size` and managed from [`/admin/body-size`](http://127.0.0.1:7452/admin/body-size). A value of 0 is the default and preserves current behaviour for existing tenants; values above the hard ceiling (256 MiB) are rejected with a structured `{code: "body_size_invalid"}` 400. Enforcement runs in a dedicated middleware that resolves the tenant from the API key header before the route dependency chain, in two layers: a pre-flight `Content-Length` check rejects oversized declared payloads without touching the body stream, and a wrapped receive channel cuts off chunked senders that lie about the length the moment the running total crosses the cap. Either path returns HTTP 413 with a structured `{code: "request_body_too_large", max_bytes, observed_bytes}` body and an `X-Body-Size-Limit` header so SDKs can chunk and retry cleanly. Health, readiness, metrics, and the body-size admin surface itself are always exempt so an admin who set the cap too tight can still raise it. The middleware sits alongside the budget middleware (inside the tenant scope and outside idempotency) so a request rejected for size is never billed and never replayed from cache. The cap is strictly per-tenant: tenant A capping at 1 KiB has zero effect on tenant B's POSTs or policy reads. Mutating the cap requires the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `body_size.update` with before / after state. Pinned by `tests/integration/test_body_size.py` which proves the default does not throttle, that an oversized POST is rejected with the structured 413 and the limit header, that the admin surface itself is exempt, that cross-tenant isolation holds in both directions, that negative and out-of-range values are rejected with a structured 400, and that every mutation appears in the audit log with before / after state.

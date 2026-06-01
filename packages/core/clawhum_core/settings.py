@@ -227,6 +227,7 @@ class Settings(BaseSettings):
     webhook_delivery_rate_path: Path = Path("./data/webhook_delivery_rate.jsonl")
     body_size_policy_path: Path = Path("./data/body_size_policy.jsonl")
     pat_concurrency_path: Path = Path("./data/pat_concurrency.jsonl")
+    pat_secret_prefix_path: Path = Path("./data/pat_secret_prefix.jsonl")
     webhook_destination_cap_path: Path = Path("./data/webhook_destination_cap.jsonl")
     dpa_acceptances_path: Path = Path("./data/dpa_acceptances.jsonl")
     support_access_path: Path = Path("./data/support_access.jsonl")

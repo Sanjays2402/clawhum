@@ -40,6 +40,7 @@ from .routes import auth_methods_policy as auth_methods_policy_routes
 from .routes import pat_auth_lockout as pat_auth_lockout_routes
 from .routes import export_signing as export_signing_routes
 from .routes import pat_concurrency as pat_concurrency_routes
+from .routes import pat_secret_prefix as pat_secret_prefix_routes
 from .routes import webhook_destination_cap as webhook_destination_cap_routes
 from .routes import webhook_policy as webhook_policy_routes
 from .routes import webhook_delivery_rate as webhook_delivery_rate_routes
@@ -98,6 +99,8 @@ async def _lifespan(app: FastAPI):
     _auth_methods_policy.reset_cache()
     from . import pat_concurrency as _pat_concurrency
     _pat_concurrency.reset_cache()
+    from . import pat_secret_prefix as _pat_secret_prefix
+    _pat_secret_prefix.reset_cache()
     from . import webhook_destination_cap as _webhook_destination_cap
     _webhook_destination_cap.reset_cache()
     from . import webhook_policy as _webhook_policy
@@ -217,6 +220,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_methods_policy_routes.router)
     app.include_router(pat_auth_lockout_routes.router)
     app.include_router(pat_concurrency_routes.router)
+    app.include_router(pat_secret_prefix_routes.router)
     app.include_router(webhook_destination_cap_routes.router)
     app.include_router(webhook_policy_routes.router)
     app.include_router(webhook_delivery_rate_routes.router)
@@ -262,6 +266,7 @@ def create_app() -> FastAPI:
     app.include_router(scope_policy_routes.router, prefix="/v1")
     app.include_router(auth_methods_policy_routes.router, prefix="/v1")
     app.include_router(pat_concurrency_routes.router, prefix="/v1")
+    app.include_router(pat_secret_prefix_routes.router, prefix="/v1")
     app.include_router(webhook_destination_cap_routes.router, prefix="/v1")
     app.include_router(webhook_policy_routes.router, prefix="/v1")
     app.include_router(dpa_routes.router, prefix="/v1")
