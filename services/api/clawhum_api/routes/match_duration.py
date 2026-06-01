@@ -1,0 +1,111 @@
+"""Per-workspace match query duration cap administration.
+
+Admins (with MFA step-up) set ``max_duration_sec``; readers can view the
+current policy. Every mutation is appended to the audit log with
+before/after state. Tenant scoped on every call; isolation is enforced
+by ``current_tenant_id``.
+"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
+
+from .. import match_duration
+from ..audit import write_event
+from ..auth import require_admin_with_mfa, require_roles
+from ..tenant import current_tenant_id
+
+router = APIRouter(tags=["match-duration"], prefix="/match-duration")
+
+
+class MatchDurationResponse(BaseModel):
+    max_duration_sec: int = Field(
+        ..., description=(
+            "Maximum decoded duration in seconds the /match route will"
+            " accept for this workspace. 0 means no cap (default)."
+        )
+    )
+    ceiling: int = Field(
+        ..., description=(
+            "Hard upper bound the API will accept for max_duration_sec."
+        )
+    )
+    updated_at: float = 0.0
+    updated_by: str = ""
+
+
+class MatchDurationUpdate(BaseModel):
+    max_duration_sec: int = Field(
+        ..., ge=0,
+        description=(
+            "Maximum decoded query duration in seconds. Set to 0 to"
+            " disable the cap."
+        ),
+    )
+
+
+def _actor_id(request: Request) -> str:
+    return (
+        getattr(request.state, "api_key_name", "")
+        or getattr(request.state, "pat_id", "")
+        or "unknown"
+    )
+
+
+def _to_response(request: Request) -> MatchDurationResponse:
+    tenant = current_tenant_id(request)
+    pol = match_duration.get_policy(tenant)
+    return MatchDurationResponse(
+        max_duration_sec=pol.max_duration_sec,
+        ceiling=match_duration.MAX_DURATION_CEILING_SEC,
+        updated_at=pol.updated_at,
+        updated_by=pol.updated_by,
+    )
+
+
+@router.get(
+    "",
+    response_model=MatchDurationResponse,
+    dependencies=[Depends(require_roles("reader"))],
+)
+async def get_match_duration(request: Request) -> MatchDurationResponse:
+    return _to_response(request)
+
+
+@router.put(
+    "",
+    response_model=MatchDurationResponse,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_admin_with_mfa())],
+)
+async def set_match_duration(
+    body: MatchDurationUpdate, request: Request
+) -> MatchDurationResponse:
+    tenant = current_tenant_id(request)
+    actor = _actor_id(request)
+    before = match_duration.get_policy(tenant)
+    try:
+        saved = match_duration.set_policy(
+            tenant_id=tenant,
+            max_duration_sec=body.max_duration_sec,
+            updated_by=actor,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={
+            "code": "match_duration_invalid",
+            "message": str(e),
+        })
+    write_event(
+        {
+            "ts": saved.updated_at,
+            "actor": actor,
+            "tenant_id": tenant,
+            "action": "match_duration.update",
+            "target": tenant,
+            "request_id": getattr(request.state, "request_id", ""),
+            "before": before.to_dict(),
+            "after": saved.to_dict(),
+        }
+    )
+    return _to_response(request)

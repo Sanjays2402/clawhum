@@ -10,6 +10,7 @@ from clawhum_audio.io import load_audio
 from ..auth import require_api_key, require_scopes
 from ..schemas import MatchResponse, MatchResult
 from ..tenant import current_tenant_id
+from .. import match_duration
 from . import webhooks as webhooks_routes
 
 router = APIRouter(tags=["match"])
@@ -28,8 +29,6 @@ async def match(
 ):
     s = get_settings()
     state = request.app.state.clawhum
-    if not state.tracks:
-        raise HTTPException(400, "index is empty; run reindex first")
 
     blob = await audio.read()
     if not blob:
@@ -38,6 +37,28 @@ async def match(
         x, sr = load_audio(io.BytesIO(blob), target_sr=state.embedder.sr)
     except Exception as e:
         raise HTTPException(400, f"could not decode audio: {e}") from e
+
+    # Per-workspace decoded-duration cap. 0 = no cap (default). We
+    # enforce this before the index-empty check so an admin who set
+    # a tight cap gets a precise 413 instead of a generic 400 when
+    # the index is also empty.
+    tenant_id = current_tenant_id(request)
+    cap = match_duration.max_duration_sec(tenant_id)
+    if cap and sr > 0:
+        dur = float(len(x)) / float(sr)
+        if dur > cap:
+            raise HTTPException(status_code=413, detail={
+                "code": "match_query_too_long",
+                "message": (
+                    f"query duration {dur:.2f}s exceeds workspace"
+                    f" cap of {cap}s"
+                ),
+                "duration_sec": round(dur, 3),
+                "max_duration_sec": cap,
+            })
+
+    if not state.tracks:
+        raise HTTPException(400, "index is empty; run reindex first")
 
     matcher = Matcher(state.embedder, state.index, state.tracks)
     t0 = time.perf_counter()
@@ -62,7 +83,6 @@ async def match(
     # Best-effort outbound notification to user-registered webhooks. We never
     # block the response on receivers; deliveries fan out as background tasks.
     try:
-        tenant_id = current_tenant_id(request)
         await webhooks_routes.dispatch_event(
             tenant_id,
             webhooks_routes.EVENT_MATCH_COMPLETED,

@@ -431,6 +431,30 @@ curl -sS -X PUT http://127.0.0.1:7451/body-size \
   -d '{"max_bytes": 0}'
 ```
 
+## Per-workspace match query duration cap
+
+The body-size cap bounds request *bytes*, which is a poor proxy for matcher compute cost: a small Opus payload can decode to many minutes of audio and force the embedder to chew through thousands of frames before the route returns. A pathological caller (or a mobile app left recording in a pocket) can monopolise the worker for every other tenant in the process. Each workspace can now pin a single integer cap on the maximum *decoded* duration in seconds that the `/match` route and per-clip `/batch` rows will accept, exposed at `/match-duration` and managed from [`/settings/match-duration`](http://127.0.0.1:7452/settings/match-duration). A value of 0 is the default and preserves current behaviour for existing tenants; values above the hard ceiling (3600 seconds, one hour) are rejected with a structured `{code: "match_duration_invalid"}` 400. Enforcement runs inside the route after `load_audio` decodes the upload, so the cap is meaningful regardless of codec, sample rate, or container, and it runs before the index-empty check so admins get a precise 413 instead of a generic 400 when both conditions fire. Over-cap queries return HTTP 413 with a structured `{code: "match_query_too_long", duration_sec, max_duration_sec}` body. The cap is strictly per-tenant: tenant A capping at 1 second has zero effect on tenant B's matches or policy reads. Mutating the cap requires the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `match_duration.update` with before / after state. Pinned by `tests/integration/test_match_duration.py` which proves the default does not throttle, that an over-cap WAV is rejected with the structured 413, that cross-tenant isolation holds in both directions, that values above the ceiling are rejected, and that every mutation appears in the audit log.
+
+### Try it (match query duration cap)
+
+UI: open [`/settings/match-duration`](http://127.0.0.1:7452/settings/match-duration) to view the current cap, the ceiling, and raise, tighten, or clear it inline. API:
+
+```bash
+# read the current per-workspace match query duration cap and ceiling
+curl -sS http://127.0.0.1:7451/match-duration \
+  -H 'X-API-Key: sk_admin'
+
+# cap every match query in this workspace at 30 seconds
+curl -sS -X PUT http://127.0.0.1:7451/match-duration \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"max_duration_sec": 30}'
+
+# disable the cap (returns to no per-workspace limit)
+curl -sS -X PUT http://127.0.0.1:7451/match-duration \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"max_duration_sec": 0}'
+```
+
 ## Per-workspace per-hook outbound delivery rate cap
 
 The webhook stack already enforces SSRF safety, HTTPS-only transport, HMAC signing, retries with backoff, and a consecutive-failure circuit breaker. What it did not bound was sender-side delivery *rate*: a runaway producer inside a workspace (a debugging script, a mis-configured batch job, a single match endpoint hammered by a test suite) could fan out thousands of events per minute to a single customer endpoint and trip the receiver's own ingress rate limits or get the deployment classified as an attack. This release adds a per-workspace integer cap on outbound deliveries per individual webhook in any 60 second window, exposed at `/webhook-delivery-rate` and surfaced inline on the workspace `/webhooks` page. A value of 0 is the default and preserves current behaviour for existing tenants; values above the hard ceiling are rejected with a structured `{code: "webhook_delivery_rate_invalid"}` 400. When the cap is exceeded the dispatcher records a synthetic delivery row with `rate_limited=true`, `status=0`, `error="rate_limited_by_policy: N/min cap exceeded"` and skips the HTTP request, so the workspace audit log and the per-hook delivery log still show every suppression for incident review. Synthetic rate-limit rows do not themselves count toward the budget, so they cannot starve a recovered hook forever. Every suppression also writes `webhook.rate_limited` to the tamper-evident audit chain, and every policy mutation writes `webhook_delivery_rate.update` with before/after state. The cap is strictly per-tenant: tenant A capping at 1/min has zero effect on tenant B's deliveries or policy reads. Mutating the cap requires the admin role plus a fresh MFA step-up. Pinned by `tests/integration/test_webhook_delivery_rate.py` which proves the default does not throttle, that the (N+1)th delivery within 60s is suppressed and audited, that cross-tenant isolation holds in both directions, and that negative or out-of-range caps are rejected.

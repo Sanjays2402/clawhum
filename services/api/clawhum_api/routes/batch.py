@@ -35,6 +35,8 @@ from clawhum_core.settings import get_settings
 from clawhum_match.matcher import Matcher
 
 from ..auth import require_api_key
+from ..tenant import current_tenant_id
+from .. import match_duration
 
 router = APIRouter(tags=["batch"])
 
@@ -103,6 +105,8 @@ async def batch(
     batch_id = str(uuid.uuid4())
     eff_top_k = top_k or settings.top_k
     eff_threshold = threshold if threshold is not None else settings.threshold
+    # Per-workspace decoded-duration cap, applied per clip below.
+    duration_cap = match_duration.max_duration_sec(current_tenant_id(request))
 
     rows: list[dict] = []
     for info in entries:
@@ -134,6 +138,21 @@ async def batch(
                 "elapsed_ms": 0,
             })
             continue
+
+        # Per-workspace decoded-duration cap. 0 = no cap (default).
+        if duration_cap and sr > 0:
+            dur = float(len(x)) / float(sr)
+            if dur > duration_cap:
+                rows.append({
+                    "filename": info.filename,
+                    "error": (
+                        f"clip duration {dur:.2f}s exceeds workspace"
+                        f" cap of {duration_cap}s"
+                    ),
+                    "matches": [],
+                    "elapsed_ms": 0,
+                })
+                continue
 
         t0 = time.perf_counter()
         matches = matcher.match(x, sr, top_k=eff_top_k, threshold=eff_threshold)

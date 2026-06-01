@@ -604,6 +604,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Workspace match query duration cap */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">match duration</span>
+            <a
+              href="/settings/match-duration"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            cap the decoded duration of a single /match or batch clip for this workspace. bytes are a poor proxy for compute cost: a tiny opus payload can decode to many minutes. over-cap queries fail with a structured 413 before the matcher runs. admin role plus MFA required.
+          </p>
+        </section>
+
         {/* Workspace PAT secret prefix */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">
