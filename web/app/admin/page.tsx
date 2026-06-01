@@ -32,6 +32,7 @@ import {
   Megaphone,
   CloudArrowUp,
   Siren,
+  Plugs,
 } from "@phosphor-icons/react/dist/ssr";
 import { getApiKey } from "@/lib/apiKey";
 
@@ -721,6 +722,22 @@ export default function AdminConsolePage() {
             acknowledge before mutating actions are allowed. Wording
             changes bump the revision and force a fresh ack across
             the workspace. Admin only, MFA gated.
+          </p>
+        </Card>
+
+        <Card
+          title="webhook circuit breaker"
+          icon={<Plugs size={14} weight="duotone" />}
+          href="/admin/webhook-auto-disable-policy"
+          hrefLabel="configure"
+        >
+          <p className="text-xs text-[var(--color-dim)]">
+            Per workspace ceiling on consecutive failed webhook
+            deliveries before an endpoint is auto disabled. Set
+            tighter than the deployment default to pause sick
+            receivers fast, or to 0 to opt out and pause manually.
+            Auto disable events land in the audit log. Admin only,
+            MFA gated.
           </p>
         </Card>
 

@@ -161,10 +161,13 @@ def _maybe_auto_disable(hook: dict[str, Any]) -> dict[str, Any] | None:
     False with ``auto_disabled_at`` and ``auto_disabled_reason`` set.
     """
     s = get_settings()
-    threshold = int(getattr(s, "webhook_auto_disable_threshold", 0) or 0)
+    tenant_id = hook.get("tenant_id", "")
+    # Per-workspace override beats the global default; falls back to
+    # the global setting when no policy row exists for the tenant.
+    from .. import webhook_auto_disable_policy as _wadp
+    threshold = int(_wadp.effective_threshold(tenant_id))
     if threshold <= 0:
         return None
-    tenant_id = hook.get("tenant_id", "")
     hook_id = hook["id"]
     current = _find_hook_any_tenant(hook_id)
     if current is None or not current.get("active", True):

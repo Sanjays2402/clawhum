@@ -2,6 +2,28 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace webhook auto-disable threshold
+
+The webhook stack already trips a circuit breaker that auto disables a destination after a configurable number of consecutive failed deliveries, so a broken receiver stops burning retry budget. Until now that threshold was a single global setting (`webhook_auto_disable_threshold`), which is fine for a small deployment but unworkable for a multi-tenant SaaS: a noisy sandbox tenant wants a tight number so a broken receiver pauses fast, while a production tenant with bursty downstream outages wants more headroom before the integration falls silent. Each workspace can now pin its own integer threshold at [`/webhook-auto-disable-policy`](http://127.0.0.1:7451/webhook-auto-disable-policy), managed from [`/admin/webhook-auto-disable-policy`](http://127.0.0.1:7452/admin/webhook-auto-disable-policy). With no explicit policy row the deployment-wide default applies so existing tenants behave exactly as before; setting `threshold=0` opts out of the breaker for that workspace (manual pause only) and the hard ceiling is 10000 so the streak scan stays bounded. The per-workspace value is consulted by `_maybe_auto_disable` on every failed delivery, so the override takes effect immediately with no restart. The policy is strictly per-tenant: tenant A pinning a threshold of 1 has zero effect on tenant B's breaker. Mutations require the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `webhook_auto_disable_policy.update` with before/after state; the breaker itself continues to write `webhook.auto_disabled` events when it fires. Pinned by `tests/integration/test_webhook_auto_disable_policy.py` which proves the global default applies without a policy row, that a tighter per-workspace threshold trips the breaker before the global default would, that `threshold=0` leaves the hook active even after a long failure streak, that one tenant's pin is invisible to another tenant, and that the update writes a structured audit event.
+
+### Try it (webhook auto-disable threshold)
+
+```bash
+uv run python -m clawhum_api  # http://127.0.0.1:7451
+pnpm --filter clawhum-web dev # http://127.0.0.1:7452/admin/webhook-auto-disable-policy
+
+curl -sS -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  http://127.0.0.1:7451/webhook-auto-disable-policy | jq
+
+curl -sS -X PUT http://127.0.0.1:7451/webhook-auto-disable-policy \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "X-MFA-Code: $TOTP" \
+  -H "Content-Type: application/json" \
+  -d '{"threshold": 3}' | jq
+```
+
+Pass `"threshold": 0` to disable the breaker for this workspace and pause sick endpoints manually.
+
 ## Per-workspace system use notification with required acknowledgement
 
 NIST 800-53 AC-8 and the SOC2 / FedRAMP / DoD equivalents require buyers to display a system use notification before a user is allowed to act on the system, and to record that the user accepted it. ClawHum now ships the full control. Workspace owners set the banner text (title + body) at [`/admin/system-use-notification`](http://127.0.0.1:7452/admin/system-use-notification); changing the wording bumps a monotonic `revision` and invalidates every prior acknowledgement, forcing a fresh ack across the workspace. Every authenticated actor fetches the current banner from `GET /system-use-notification` and posts `POST /system-use-notification/ack` with the matching revision number. If the wording in flight at the server has moved on the ack endpoint returns `409 revision_mismatch` with the current revision so the client can re-prompt with the right text. Enforcement is handled by `SystemUseNotificationMiddleware`, which runs alongside the body-size cap so a mutating request (`POST`, `PUT`, `PATCH`, `DELETE`) from an actor who has not acked the current revision is rejected with `403 system_use_ack_required` plus `X-System-Use-Ack-Required: 1` and `X-System-Use-Notification-Revision: <n>` before the route or the tenant scope logic runs. The ack endpoint itself plus health, metrics, MFA, SSO, sessions, me, and SCIM are skipped so a locked-out workspace can always recover. The admin console also exposes the latest ack per actor (with IP and timestamp) for evidence packs. Storage uses the same append-only JSONL last-writer-wins pattern as every other per-workspace policy, keyed by tenant id, so cross-tenant lookups are impossible. Mutations to the banner require admin role plus a fresh MFA step-up and are written to the tamper-evident audit chain as `system_use_notification.update` with before / after diff; each ack is logged as `system_use_notification.ack`. Pinned by `tests/integration/test_system_use_notification.py` which proves the opt-in default, the 403 enforcement before ack and 200 after, the revision bump on wording change with stale-rev rejection at 409, and that tenant A's banner and ack roster do not leak to tenant B.
