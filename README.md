@@ -2,6 +2,29 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Trusted reverse proxies with X-Forwarded-For spoofing fix
+
+The API used to honour the first hop of `X-Forwarded-For` unconditionally when computing the client IP. That is a procurement-grade vulnerability: any direct caller can send `X-Forwarded-For: 10.0.0.5` to bypass a workspace IP allowlist, plant a forged IP in the audit log, and confuse PAT trusted device fingerprints. This release adds a trusted reverse proxy list (deployment-wide via `CLAWHUM_TRUSTED_PROXIES_GLOBAL`, with optional per-workspace extension under `/settings/trusted-proxies`) and only honours `X-Forwarded-For` when the socket peer falls inside that set. Untrusted callers get their socket IP and any forwarding header they sent is silently ignored. Resolution walks `X-Forwarded-For` right to left and stops at the first untrusted hop, matching the RFC 7239 model used by nginx `set_real_ip_from`, Rails `trusted_proxies`, and Express `trust proxy`. The fix is wired through every consumer of the client IP: workspace IP allowlist enforcement, per-PAT IP allowlist enforcement, PAT trusted device fingerprints, session touch records, and the DPA acceptance evidence record. The settings page shows the deployment global list (read only so a workspace admin cannot widen the operator's baseline trust), the workspace list (admin plus MFA to mutate, every change audited), and a live diagnostic of what the API thinks your socket peer and resolved client IP are so SecOps can verify their proxy is wired correctly without leaving the page. Workspace entries are tenant-scoped: tenant A cannot see, list, or delete tenant B's entries even with admin role. Pinned by `tests/integration/test_trusted_proxies.py` which proves that a spoofed `X-Forwarded-For` from an untrusted peer cannot bypass the workspace allowlist, that a single-hop ingress topology works once the loopback is trusted, and that workspace proxy lists do not leak across tenants.
+
+### Try it (trusted proxies)
+
+UI: open [`/settings/trusted-proxies`](http://127.0.0.1:7452/settings/trusted-proxies) to see the deployment global list, manage your workspace entries, and confirm the resolved client IP the API sees for you. API:
+
+```bash
+# inspect what the API trusts and what it sees as your client IP
+curl -sS http://127.0.0.1:7451/trusted-proxies \
+  -H 'X-API-Key: sk_admin'
+
+# trust an additional self-hosted ingress CIDR for this workspace
+curl -sS -X POST http://127.0.0.1:7451/trusted-proxies \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"cidr":"203.0.113.0/24","label":"corp ingress"}'
+
+# from an untrusted peer, this header is ignored and the socket IP is enforced
+curl -sS -i http://127.0.0.1:7451/me \
+  -H 'X-API-Key: sk_admin' -H 'X-Forwarded-For: 10.5.5.5'
+```
+
 ## Per-workspace HTTPS-only webhook policy
 
 SSRF protections already block private and cloud-metadata destinations, but the global default still allows plaintext `http://` receivers because some on-prem deployments terminate TLS at a load balancer one hop away. That default fails enterprise procurement: SOC2 CC6.7 and most DPAs require that webhook payloads (which carry signed records of customer data and an HMAC secret in every header) only ever cross TLS, and an `http://` delivery defeats the point of HMAC signing because an on-path attacker can read the same bytes the signature is meant to authenticate. Each workspace can now flip a single `require_https` policy under `/settings/webhook-policy`. While the policy is on, `POST /webhooks` rejects plaintext URLs with `HTTP 400` and a structured `{code: "webhook_https_required"}` body, and every delivery attempt re-checks the scheme right before send so a later policy flip starts failing pre-existing `http://` endpoints with the same code in their delivery log instead of leaking the payload. The settings page surfaces the count of existing plaintext endpoints before you flip the switch, so admins are warned which deliveries will start failing. Strictly per-workspace: tenant A turning enforcement on has zero effect on tenant B. Toggling the policy requires the admin role plus a fresh MFA step-up and is written to the audit log with before / after state. Pinned by `tests/integration/test_webhook_https_policy.py` which proves the 400 gate, the per-tenant isolation, and that https deliveries continue to flow once the policy is on.

@@ -32,6 +32,7 @@ from .routes import health as health_routes
 from .routes import history as history_routes
 from .routes import history_views as history_views_routes
 from .routes import ip_allowlist as ip_allowlist_routes
+from .routes import trusted_proxies as trusted_proxies_routes
 from .routes import invite_domains as invite_domains_routes
 from .routes import scope_policy as scope_policy_routes
 from .routes import webhook_policy as webhook_policy_routes
@@ -75,6 +76,8 @@ async def _lifespan(app: FastAPI):
     registry = get_registry()
     from . import ip_allowlist as _ip_allowlist
     _ip_allowlist.reset_cache()
+    from . import trusted_proxies as _trusted_proxies
+    _trusted_proxies.reset_cache()
     from . import security_contacts as _security_contacts
     _security_contacts.reset_cache()
     from . import support_access as _support_access
@@ -186,6 +189,7 @@ def create_app() -> FastAPI:
     app.include_router(collections_routes.router)
     app.include_router(keys_routes.router)
     app.include_router(ip_allowlist_routes.router)
+    app.include_router(trusted_proxies_routes.router)
     app.include_router(invite_domains_routes.router)
     app.include_router(scope_policy_routes.router)
     app.include_router(webhook_policy_routes.router)
@@ -223,6 +227,7 @@ def create_app() -> FastAPI:
     app.include_router(webhooks_routes.router, prefix="/v1")
     app.include_router(keys_routes.router, prefix="/v1")
     app.include_router(ip_allowlist_routes.router, prefix="/v1")
+    app.include_router(trusted_proxies_routes.router, prefix="/v1")
     app.include_router(invite_domains_routes.router, prefix="/v1")
     app.include_router(scope_policy_routes.router, prefix="/v1")
     app.include_router(webhook_policy_routes.router, prefix="/v1")

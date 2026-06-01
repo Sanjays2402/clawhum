@@ -17,6 +17,13 @@ def _client(monkeypatch, tmp_path, api_keys: str):
     monkeypatch.setenv("CLAWHUM_INDEX_PATH", str(tmp_path / "ix.npz"))
     monkeypatch.setenv("CLAWHUM_METADATA_PATH", str(tmp_path / "meta.jsonl"))
     monkeypatch.setenv("CLAWHUM_IP_ALLOWLIST_PATH", str(tmp_path / "ipa.jsonl"))
+    monkeypatch.setenv("CLAWHUM_TRUSTED_PROXIES_PATH", str(tmp_path / "tp.jsonl"))
+    # Treat the loopback TestClient peer as a trusted proxy so the
+    # X-Forwarded-For values these tests send are honoured. Without
+    # this, the trusted proxies guard correctly rejects the spoofed
+    # header from a non-proxy caller (covered in
+    # test_trusted_proxies.py).
+    monkeypatch.setenv("CLAWHUM_TRUSTED_PROXIES_GLOBAL", "127.0.0.0/8")
     monkeypatch.setenv("CLAWHUM_API_KEYS", api_keys)
     monkeypatch.setenv("CLAWHUM_RATE_LIMIT_PER_MINUTE", "10000")
     from clawhum_core.settings import get_settings
@@ -25,8 +32,10 @@ def _client(monkeypatch, tmp_path, api_keys: str):
     reset_registry_cache()
     from clawhum_api import ip_allowlist
     ip_allowlist.reset_cache()
+    from clawhum_api import trusted_proxies
+    trusted_proxies.reset_cache()
     from clawhum_api.app import create_app
-    return TestClient(create_app())
+    return TestClient(create_app(), client=("127.0.0.1", 50000))
 
 
 def test_no_rules_means_no_restriction(monkeypatch, tmp_path):
