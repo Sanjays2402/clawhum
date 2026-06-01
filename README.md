@@ -2,6 +2,30 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace PAT concurrency cap
+
+Enterprise procurement reviews routinely ask how many machine credentials a single workspace can hold at once and who controls that ceiling. A workspace with no upper bound on live PATs has unbounded blast radius if one admin account is compromised and encourages credential sprawl that nobody audits. Each workspace can now pin a single integer cap on the number of live, non-expired personal access tokens it may hold, exposed at `/pat-concurrency` and managed from [`/settings/pat-concurrency`](http://127.0.0.1:7452/settings/pat-concurrency). A value of 0 is the default and preserves current behaviour; values above the hard ceiling (10,000) are rejected with a Pydantic 422. Enforcement runs inside `pat_store.create` before any secret is generated, so a request that would push the live count over the cap never persists a row, never charges audit ink, and never returns a plaintext secret that could leak. When the cap is breached, `POST /keys` returns HTTP 429 with a structured `{error: "pat_concurrency_exceeded", live, max_active}` body and a `Retry-After: 0` header so the SDK can surface the real reason instead of treating the response as a generic rate limit. Revoking or expiring a token frees a slot immediately; the count is recomputed live from the same source of truth that authenticates incoming requests, so the dashboard can never disagree with enforcement. The cap is strictly per-tenant: tenant A capping at 1 PAT has zero effect on tenant B's mints or policy reads. Mutating the cap requires the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `pat_concurrency.update` with before / after state. Pinned by `tests/integration/test_pat_concurrency.py` which proves the default does not throttle, that the (N+1)-th mint is rejected with the structured 429, that revoking a token frees a slot for the next mint, and that cross-tenant isolation holds in both directions.
+
+### Try it (PAT concurrency cap)
+
+UI: open [`/settings/pat-concurrency`](http://127.0.0.1:7452/settings/pat-concurrency) to view the cap, the live token count, the remaining headroom, and to set or clear the cap inline. API:
+
+```bash
+# read the current per-workspace PAT concurrency cap and live count
+curl -sS http://127.0.0.1:7451/pat-concurrency \
+  -H 'X-API-Key: sk_admin'
+
+# cap this workspace at 5 live personal access tokens
+curl -sS -X PUT http://127.0.0.1:7451/pat-concurrency \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"max_active": 5}'
+
+# disable the cap (returns to no restriction)
+curl -sS -X PUT http://127.0.0.1:7451/pat-concurrency \
+  -H 'X-API-Key: sk_admin' -H 'Content-Type: application/json' \
+  -d '{"max_active": 0}'
+```
+
 ## Per-workspace request body size cap
 
 Enterprise security reviews flag any API that accepts unbounded request bodies as a denial-of-service and storage-cost risk. The match and batch routes already enforce ad-hoc 413s on their own archive uploads, but there was no platform-wide ceiling: a careless caller, a leaked API key, or a malicious integration could POST a half-gigabyte JSON document at any chargeable route and force the worker to buffer the entire payload before validation ran. Each workspace can now pin a single integer cap on the largest request body the API will accept on any chargeable route, exposed at `/body-size` and managed from [`/admin/body-size`](http://127.0.0.1:7452/admin/body-size). A value of 0 is the default and preserves current behaviour for existing tenants; values above the hard ceiling (256 MiB) are rejected with a structured `{code: "body_size_invalid"}` 400. Enforcement runs in a dedicated middleware that resolves the tenant from the API key header before the route dependency chain, in two layers: a pre-flight `Content-Length` check rejects oversized declared payloads without touching the body stream, and a wrapped receive channel cuts off chunked senders that lie about the length the moment the running total crosses the cap. Either path returns HTTP 413 with a structured `{code: "request_body_too_large", max_bytes, observed_bytes}` body and an `X-Body-Size-Limit` header so SDKs can chunk and retry cleanly. Health, readiness, metrics, and the body-size admin surface itself are always exempt so an admin who set the cap too tight can still raise it. The middleware sits alongside the budget middleware (inside the tenant scope and outside idempotency) so a request rejected for size is never billed and never replayed from cache. The cap is strictly per-tenant: tenant A capping at 1 KiB has zero effect on tenant B's POSTs or policy reads. Mutating the cap requires the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `body_size.update` with before / after state. Pinned by `tests/integration/test_body_size.py` which proves the default does not throttle, that an oversized POST is rejected with the structured 413 and the limit header, that the admin surface itself is exempt, that cross-tenant isolation holds in both directions, that negative and out-of-range values are rejected with a structured 400, and that every mutation appears in the audit log with before / after state.

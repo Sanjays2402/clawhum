@@ -319,6 +319,15 @@ def create(
     except ImportError:
         pass
     safe_cidrs = normalise_cidrs(ip_cidrs)
+    # Workspace concurrent-PAT cap: when an admin has pinned
+    # ``max_active`` for this workspace, any mint that would push the
+    # live token count over the cap is rejected here so the operator
+    # sees a structured failure instead of silently sprawling.
+    try:
+        from . import pat_concurrency as _pat_concurrency
+        _pat_concurrency.assert_capacity(tenant_id)
+    except ImportError:
+        pass
     secret = new_secret()
     now = time.time()
     expires_at = resolve_expiry(requested_days=expires_in_days, now=now)

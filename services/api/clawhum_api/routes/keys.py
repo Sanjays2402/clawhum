@@ -188,6 +188,7 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
         # surface its denied set so the UI can show which scopes the
         # workspace policy forbids without grepping the message.
         from .. import scope_policy as _scope_policy
+        from .. import pat_concurrency as _pat_concurrency
         if isinstance(exc, _scope_policy.ScopeNotAllowedError):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -196,6 +197,17 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
                     "message": str(exc),
                     "denied": sorted(exc.denied),
                 },
+            )
+        if isinstance(exc, _pat_concurrency.PatConcurrencyExceeded):
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={
+                    "error": "pat_concurrency_exceeded",
+                    "message": str(exc),
+                    "live": exc.live,
+                    "max_active": exc.max_active,
+                },
+                headers={"Retry-After": "0"},
             )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -540,6 +540,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Workspace PAT concurrency cap */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">pat concurrency</span>
+            <a
+              href="/settings/pat-concurrency"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              manage
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            cap the number of live personal access tokens this workspace may hold at once. mints that would breach the cap fail with a structured 429. bounds blast radius and stops credential sprawl. admin role plus MFA required.
+          </p>
+        </section>
+
         {/* Workspace embed origin allowlist */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">
