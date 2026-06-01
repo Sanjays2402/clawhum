@@ -246,6 +246,7 @@ class Settings(BaseSettings):
     pat_secret_prefix_path: Path = Path("./data/pat_secret_prefix.jsonl")
     pat_expiry_warning_path: Path = Path("./data/pat_expiry_warning.jsonl")
     webhook_secret_rotation_path: Path = Path("./data/webhook_secret_rotation.jsonl")
+    scim_token_rotation_path: Path = Path("./data/scim_token_rotation.jsonl")
     webhook_destination_cap_path: Path = Path("./data/webhook_destination_cap.jsonl")
     dpa_acceptances_path: Path = Path("./data/dpa_acceptances.jsonl")
     support_access_path: Path = Path("./data/support_access.jsonl")

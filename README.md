@@ -2,6 +2,27 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace SCIM bearer token max age (forced rotation)
+
+The SCIM 2.0 bearer token is the most powerful shared secret in the platform: a single string lets the buyer's IdP (Okta, Azure AD, Google Workspace) push joiners and leavers across the entire member roster. Every SOC2 CC6.1 / ISO 27001 A.10.1.2 / NIST 800-53 SC-12 review wants that secret rotated on a defined cadence. Workspace owners can now set a per-tenant ceiling on `max_token_age_days` at [`/settings/scim-token-rotation`](http://127.0.0.1:7450/settings/scim-token-rotation): once the active SCIM token crosses the floor, every `/scim/v2/*` response attaches `Sunset` (RFC 8594 IMF-fixdate of the missed deadline), `Deprecation: true` per the IETF deprecation-header draft, an optional `Link: <docs>; rel="sunset"` pointing at the workspace's rotation runbook, plus `X-Clawhum-SCIM-Token-Age-Days`, `X-Clawhum-SCIM-Token-Max-Age-Days`, and `X-Clawhum-SCIM-Token-Created-At` for IdP adapters that prefer structured numbers over date parsing. Default `max_token_age_days` is `0` (disabled), so existing tenants are unchanged. Storage uses the same append-only JSONL last-writer-wins pattern as every other per-workspace policy module, keyed by tenant id, so cross-tenant lookups are impossible: workspace A flipping the knob has zero effect on workspace B's SCIM responses. The CORS `expose_headers` list is extended so browser SDKs see the headers from cross-origin calls. Mutations require admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `scim_token_rotation.update` with before / after state. Pinned by `tests/integration/test_scim_token_rotation.py` which proves headers fire when the active token is past the floor, stay silent when it is fresh, are tenant-scoped (workspace B does not inherit workspace A's policy), and that disabling the policy cleanly stops the headers without rotating the live token.
+
+### Try it (SCIM token rotation)
+
+```bash
+uv run python -m clawhum_api  # http://127.0.0.1:7451
+pnpm --filter clawhum-web dev # http://127.0.0.1:7450/settings/scim-token-rotation
+
+curl -s -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  http://127.0.0.1:7451/scim-token-rotation | jq
+
+curl -s -X PUT -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"max_token_age_days": 90, "docs_url": "https://docs.example/rotate-scim"}' \
+  http://127.0.0.1:7451/scim-token-rotation | jq
+```
+
+Once the active token crosses 90 days, every SCIM 2.0 response will carry `Sunset`, `Deprecation: true`, and the structured `X-Clawhum-SCIM-Token-*` headers, so the buyer's IdP adapter can alert before the audit does.
+
 ## Audit log integrity console
 
 Every audit log entry already carries a SHA-256 of its payload plus the previous entry hash; what was missing was a procurement-facing surface to *prove* the chain holds without dropping to curl. The new admin page at [`/admin/audit-chain`](http://127.0.0.1:7452/admin/audit-chain) re-derives the chain across the active audit file and (by default) every rotated sibling on disk, then reports `ok`, `entries`, `valid`, the `first_bad_line` plus a human reason when broken, and the head `prev_hash` and tail `entry_hash` per file so an operator can pin the digests in their SOC2 evidence pack. A non-admin caller gets `403` from the route and a matching message in the UI; the existing role check on `GET /audit/verify` is unchanged. The page calls the same read-only endpoint that a SIEM can cron on a schedule, and the `include_rotated=false` toggle narrows the run to the active file when debugging hot writes. Pinned by `tests/integration/test_audit_chain.py` which proves the clean case, that editing a single field reports the offending line and reason, that deleting a line breaks the next entry, that the `include_rotated` flag actually narrows the scan, and that a member-role caller gets 403.

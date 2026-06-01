@@ -112,6 +112,10 @@ def _require_scim_bearer(request: Request, authorization: str) -> str:
     request.state.api_key_roles = frozenset({"admin"})
     request.state.tenant_id = row.tenant_id
     request.state.scim_token = True
+    # Stamp the token's mint epoch so the SCIM rotation middleware
+    # can attach Sunset/Deprecation headers to every SCIM response
+    # when this token has crossed the per-workspace max-age floor.
+    request.state.scim_token_created_at = float(row.created_at or 0.0)
     try:
         scim_tokens.touch_last_used(row.tenant_id)
     except Exception:

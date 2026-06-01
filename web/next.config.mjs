@@ -70,6 +70,7 @@ const nextConfig = {
       { source: "/api/webhook-destination-cap", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhook-destination-cap` },
       { source: "/api/webhook-secret-rotation", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhook-secret-rotation` },
       { source: "/api/webhook-secret-rotation/stale", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhook-secret-rotation/stale` },
+      { source: "/api/scim-token-rotation", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/scim-token-rotation` },
       { source: "/api/invite-domains/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/invite-domains/:id` },
       { source: "/api/dpa", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/dpa` },
       { source: "/api/dpa/accept", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/dpa/accept` },

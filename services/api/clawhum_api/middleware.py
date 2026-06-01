@@ -346,3 +346,41 @@ class PatExpiryWarningMiddleware(BaseHTTPMiddleware):
             # Sunset (e.g. a share link) wins over the policy default.
             resp.headers.setdefault(k, v)
         return resp
+
+
+class ScimTokenRotationMiddleware(BaseHTTPMiddleware):
+    """Attach Sunset / Deprecation headers when the active SCIM token is stale.
+
+    Reads ``request.state.scim_token_created_at`` set by the SCIM
+    bearer authenticator in :mod:`routes.scim` after a successful
+    SCIM call. When no SCIM token was used (admin API key, PAT, dev
+    mode, or an unauthenticated request), or when the workspace has
+    not configured a max-age, no headers are written. See
+    :mod:`clawhum_api.scim_token_rotation` for the policy semantics.
+    """
+
+    async def dispatch(self, request, call_next):
+        resp = await call_next(request)
+        try:
+            tenant_id = getattr(request.state, "tenant_id", "") or ""
+            is_scim = bool(getattr(request.state, "scim_token", False))
+        except Exception:
+            return resp
+        if not tenant_id or not is_scim:
+            return resp
+        try:
+            from . import scim_token_rotation, scim_tokens
+
+            row = scim_tokens.get_active(tenant_id)
+            created_at = float(row.created_at) if row else 0.0
+            headers = scim_token_rotation.compute_headers(
+                tenant_id=tenant_id, token_created_at=created_at
+            )
+        except Exception:
+            headers = {}
+        for k, v in headers.items():
+            # setdefault so a route that already wrote its own Sunset
+            # header (none currently do on SCIM, but future ones may)
+            # wins over the policy default.
+            resp.headers.setdefault(k, v)
+        return resp
