@@ -59,6 +59,7 @@ const nextConfig = {
       { source: "/api/pat-concurrency", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/pat-concurrency` },
       { source: "/api/webhook-policy", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhook-policy` },
       { source: "/api/webhook-delivery-rate", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhook-delivery-rate` },
+      { source: "/api/webhook-destination-cap", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/webhook-destination-cap` },
       { source: "/api/invite-domains/:id", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/invite-domains/:id` },
       { source: "/api/dpa", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/dpa` },
       { source: "/api/dpa/accept", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/dpa/accept` },

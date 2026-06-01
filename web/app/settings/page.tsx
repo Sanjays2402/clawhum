@@ -764,6 +764,22 @@ export default function SettingsPage() {
           </p>
         </section>
 
+        {/* Webhook destination cap */}
+        <section className="panel rounded-[2px] p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="label-xs">webhook destination cap</span>
+            <a
+              href="/settings/webhook-destination-cap"
+              className="ml-auto border border-[var(--color-line)] px-3 py-1 font-mono text-[11px] uppercase tracking-widest text-[var(--color-muted)] hover:text-[var(--color-phosphor)]"
+            >
+              configure
+            </a>
+          </div>
+          <p className="font-mono text-[10px] text-[var(--color-dim)] leading-relaxed">
+            cap the number of registered outbound destinations this workspace can hold. creates over the cap fail with HTTP 429 and a structured error so operators notice instead of silently growing credential sprawl.
+          </p>
+        </section>
+
         {/* Onboarding controls */}
         <section className="panel rounded-[2px] p-4 space-y-2">
           <div className="flex items-center gap-2">

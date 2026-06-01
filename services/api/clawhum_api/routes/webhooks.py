@@ -322,10 +322,24 @@ async def create_webhook(
     events = [e for e in body.events if e in ALL_EVENTS]
     if not events:
         raise HTTPException(400, f"events must include one of {list(ALL_EVENTS)}")
-    # Soft cap to keep the JSONL store healthy.
+    # Per-workspace cap on registered destinations. Admins manage the
+    # ceiling at PUT /webhook-destination-cap; the legacy soft cap of
+    # 20 is preserved as the default for tenants with no policy row.
+    from .. import webhook_destination_cap as _whcap
     existing = _live_hooks(tenant_id)
-    if len(existing) >= 20:
-        raise HTTPException(400, "webhook limit reached (max 20 per tenant)")
+    try:
+        _whcap.assert_capacity(tenant_id, live_count=len(existing))
+    except _whcap.WebhookDestinationCapExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "webhook_destination_cap_exceeded",
+                "message": str(exc),
+                "live": exc.live,
+                "max_active": exc.max_active,
+            },
+            headers={"Retry-After": "0"},
+        )
     # SSRF policy: refuse to register destinations that point at internal
     # ranges or cloud metadata endpoints. Re-checked at delivery time too.
     try:

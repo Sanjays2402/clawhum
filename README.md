@@ -2,6 +2,26 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace webhook destination cap
+
+The webhook stack already enforces SSRF safety, HTTPS-only transport, HMAC signing, retries with backoff, a per-hook delivery rate cap, and a consecutive-failure circuit breaker. What it did not bound was *how many* destinations a single workspace was allowed to register. The legacy `POST /webhooks` route hard-coded a soft cap of 20 with no admin visibility; enterprise procurement reviews routinely ask who controls that ceiling. Each workspace can now pin its own integer cap, exposed at `/webhook-destination-cap` and managed from [`/settings/webhook-destination-cap`](http://127.0.0.1:7452/settings/webhook-destination-cap). With no explicit policy the legacy default of 20 is enforced so existing tenants behave exactly as before; setting `max_active=0` opts out of the per-workspace cap (the global hard ceiling of 500 still applies so the JSONL store and delivery worker stay bounded). When `POST /webhooks` would push the live count over the cap it returns HTTP 429 with a structured `{error: "webhook_destination_cap_exceeded", live, max_active}` body and `Retry-After: 0` so SDKs surface the real reason instead of treating the response as a generic rate limit. Deleting a destination frees a slot immediately. The cap is strictly per-tenant: tenant A capping at 1 destination has zero effect on tenant B's creates or policy reads. Mutating the cap requires the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `webhook_destination_cap.update` with before/after state. Pinned by `tests/integration/test_webhook_destination_cap.py` which proves the default still applies, that the (N+1)-th create is rejected with the structured 429, that deleting a hook frees a slot, that cross-tenant isolation holds, and that opting out raises the ceiling to the global maximum.
+
+### Try it (webhook destination cap)
+
+UI: open [`/settings/webhook-destination-cap`](http://127.0.0.1:7452/settings/webhook-destination-cap) to view the live count, the effective cap, and to change or reset it inline. API:
+
+```bash
+# read the current per-workspace webhook destination cap
+curl -sS http://127.0.0.1:7451/webhook-destination-cap \
+  -H "X-API-Key: $CLAWHUM_API_KEY"
+
+# pin the cap at 5 destinations (admin + MFA step-up required)
+curl -sS -X PUT http://127.0.0.1:7451/webhook-destination-cap \
+  -H "X-API-Key: $CLAWHUM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"max_active": 5}'
+```
+
 ## Per-workspace allowed authentication methods
 
 Three credential classes can authenticate against the clawhum API: deploy-time static keys configured via `CLAWHUM_API_KEYS` (`env_key`), personal access tokens minted from the dashboard (`pat`), and SCIM 2.0 bearer tokens issued to the workspace's IdP (`scim`). Enterprise security teams routinely want to disable a class once a stronger one is in place: after rolling out SSO plus SCIM they want PATs off so every machine actor is an IdP-managed service account; after standing up SCIM they want the deploy-time env keys off so every credential is tied to a named human. Each workspace now stores a per-tenant policy of which methods it accepts, exposed at `/auth-methods-policy` and managed from [`/settings/auth-methods`](http://127.0.0.1:7452/settings/auth-methods). When no policy is registered every method is allowed (existing customers are not broken). When `pat` is disabled, existing PATs are rejected on their next request with HTTP 401, `detail: auth_method_disabled`, and an `X-Auth-Method-Disabled: pat` header so SDKs can route to a runbook without scraping strings; new PAT mints at `POST /keys` are rejected with HTTP 403 and the same header. When `scim` is disabled, otherwise-valid SCIM bearer tokens are rejected with 401 so an admin can hard-lock the IdP push surface from the dashboard without rotating the integration. The policy is strictly tenant scoped: tenant A disabling PATs does not affect tenant B. The PUT endpoint refuses an empty methods array so an admin cannot lock the workspace out by accident, and requires admin role plus a fresh MFA step-up. Every change writes a tamper-evident audit event (`auth_methods_policy.update`) with before / after method sets and the request id. Pinned by `tests/integration/test_auth_methods_policy.py` which proves the no-policy default, that disabling PATs blocks both auth and mint with the runbook header, that the policy is tenant scoped, that an empty methods array is rejected at the HTTP edge, and that unknown method ids are silently dropped.
