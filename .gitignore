@@ -41,7 +41,9 @@ data/session_policy.jsonl
 data/seat_limits.jsonl
 data/invite_domains.jsonl
 data/mfa_lockout.jsonl
+data/pat_auth_lockout.jsonl
 data/pat_ip_history.jsonl
 data/mfa_session_epoch.json
 data/collections.jsonl
 data/workspace_closures.jsonl
+data/export_signing_keys.jsonl

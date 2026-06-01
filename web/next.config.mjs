@@ -75,6 +75,8 @@ const nextConfig = {
       { source: "/api/mfa/session", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/mfa/session` },
       { source: "/api/admin/mfa/lockouts", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/admin/mfa/lockouts` },
       { source: "/api/admin/mfa/lockouts/unlock", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/admin/mfa/lockouts/unlock` },
+      { source: "/api/admin/pat-auth-lockout", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/admin/pat-auth-lockout` },
+      { source: "/api/admin/pat-auth-lockout/:ip", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/admin/pat-auth-lockout/:ip` },
       { source: "/api/members", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/members` },
       { source: "/api/members/invite", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/members/invite` },
       { source: "/api/members/accept", destination: `${process.env.CLAWHUM_API_URL || "http://127.0.0.1:7451"}/members/accept` },

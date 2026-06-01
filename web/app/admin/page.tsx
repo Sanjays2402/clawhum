@@ -576,6 +576,19 @@ export default function AdminConsolePage() {
         </Card>
 
         <Card
+          title="pat auth lockouts"
+          icon={<ShieldWarning size={14} weight="duotone" />}
+          href="/admin/pat-auth-lockout"
+          hrefLabel="review"
+        >
+          <p className="text-xs text-[var(--color-dim)]">
+            Source IPs blocked after repeated invalid personal access
+            token auth attempts. Clear an IP when a legitimate user
+            is caught in the cooldown.
+          </p>
+        </Card>
+
+        <Card
           title="ip allowlist"
           icon={<ShieldStar size={14} weight="duotone" />}
           href="/settings/ip-allowlist"

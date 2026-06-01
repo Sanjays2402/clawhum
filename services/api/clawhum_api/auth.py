@@ -9,7 +9,29 @@ from clawhum_core.settings import get_settings
 from .api_keys import ANON_TENANT_ID, DEV_TENANT_ID, ROLES, SCOPES, scopes_allowed_for_roles, get_registry
 from . import closure as workspace_closure
 from . import auth_methods_policy
-from . import ip_allowlist, pat_store, sessions as session_store, support_access
+from . import ip_allowlist, pat_auth_lockout, pat_store, sessions as session_store, support_access
+
+
+def _resolved_client_ip(request: Request, tenant_id: str = "") -> str:
+    """Best-effort client IP using the trusted-proxy aware resolver.
+
+    Falls back to the socket peer when the resolver cannot run (e.g.
+    in tests with a stub request) so the brute-force counter still
+    accumulates against *some* identifier rather than an empty string.
+    """
+    try:
+        headers = list(request.headers.items())
+        peer = request.client.host if request.client else ""
+        return (
+            ip_allowlist.client_ip_from_request(headers, peer, tenant_id=tenant_id or None)
+            or peer
+            or ""
+        )
+    except Exception:
+        try:
+            return request.client.host if request.client else ""
+        except Exception:
+            return ""
 
 
 def _enforce_auth_method(tenant_id: str, method: str) -> None:
@@ -57,6 +79,27 @@ async def require_api_key(
     if key is None:
         # Fall back to user-minted personal access tokens.
         if pat_store.looks_like_pat(x_api_key):
+            # Brute-force defense (SOC2 CC6.7 / ISO 27001 A.9.4.2):
+            # check the per-IP PAT lockout BEFORE the secret hash
+            # lookup so an attacker who has tripped the threshold
+            # cannot keep probing the token space at full speed.
+            # A locked IP gets HTTP 429 with Retry-After until the
+            # cooldown expires or an admin clears it from
+            # /admin/pat-auth-lockout.
+            _bf_ip = _resolved_client_ip(request)
+            _bf_state = pat_auth_lockout.lock_state(_bf_ip)
+            if _bf_state.locked:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=(
+                        "pat_auth_locked: too many failed personal "
+                        "access token auth attempts from this IP; "
+                        "retry after the cooldown or ask a workspace "
+                        "admin to clear the lock from "
+                        "/admin/pat-auth-lockout"
+                    ),
+                    headers={"Retry-After": str(_bf_state.retry_after)},
+                )
             pat = pat_store.lookup_by_secret(x_api_key)
             if pat is not None:
                 # Per-workspace force-rotation policy: reject any PAT
@@ -154,13 +197,46 @@ async def require_api_key(
                 _record_and_enforce_session(request, actor=f"pat:{pat.name}", actor_kind="pat")
                 _enforce_workspace_closure(request)
                 _enforce_support_actor(request)
+                # Successful PAT auth clears the per-IP failure
+                # counter so a legitimate user who fat-fingered a
+                # secret before pasting the right one is not
+                # penalised by future requests.
+                try:
+                    pat_auth_lockout.clear(
+                        _bf_ip,
+                        tenant_id=pat.tenant_id or ANON_TENANT_ID,
+                        reason="success",
+                    )
+                except Exception:
+                    pass
                 return x_api_key
+            # Invalid pat_-prefixed secret: count this attempt against
+            # the source IP. The tenant is unknown (the secret did
+            # not match any stored hash) so we record an empty
+            # tenant_id; admins still see the lock in the global view.
+            try:
+                pat_auth_lockout.record_failure(_bf_ip, tenant_id="")
+            except Exception:
+                pass
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid api key")
     _enforce_auth_method(key.tenant_id or ANON_TENANT_ID, "env_key")
     request.state.api_key_name = key.name
     request.state.api_key_roles = key.roles
     request.state.api_key_scopes = scopes_allowed_for_roles(key.roles)
     request.state.tenant_id = key.tenant_id or ANON_TENANT_ID
+    # Tenant affinity: tag the source IP with this workspace so the
+    # PAT brute-force admin overview can later attribute an unknown-
+    # tenant lock to the workspaces that have ever used the IP. This
+    # keeps cross-tenant isolation honest: a workspace admin only sees
+    # IPs that have at least once authenticated against their own
+    # workspace, not every locked IP across the deployment.
+    try:
+        pat_auth_lockout.tag_tenant(
+            _resolved_client_ip(request, tenant_id=key.tenant_id or ""),
+            tenant_id=key.tenant_id or ANON_TENANT_ID,
+        )
+    except Exception:
+        pass
     _enforce_ip_allowlist(request)
     _record_and_enforce_session(request, actor=key.name, actor_kind="key")
     _enforce_workspace_closure(request)
@@ -251,9 +327,15 @@ def require_admin_with_mfa():
         request: Request,
         x_api_key: str = Header(default=""),
         x_mfa_code: str = Header(default=""),
+        x_mfa_session: str = Header(default=""),
     ) -> str:
         await role_dep(request, x_api_key=x_api_key)
-        return await mfa_dep(request, x_api_key=x_api_key, x_mfa_code=x_mfa_code)
+        return await mfa_dep(
+            request,
+            x_api_key=x_api_key,
+            x_mfa_code=x_mfa_code,
+            x_mfa_session=x_mfa_session,
+        )
 
     return _dep
 

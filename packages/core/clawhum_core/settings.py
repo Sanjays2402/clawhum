@@ -86,6 +86,34 @@ class Settings(BaseSettings):
             "the /admin/mfa/lockouts API."
         ),
     )
+    pat_auth_lockout_path: Path = Path("./data/pat_auth_lockout.jsonl")
+    pat_auth_lockout_threshold: int = Field(
+        default=10,
+        description=(
+            "Number of failed PAT (personal access token) auth attempts "
+            "from a single client IP within "
+            "pat_auth_lockout_window_seconds that trip the lock. "
+            "Subsequent requests presenting any pat_-prefixed credential "
+            "from that IP are rejected with HTTP 429 until the cooldown "
+            "expires or an admin force-unlocks the IP. 0 disables "
+            "lockout (not recommended; auditors will flag it)."
+        ),
+    )
+    pat_auth_lockout_window_seconds: int = Field(
+        default=300,
+        description=(
+            "Sliding window (seconds) over which failed PAT auth "
+            "attempts are counted toward the lockout threshold."
+        ),
+    )
+    pat_auth_lockout_cooldown_seconds: int = Field(
+        default=900,
+        description=(
+            "How long (seconds) a tripped PAT auth lock stays in effect "
+            "before it auto-clears. An admin can clear it sooner via "
+            "the /admin/pat-auth-lockout API."
+        ),
+    )
     quota_path: Path = Path("./data/quotas.jsonl")
     budget_path: Path = Path("./data/budgets.jsonl")
     residency_path: Path = Path("./data/residency.jsonl")

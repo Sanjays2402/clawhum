@@ -37,6 +37,7 @@ from .routes import trusted_proxies as trusted_proxies_routes
 from .routes import invite_domains as invite_domains_routes
 from .routes import scope_policy as scope_policy_routes
 from .routes import auth_methods_policy as auth_methods_policy_routes
+from .routes import pat_auth_lockout as pat_auth_lockout_routes
 from .routes import export_signing as export_signing_routes
 from .routes import pat_concurrency as pat_concurrency_routes
 from .routes import webhook_destination_cap as webhook_destination_cap_routes
@@ -214,6 +215,7 @@ def create_app() -> FastAPI:
     app.include_router(invite_domains_routes.router)
     app.include_router(scope_policy_routes.router)
     app.include_router(auth_methods_policy_routes.router)
+    app.include_router(pat_auth_lockout_routes.router)
     app.include_router(pat_concurrency_routes.router)
     app.include_router(webhook_destination_cap_routes.router)
     app.include_router(webhook_policy_routes.router)

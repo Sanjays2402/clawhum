@@ -2,6 +2,27 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-IP PAT auth brute-force lockout
+
+Personal access token auth had no rate limit on the front door: a script could submit thousands of random `pat_xxxxxxxx` values per second and get back `401 invalid api key` with no record visible to the workspace admin. Enterprise security reviews (SOC2 CC6.7, ISO 27001 A.9.4.2) flag the missing control on principle and a misconfigured proxy could amplify the risk. ClawHum now counts failed `pat_`-prefixed auth attempts per source IP inside a sliding window. When the threshold trips, subsequent PAT auth attempts from that IP are short-circuited with `HTTP 429 Too Many Requests` plus a `Retry-After` header until cooldown expires or an admin force-unlocks the IP from [`/admin/pat-auth-lockout`](http://127.0.0.1:7452/admin/pat-auth-lockout). A successful auth from the same IP clears the counter so a legitimate user who pasted the wrong secret once is not punished. The trusted-proxy aware IP resolver is reused so an `X-Forwarded-For` spoofer cannot trivially launder attempts across IPs. Locks are tenant-scoped in the admin UI: an admin only sees locks attributed to their workspace plus anonymous probes that have no attribution yet; cross-tenant locks are hidden and DELETE on a foreign IP returns 404. Force-unlocks are admin-only with MFA step-up and every change is written to the tamper-evident audit chain as `pat_auth_lockout.unlock` with before/after state. Defaults: 10 failures within 300s trip the lock, cooldown is 900s; tune via `CLAWHUM_PAT_AUTH_LOCKOUT_THRESHOLD`, `_WINDOW_SECONDS`, `_COOLDOWN_SECONDS`. Pinned by `tests/integration/test_pat_auth_lockout.py` which proves the lock trips after the threshold and rejects an otherwise-valid PAT, that an admin unlock restores access and emits an audit event, and that attributed locks are isolated across tenants.
+
+### Try it (PAT auth lockout)
+
+UI: open [`/admin/pat-auth-lockout`](http://127.0.0.1:7452/admin/pat-auth-lockout) to see active locks and clear an IP inline. API:
+
+```bash
+# read the policy and current locks for your workspace
+curl -sS http://127.0.0.1:7451/admin/pat-auth-lockout \
+  -H "X-API-Key: $CLAWHUM_API_KEY"
+
+# force-unlock a single IP (admin + MFA step-up required)
+curl -sS -X DELETE http://127.0.0.1:7451/admin/pat-auth-lockout/198.51.100.42 \
+  -H "X-API-Key: $CLAWHUM_API_KEY" \
+  -H "X-MFA-Code: 123456" \
+  -H "Content-Type: application/json" \
+  -d '{"reason": "ticket SUP-1234"}'
+```
+
 ## Per-workspace webhook destination cap
 
 The webhook stack already enforces SSRF safety, HTTPS-only transport, HMAC signing, retries with backoff, a per-hook delivery rate cap, and a consecutive-failure circuit breaker. What it did not bound was *how many* destinations a single workspace was allowed to register. The legacy `POST /webhooks` route hard-coded a soft cap of 20 with no admin visibility; enterprise procurement reviews routinely ask who controls that ceiling. Each workspace can now pin its own integer cap, exposed at `/webhook-destination-cap` and managed from [`/settings/webhook-destination-cap`](http://127.0.0.1:7452/settings/webhook-destination-cap). With no explicit policy the legacy default of 20 is enforced so existing tenants behave exactly as before; setting `max_active=0` opts out of the per-workspace cap (the global hard ceiling of 500 still applies so the JSONL store and delivery worker stay bounded). When `POST /webhooks` would push the live count over the cap it returns HTTP 429 with a structured `{error: "webhook_destination_cap_exceeded", live, max_active}` body and `Retry-After: 0` so SDKs surface the real reason instead of treating the response as a generic rate limit. Deleting a destination frees a slot immediately. The cap is strictly per-tenant: tenant A capping at 1 destination has zero effect on tenant B's creates or policy reads. Mutating the cap requires the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `webhook_destination_cap.update` with before/after state. Pinned by `tests/integration/test_webhook_destination_cap.py` which proves the default still applies, that the (N+1)-th create is rejected with the structured 429, that deleting a hook frees a slot, that cross-tenant isolation holds, and that opting out raises the ceiling to the global maximum.
