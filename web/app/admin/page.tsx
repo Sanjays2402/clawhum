@@ -742,6 +742,21 @@ export default function AdminConsolePage() {
         </Card>
 
         <Card
+          title="api key minimums"
+          icon={<Key size={14} weight="duotone" />}
+          href="/admin/pat-min-requirements"
+          hrefLabel="configure"
+        >
+          <p className="text-xs text-[var(--color-dim)]">
+            Pin the floor security attributes any new personal access
+            token must carry in this workspace: identifiable owner,
+            bounded expiry, IP CIDR scope. Existing tokens are not
+            touched. Non compliant mints are rejected with a structured
+            400. Admin only, MFA gated, audit logged.
+          </p>
+        </Card>
+
+        <Card
           title="recent activity"
           icon={<ListMagnifyingGlass size={14} weight="duotone" />}
           href="/settings/audit"

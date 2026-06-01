@@ -2,6 +2,28 @@
 
 Query-by-humming. Hum a melody or upload a clip, get ranked matches from a local library or Spotify catalog.
 
+## Per-workspace API key minimum requirements
+
+SOC2 CC6.1 and ISO 27001 A.9.2.1 ask whether logical access credentials carry an identifiable owner, a bounded lifetime, and network scope. The PAT surface already accepts `owner_email`, `expires_in_days`, and `ip_cidrs`, but until now nothing required them, so a workspace admin could quietly mint a long lived, unscoped, anonymous token and only an after the fact inventory review would catch it. Workspace owners can now pin a per-tenant floor at [`/pat-min-requirements`](http://127.0.0.1:7451/pat-min-requirements), managed from [`/admin/pat-min-requirements`](http://127.0.0.1:7452/admin/pat-min-requirements). The policy toggles three independent requirements: `require_owner_email` (mints without a non blank owner email are rejected), `require_expiry` paired with `max_expiry_days` (mints without a positive expiry, or with an expiry past the cap, are rejected; 0 means no cap), and `require_ip_cidrs` (mints with no IP CIDR scope are rejected). With no policy row the workspace behaves exactly as before so existing customers are not broken. Enforcement happens inside `pat_store.create` *before* any secret is hashed or row is written, so a violating mint at `POST /keys` returns `400 pat_min_requirements_violation` with a machine parseable `violations[]` list naming each broken rule and the route never reaches the JSONL writer. Existing tokens minted before the policy was set are untouched so a rollout does not pull the rug out of production. The policy is strictly per tenant: workspace A's floor is invisible to workspace B and does not block workspace B's mints. Mutations require the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `pat_min_requirements.update` with before / after state. Pinned by `tests/integration/test_pat_min_requirements.py` which proves the opt-in default, that each requirement rejects the matching missing attribute with the correct violation code, that `max_expiry_days` caps over-long tokens with `expiry_exceeds_max:<n>`, that compliant mints succeed, and that tenant A's policy does not bleed into tenant B.
+
+### Try it (PAT minimum requirements)
+
+```bash
+uv run python -m clawhum_api  # http://127.0.0.1:7451
+pnpm --filter clawhum-web dev # http://127.0.0.1:7452/admin/pat-min-requirements
+
+curl -sS -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  http://127.0.0.1:7451/pat-min-requirements | jq
+
+curl -sS -X PUT http://127.0.0.1:7451/pat-min-requirements \
+  -H "X-API-Key: $CLAWHUM_ADMIN_KEY" \
+  -H "X-MFA-Code: $TOTP" \
+  -H "Content-Type: application/json" \
+  -d '{"require_owner_email": true, "require_expiry": true, "max_expiry_days": 90, "require_ip_cidrs": true}' | jq
+```
+
+A non compliant mint after that policy is in place comes back as `400 {"error":"pat_min_requirements_violation","violations":["owner_email_required","expiry_required","ip_cidrs_required"]}` so the dashboard can render exactly which fields the operator still has to fill in.
+
 ## Per-workspace webhook auto-disable threshold
 
 The webhook stack already trips a circuit breaker that auto disables a destination after a configurable number of consecutive failed deliveries, so a broken receiver stops burning retry budget. Until now that threshold was a single global setting (`webhook_auto_disable_threshold`), which is fine for a small deployment but unworkable for a multi-tenant SaaS: a noisy sandbox tenant wants a tight number so a broken receiver pauses fast, while a production tenant with bursty downstream outages wants more headroom before the integration falls silent. Each workspace can now pin its own integer threshold at [`/webhook-auto-disable-policy`](http://127.0.0.1:7451/webhook-auto-disable-policy), managed from [`/admin/webhook-auto-disable-policy`](http://127.0.0.1:7452/admin/webhook-auto-disable-policy). With no explicit policy row the deployment-wide default applies so existing tenants behave exactly as before; setting `threshold=0` opts out of the breaker for that workspace (manual pause only) and the hard ceiling is 10000 so the streak scan stays bounded. The per-workspace value is consulted by `_maybe_auto_disable` on every failed delivery, so the override takes effect immediately with no restart. The policy is strictly per-tenant: tenant A pinning a threshold of 1 has zero effect on tenant B's breaker. Mutations require the admin role plus a fresh MFA step-up and every change is written to the tamper-evident audit chain as `webhook_auto_disable_policy.update` with before/after state; the breaker itself continues to write `webhook.auto_disabled` events when it fires. Pinned by `tests/integration/test_webhook_auto_disable_policy.py` which proves the global default applies without a policy row, that a tighter per-workspace threshold trips the breaker before the global default would, that `threshold=0` leaves the hook active even after a long failure streak, that one tenant's pin is invisible to another tenant, and that the update writes a structured audit event.

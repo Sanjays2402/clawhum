@@ -245,6 +245,7 @@ class Settings(BaseSettings):
     match_duration_policy_path: Path = Path("./data/match_duration_policy.jsonl")
     match_topk_policy_path: Path = Path("./data/match_topk_policy.jsonl")
     pat_concurrency_path: Path = Path("./data/pat_concurrency.jsonl")
+    pat_min_requirements_path: Path = Path("./data/pat_min_requirements.jsonl")
     pat_secret_prefix_path: Path = Path("./data/pat_secret_prefix.jsonl")
     pat_expiry_warning_path: Path = Path("./data/pat_expiry_warning.jsonl")
     webhook_secret_rotation_path: Path = Path("./data/webhook_secret_rotation.jsonl")

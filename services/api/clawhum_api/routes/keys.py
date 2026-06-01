@@ -276,6 +276,7 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
         # workspace policy forbids without grepping the message.
         from .. import scope_policy as _scope_policy
         from .. import pat_concurrency as _pat_concurrency
+        from .. import pat_min_requirements as _pat_min_requirements
         if isinstance(exc, _scope_policy.ScopeNotAllowedError):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -295,6 +296,15 @@ async def create_key(body: CreateKeyBody, request: Request) -> dict[str, Any]:
                     "max_active": exc.max_active,
                 },
                 headers={"Retry-After": "0"},
+            )
+        if isinstance(exc, _pat_min_requirements.PatMinRequirementsViolation):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "pat_min_requirements_violation",
+                    "message": str(exc),
+                    "violations": list(exc.violations),
+                },
             )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

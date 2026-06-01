@@ -48,6 +48,7 @@ from .routes import auth_methods_policy as auth_methods_policy_routes
 from .routes import pat_auth_lockout as pat_auth_lockout_routes
 from .routes import export_signing as export_signing_routes
 from .routes import pat_concurrency as pat_concurrency_routes
+from .routes import pat_min_requirements as pat_min_requirements_routes
 from .routes import pat_secret_prefix as pat_secret_prefix_routes
 from .routes import pat_expiry_warning as pat_expiry_warning_routes
 from .routes import webhook_secret_rotation as webhook_secret_rotation_routes
@@ -118,6 +119,8 @@ async def _lifespan(app: FastAPI):
     _auth_methods_policy.reset_cache()
     from . import pat_concurrency as _pat_concurrency
     _pat_concurrency.reset_cache()
+    from . import pat_min_requirements as _pat_min_requirements
+    _pat_min_requirements.reset_cache()
     from . import pat_secret_prefix as _pat_secret_prefix
     _pat_secret_prefix.reset_cache()
     from . import pat_expiry_warning as _pat_expiry_warning
@@ -267,6 +270,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_methods_policy_routes.router)
     app.include_router(pat_auth_lockout_routes.router)
     app.include_router(pat_concurrency_routes.router)
+    app.include_router(pat_min_requirements_routes.router)
     app.include_router(pat_secret_prefix_routes.router)
     app.include_router(pat_expiry_warning_routes.router)
     app.include_router(webhook_secret_rotation_routes.router)
@@ -326,6 +330,7 @@ def create_app() -> FastAPI:
     app.include_router(scope_policy_routes.router, prefix="/v1")
     app.include_router(auth_methods_policy_routes.router, prefix="/v1")
     app.include_router(pat_concurrency_routes.router, prefix="/v1")
+    app.include_router(pat_min_requirements_routes.router, prefix="/v1")
     app.include_router(pat_secret_prefix_routes.router, prefix="/v1")
     app.include_router(pat_expiry_warning_routes.router, prefix="/v1")
     app.include_router(webhook_secret_rotation_routes.router, prefix="/v1")

@@ -385,6 +385,21 @@ def create(
             safe_scopes = scopes_allowed_for_roles(safe_roles) & _scope_policy.allowed_scopes(tenant_id)
     except ImportError:
         pass
+    # Workspace PAT minimum-requirements policy: when an admin has
+    # pinned floor security attributes for new tokens (owner email,
+    # bounded expiry, IP scope), reject any mint that violates them
+    # *before* we hash a secret or write a row, so the operator sees a
+    # structured 400 instead of a silently weaker token.
+    try:
+        from . import pat_min_requirements as _pat_min_requirements
+        _pat_min_requirements.assert_compliant(
+            tenant_id=tenant_id,
+            owner_email=owner_email,
+            expires_in_days=expires_in_days,
+            ip_cidrs=ip_cidrs,
+        )
+    except ImportError:
+        pass
     safe_cidrs = normalise_cidrs(ip_cidrs)
     safe_prefixes = normalise_path_prefixes(path_prefixes)
     safe_methods = normalise_http_methods(http_methods)
