@@ -261,7 +261,18 @@ def stats():
 
 
 @app.command()
-def feedback(query_id: str, track_id: str, score: float, vote: int):
+def feedback(
+    query_id: str,
+    track_id: str,
+    score: float,
+    vote: int,
+    require_known_track: bool = typer.Option(
+        False,
+        "--require-known-track",
+        "-K",
+        help="Refuse to record the vote (exit 2) if track_id is not present in the indexed library. Guards against fat-fingered track ids that would otherwise pile up as orphan feedback only visible via `feedback-list --orphaned`.",
+    ),
+):
     """Record a thumbs-up (1) / thumbs-down (-1) for a match."""
     if vote not in (1, -1):
         raise typer.BadParameter("vote must be 1 (thumbs up) or -1 (thumbs down)")
@@ -273,9 +284,22 @@ def feedback(query_id: str, track_id: str, score: float, vote: int):
     if math.isnan(score) or math.isinf(score):
         raise typer.BadParameter("score must be a finite number")
     s = get_settings()
+    meta: dict[str, tuple[str, str]] | None = None
+    if require_known_track:
+        meta = _load_track_metadata()
+        if track_id not in meta:
+            console.print(
+                f"[red]unknown track_id {track_id!r}; not in indexed library (use `clawhum stats` to confirm the index is loaded, or drop --require-known-track to force-record)[/red]"
+            )
+            raise typer.Exit(code=2)
     from clawhum_library.feedback import record_feedback
     record_feedback(s.feedback_path, query_id, track_id, score, vote)
-    console.print("[green]ok[/green]")
+    if meta is not None and track_id in meta:
+        title, artist = meta[track_id]
+        label = " - ".join(p for p in (title, artist) if p) or track_id
+        console.print(f"[green]ok[/green] [dim]({label})[/dim]")
+    else:
+        console.print("[green]ok[/green]")
 
 
 @app.command("feedback-delete")
