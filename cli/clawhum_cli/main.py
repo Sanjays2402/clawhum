@@ -50,6 +50,22 @@ def _filter_excluded_tracks(results, exclude: list[str] | None):
     return [m for m in results if m.track.id not in blocked]
 
 
+def _filter_only_tracks(results, only: list[str] | None):
+    """Keep only matches whose track_id is in ``only``.
+
+    Comparison is case-sensitive and whitespace-trimmed so users can pass
+    ``--only-track " abc "`` without surprises. ``None`` or an empty list (or
+    a list of whitespace-only entries) is a no-op so callers don't need to
+    special-case it; this preserves the matcher's full top-K.
+    """
+    if not only:
+        return list(results)
+    allowed = {t.strip() for t in only if t and t.strip()}
+    if not allowed:
+        return list(results)
+    return [m for m in results if m.track.id in allowed]
+
+
 def _dedupe_by_track(results):
     """Keep only the best-scoring match per track_id, preserving input order.
 
@@ -143,6 +159,12 @@ def match(
         "-x",
         help="Drop matches with this track_id. Repeatable. Useful to peek past a known-wrong top hit (e.g. a duplicate edition) without re-humming.",
     ),
+    only_track: list[str] = typer.Option(
+        None,
+        "--only-track",
+        "-O",
+        help="Restrict matches to this track_id. Repeatable. Useful to ask 'does this hum match one of these specific tracks?' (e.g. comparing a clip against a shortlist of suspected songs) without scanning the whole top-K. Mutually exclusive with --exclude-track.",
+    ),
     unique_tracks: bool = typer.Option(
         False,
         "--unique-tracks",
@@ -169,6 +191,11 @@ def match(
 
     chosen = _resolve_output_format(fmt, json_out, output)
 
+    only_ids = {t.strip() for t in (only_track or []) if t and t.strip()}
+    excl_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
+    if only_ids and excl_ids:
+        raise typer.BadParameter("--only-track and --exclude-track are mutually exclusive")
+
     state = AppState.boot(prefer_clap=not no_clap)
     if not state.tracks:
         # typer.Exit takes a code, not a message. Print first, then exit non-zero,
@@ -179,20 +206,27 @@ def match(
     matcher = Matcher(state.embedder, state.index, state.tracks)
     # Pull a few extra candidates when excluding so the user still gets ~top_k
     # rows after filtering rather than a short list.
-    n_excl = len({t.strip() for t in (exclude_track or []) if t and t.strip()})
+    n_excl = len(excl_ids)
     # When deduping by track or excluding ids, pull extra candidates so the
     # post-filter list still has ~top_k rows. For --unique-tracks we don't know
     # the duplication factor up front, so fetch a generous multiple capped at a
-    # sane ceiling; the matcher caps to the index size internally.
+    # sane ceiling; the matcher caps to the index size internally. For
+    # --only-track the hits we want may sit far down the ranking, so we ask
+    # the matcher for the whole index and let the filter slice the top_k off
+    # the end; the matcher caps fetch_k to the index size internally.
     fetch_k = top_k + n_excl if n_excl else top_k
     if unique_tracks:
         fetch_k = max(fetch_k, top_k * 8)
+    if only_ids:
+        fetch_k = max(fetch_k, state.index.size())
     results = matcher.match(x, sr, top_k=fetch_k, threshold=threshold)
+    if only_ids:
+        results = _filter_only_tracks(results, only_track)
     if n_excl:
         results = _filter_excluded_tracks(results, exclude_track)
     if unique_tracks:
         results = _dedupe_by_track(results)
-    if n_excl or unique_tracks:
+    if n_excl or unique_tracks or only_ids:
         results = results[:top_k]
     query_id = str(uuid.uuid4())
 
@@ -226,6 +260,8 @@ def match(
             hints.append(f"lowering --threshold (currently {threshold})")
         if n_excl:
             hints.append("removing --exclude-track filters")
+        if only_ids:
+            hints.append("widening or dropping --only-track filters")
         suffix = f" (try {', '.join(hints)})" if hints else ""
         console.print(f"[yellow]no matches{suffix}[/yellow]")
         if not no_hint:
