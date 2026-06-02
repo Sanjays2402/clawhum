@@ -1,5 +1,8 @@
 from __future__ import annotations
+import csv
+import io
 import json
+import sys
 from pathlib import Path
 import typer
 from rich.console import Console
@@ -31,30 +34,82 @@ def index(
     console.print_json(json.dumps(res))
 
 
+def _results_as_dicts(results):
+    return [
+        {
+            "rank": i,
+            "track_id": m.track.id,
+            "title": m.track.title,
+            "artist": m.track.artist,
+            "score": m.score,
+            "segment": m.segment_index,
+        }
+        for i, m in enumerate(results, 1)
+    ]
+
+
+def _results_as_csv(results) -> str:
+    buf = io.StringIO()
+    writer = csv.DictWriter(
+        buf,
+        fieldnames=["rank", "track_id", "title", "artist", "score", "segment"],
+        lineterminator="\n",
+    )
+    writer.writeheader()
+    for row in _results_as_dicts(results):
+        writer.writerow({k: ("" if v is None else v) for k, v in row.items()})
+    return buf.getvalue()
+
+
 @app.command()
 def match(
     query: Path = typer.Argument(..., exists=True, dir_okay=False, file_okay=True),
     top_k: int = typer.Option(10, "--top-k", "-k"),
     threshold: float = typer.Option(0.0, "--threshold", "-t"),
     no_clap: bool = typer.Option(False, "--no-clap"),
-    json_out: bool = typer.Option(False, "--json"),
+    json_out: bool = typer.Option(False, "--json", help="Emit JSON (shortcut for --format json)."),
+    fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Write results to file instead of stdout."),
 ):
     """Match an audio file (hum/clip) against the index."""
     from clawhum_audio.io import load_audio
     from clawhum_match.matcher import Matcher
     from services.api.clawhum_api.state import AppState  # type: ignore
+
+    chosen = fmt.lower()
+    if json_out:
+        chosen = "json"
+    if chosen not in {"table", "json", "csv"}:
+        raise typer.BadParameter("--format must be one of: table, json, csv")
+    if output is not None and chosen == "table":
+        # writing rich tables to a file is rarely what users want; default to csv
+        chosen = "csv"
+
     state = AppState.boot(prefer_clap=not no_clap)
     if not state.tracks:
         raise typer.Exit("index empty; run `clawhum index <dir>` first")
     x, sr = load_audio(query, target_sr=state.embedder.sr)
     matcher = Matcher(state.embedder, state.index, state.tracks)
     results = matcher.match(x, sr, top_k=top_k, threshold=threshold)
-    if json_out:
-        console.print_json(json.dumps([
-            {"track_id": m.track.id, "title": m.track.title, "artist": m.track.artist,
-             "score": m.score, "segment": m.segment_index} for m in results
-        ]))
+
+    if chosen == "json":
+        payload = json.dumps(_results_as_dicts(results))
+        if output is not None:
+            output.write_text(payload + "\n", encoding="utf-8")
+            console.print(f"[green]wrote {len(results)} match(es) to {output}[/green]")
+        else:
+            console.print_json(payload)
         return
+    if chosen == "csv":
+        payload = _results_as_csv(results)
+        if output is not None:
+            output.write_text(payload, encoding="utf-8")
+            console.print(f"[green]wrote {len(results)} match(es) to {output}[/green]")
+        else:
+            sys.stdout.write(payload)
+            sys.stdout.flush()
+        return
+
     table = Table(title=f"Top {len(results)} matches")
     table.add_column("#", justify="right")
     table.add_column("Score", justify="right")
