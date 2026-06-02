@@ -219,24 +219,29 @@ def feedback_delete(
     until: str | None = typer.Option(None, "--until", help="Only delete entries strictly before this time (unix seconds or ISO-8601, naive = UTC). Pair with no other filter to purge old feedback (e.g. --until 2024-01-01 to age out last year)."),
     min_score: float | None = typer.Option(None, "--min-score", help="Only delete entries whose recorded score is at least this. Entries without a numeric score are never matched."),
     max_score: float | None = typer.Option(None, "--max-score", help="Only delete entries whose recorded score is at most this. Entries without a numeric score are never matched. Combine with --vote -1 --max-score 0.2 to purge down-votes on weak matches."),
+    title: str | None = typer.Option(None, "--title", help="Only delete entries whose track title contains this substring (case-insensitive). Resolved against the indexed library; tracks missing from the library are skipped. Pair with --dry-run first to preview which votes would be removed."),
+    artist: str | None = typer.Option(None, "--artist", help="Only delete entries whose track artist contains this substring (case-insensitive). Resolved against the indexed library; tracks missing from the library are skipped."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Report how many rows would be deleted without writing."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
 ):
     """Delete recorded feedback rows (undo a misclicked vote, or age out old data).
 
     At least one of --query-id, --track-id, --vote, --since, --until,
-    --min-score, or --max-score must be supplied so a bare invocation can
-    never wipe the whole feedback log. Rows without a numeric ts are never
-    matched by --since / --until and rows without a numeric score are never
-    matched by --min-score / --max-score so undated or unscored entries are
-    not silently purged.
+    --min-score, --max-score, --title, or --artist must be supplied so a bare
+    invocation can never wipe the whole feedback log. Rows without a numeric
+    ts are never matched by --since / --until and rows without a numeric
+    score are never matched by --min-score / --max-score so undated or
+    unscored entries are not silently purged. --title / --artist are resolved
+    against the indexed library, so feedback whose track has been removed
+    from the index is never deleted by a name-based purge.
     """
     if (
         query_id is None and track_id is None and vote is None
         and since is None and until is None
         and min_score is None and max_score is None
+        and title is None and artist is None
     ):
-        raise typer.BadParameter("supply at least one of --query-id, --track-id, --vote, --since, --until, --min-score, --max-score")
+        raise typer.BadParameter("supply at least one of --query-id, --track-id, --vote, --since, --until, --min-score, --max-score, --title, --artist")
     if vote is not None and vote not in (1, -1):
         raise typer.BadParameter("--vote must be 1 or -1")
     if min_score is not None and max_score is not None and min_score > max_score:
@@ -249,9 +254,29 @@ def feedback_delete(
     s = get_settings()
     from clawhum_library.feedback import read_feedback, delete_feedback as _delete_feedback
 
+    # Resolve --title / --artist to a concrete set of track_ids by joining
+    # against the indexed library. An empty resolved set means "no track
+    # matched the name filter", which we treat as "nothing to delete" rather
+    # than silently degrading to no-filter (which would wipe everything).
+    resolved_track_ids: set[str] | None = None
+    if title is not None or artist is not None:
+        meta = _load_track_metadata()
+        t_needle = title.lower() if title is not None else None
+        a_needle = artist.lower() if artist is not None else None
+        resolved_track_ids = set()
+        for tid, (t_val, a_val) in meta.items():
+            if t_needle is not None and t_needle not in (t_val or "").lower():
+                continue
+            if a_needle is not None and a_needle not in (a_val or "").lower():
+                continue
+            resolved_track_ids.add(tid)
+        if not resolved_track_ids:
+            console.print("[dim]no matching feedback entries[/dim]")
+            return
+
     rows = read_feedback(s.feedback_path)
     matches = _filter_feedback(
-        rows, query_id=query_id, track_id=track_id, vote=vote,
+        rows, query_id=query_id, track_id=track_id, track_ids=resolved_track_ids, vote=vote,
         since=since_ts, until=until_ts,
         min_score=min_score, max_score=max_score,
     )
@@ -267,7 +292,7 @@ def feedback_delete(
             console.print("[dim]aborted[/dim]")
             raise typer.Exit(code=1)
     removed = _delete_feedback(
-        s.feedback_path, query_id=query_id, track_id=track_id, vote=vote,
+        s.feedback_path, query_id=query_id, track_id=track_id, track_ids=resolved_track_ids, vote=vote,
         since=since_ts, until=until_ts,
         min_score=min_score, max_score=max_score,
     )
@@ -317,6 +342,7 @@ def _filter_feedback(
     rows: list[dict],
     query_id: str | None = None,
     track_id: str | None = None,
+    track_ids: set[str] | None = None,
     vote: int | None = None,
     since: float | None = None,
     until: float | None = None,
@@ -328,6 +354,8 @@ def _filter_feedback(
         out = [r for r in out if r.get("query_id") == query_id]
     if track_id is not None:
         out = [r for r in out if r.get("track_id") == track_id]
+    if track_ids is not None:
+        out = [r for r in out if str(r.get("track_id", "")) in track_ids]
     if vote is not None:
         out = [r for r in out if r.get("vote") == vote]
     if since is not None:

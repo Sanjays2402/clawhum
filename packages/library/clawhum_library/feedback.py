@@ -4,6 +4,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from typing import Iterable
 
 
 def record_feedback(
@@ -47,6 +48,7 @@ def delete_feedback(
     *,
     query_id: str | None = None,
     track_id: str | None = None,
+    track_ids: "Iterable[str] | None" = None,
     vote: int | None = None,
     since: float | None = None,
     until: float | None = None,
@@ -55,20 +57,27 @@ def delete_feedback(
 ) -> int:
     """Delete feedback rows matching the given filters.
 
-    At least one of query_id/track_id/vote/since/until/min_score/max_score
-    must be provided; a no-filter call raises ValueError so a misuse never
-    wipes the whole log. `since` keeps rows whose ts is strictly less than the
-    bound; `until` keeps rows whose ts is greater than or equal to the bound.
-    Rows without a numeric ts are always kept when a time bound is in play so
-    undated entries are never silently purged. Similarly, rows without a
-    numeric score are always kept when a score bound is in play so entries
-    with a missing/non-numeric score are never silently purged. Returns the
-    number of rows removed. The rewrite is atomic via a tempfile + os.replace
-    in the same directory, so a crash mid-write cannot leave a truncated log.
+    At least one of query_id/track_id/track_ids/vote/since/until/min_score/
+    max_score must be provided; a no-filter call raises ValueError so a misuse
+    never wipes the whole log. `since` keeps rows whose ts is strictly less
+    than the bound; `until` keeps rows whose ts is greater than or equal to
+    the bound. Rows without a numeric ts are always kept when a time bound is
+    in play so undated entries are never silently purged. Similarly, rows
+    without a numeric score are always kept when a score bound is in play so
+    entries with a missing/non-numeric score are never silently purged.
+    `track_ids` is an allowlist (set of ids to delete) and ANDs with
+    `track_id`; an empty allowlist matches no rows so a title/artist resolver
+    that returned no hits never wipes the log. Returns the number of rows
+    removed. The rewrite is atomic via a tempfile + os.replace in the same
+    directory, so a crash mid-write cannot leave a truncated log.
     """
+    track_id_set: set[str] | None = None
+    if track_ids is not None:
+        track_id_set = {str(t) for t in track_ids}
     if (
         query_id is None
         and track_id is None
+        and track_id_set is None
         and vote is None
         and since is None
         and until is None
@@ -76,6 +85,11 @@ def delete_feedback(
         and max_score is None
     ):
         raise ValueError("delete_feedback requires at least one filter")
+    if track_id_set is not None and not track_id_set:
+        # Empty allowlist matches no rows; nothing to do. Returning early also
+        # protects against the upstream resolver (e.g. title/artist with zero
+        # matches) accidentally being treated as "no filter".
+        return 0
     p = Path(path)
     if not p.exists():
         return 0
@@ -91,6 +105,9 @@ def delete_feedback(
                 kept.append(row)
                 continue
             if track_id is not None and row.get("track_id") != track_id:
+                kept.append(row)
+                continue
+            if track_id_set is not None and str(row.get("track_id", "")) not in track_id_set:
                 kept.append(row)
                 continue
             if vote is not None and row.get("vote") != vote:
