@@ -383,3 +383,71 @@ def test_feedback_stats_min_max_net_inverted_rejected(tmp_path, monkeypatch):
     runner = CliRunner()
     r = runner.invoke(app, ["feedback-stats", "--min-net", "2", "--max-net", "0"])
     assert r.exit_code != 0
+
+
+def test_wilson_lower_bound_basic_properties():
+    from cli.clawhum_cli.main import _wilson_lower_bound
+
+    assert _wilson_lower_bound(0, 0) is None
+    # all up votes: bound is below 1 and grows with sample size
+    low = _wilson_lower_bound(1, 1)
+    high = _wilson_lower_bound(100, 100)
+    assert 0.0 < low < high < 1.0
+    # all down votes: bound stays at 0 regardless of sample size
+    assert _wilson_lower_bound(0, 1) == 0.0
+    assert _wilson_lower_bound(0, 100) == 0.0
+    # one down vote in a mostly-up sample still pulls the bound down
+    assert _wilson_lower_bound(9, 10) < _wilson_lower_bound(99, 100)
+    # known reference: 50% up at n=10, z=1.96 ≈ 0.2366
+    val = _wilson_lower_bound(5, 10)
+    assert abs(val - 0.2366) < 1e-3
+
+
+def test_feedback_stats_exposes_wilson_in_json(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--format", "json"])
+    assert r.exit_code == 0, r.output
+    rows = {row["track_id"]: row for row in json.loads(r.stdout)}
+    # t1: 2 up, 0 down -> approval 1.0 but Wilson lower bound must be < 1
+    assert 0.0 < rows["t1"]["wilson"] < 1.0
+    # t3: 0 up, 1 down -> approval 0.0 but Wilson lower bound is 0 (not None)
+    assert rows["t3"]["wilson"] == 0.0
+
+
+def test_feedback_stats_sort_wilson_ranks_more_evidence_higher(tmp_path, monkeypatch):
+    from clawhum_library.feedback import record_feedback
+
+    fb = tmp_path / "feedback.jsonl"
+
+    class _S:
+        feedback_path = str(fb)
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+
+    # "lots" has 20 up / 0 down (very confident 100% approval)
+    for i in range(20):
+        record_feedback(fb, f"q{i}", "lots", 0.9, 1)
+    # "few" has 1 up / 0 down (also 100% approval but only one vote)
+    record_feedback(fb, "qfew", "few", 0.9, 1)
+
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--sort", "wilson", "--format", "json"])
+    assert r.exit_code == 0, r.output
+    ids = [row["track_id"] for row in json.loads(r.stdout)]
+    # Wilson must rank the well-evidenced track first, even though plain
+    # approval ties at 100%.
+    assert ids == ["lots", "few"]
+
+
+def test_feedback_stats_csv_includes_wilson_column(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--format", "csv"])
+    assert r.exit_code == 0, r.output
+    reader = list(csv.DictReader(io.StringIO(r.stdout)))
+    assert "wilson" in reader[0]
+    # Every seeded track has at least one vote, so wilson is populated.
+    for row in reader:
+        assert row["wilson"] != ""
+        float(row["wilson"])  # parseable

@@ -415,6 +415,22 @@ def feedback_list(
     console.print(table)
 
 
+def _wilson_lower_bound(up: int, total: int, z: float = 1.96) -> float | None:
+    """Wilson lower bound of the up/total ratio at the given z (default 95% CI).
+
+    Returns None when there are no votes. Ranking by this value penalises tracks
+    with few votes, which is the standard "best" sort for thumbs up/down data.
+    """
+    if total <= 0:
+        return None
+    phat = up / total
+    z2 = z * z
+    denom = 1.0 + z2 / total
+    centre = phat + z2 / (2 * total)
+    margin = z * ((phat * (1 - phat) + z2 / (4 * total)) / total) ** 0.5
+    return (centre - margin) / denom
+
+
 def _aggregate_feedback(rows: list[dict]) -> list[dict]:
     agg: dict[str, dict] = {}
     for r in rows:
@@ -437,6 +453,7 @@ def _aggregate_feedback(rows: list[dict]) -> list[dict]:
         net = a["up"] - a["down"]
         avg = (a["score_sum"] / a["score_n"]) if a["score_n"] else None
         approval = (a["up"] / total) if total else None
+        wilson = _wilson_lower_bound(a["up"], total)
         out.append({
             "track_id": a["track_id"],
             "up": a["up"],
@@ -445,6 +462,7 @@ def _aggregate_feedback(rows: list[dict]) -> list[dict]:
             "net": net,
             "avg_score": avg,
             "approval": approval,
+            "wilson": wilson,
         })
     return out
 
@@ -480,14 +498,27 @@ def _sort_feedback_stats(rows: list[dict], sort: str) -> list[dict]:
                 r["track_id"],
             )
         )
+    elif key == "wilson":
+        # tracks with no votes (wilson=None) sort last; ties broken by total then track_id.
+        # Wilson lower-bound ranks high-approval tracks with more votes above
+        # high-approval tracks with only a vote or two, which is what you want
+        # when triaging "best matches so far".
+        rows.sort(
+            key=lambda r: (
+                0 if isinstance(r.get("wilson"), (int, float)) else 1,
+                -(r["wilson"] if isinstance(r.get("wilson"), (int, float)) else 0.0),
+                -r["total"],
+                r["track_id"],
+            )
+        )
     else:
-        raise typer.BadParameter("--sort must be one of: net, up, down, total, track_id, avg_score, approval")
+        raise typer.BadParameter("--sort must be one of: net, up, down, total, track_id, avg_score, approval, wilson")
     return rows
 
 
 def _feedback_stats_as_csv(rows: list[dict], enrich: bool = False) -> str:
     buf = io.StringIO()
-    fields = ["track_id", "up", "down", "total", "net", "avg_score", "approval"]
+    fields = ["track_id", "up", "down", "total", "net", "avg_score", "approval", "wilson"]
     if enrich:
         fields += ["title", "artist"]
     writer = csv.DictWriter(buf, fieldnames=fields, lineterminator="\n", extrasaction="ignore")
@@ -502,6 +533,10 @@ def _feedback_stats_as_csv(rows: list[dict], enrich: bool = False) -> str:
             out["approval"] = ""
         else:
             out["approval"] = f"{out['approval']:.6f}"
+        if out.get("wilson") is None:
+            out["wilson"] = ""
+        else:
+            out["wilson"] = f"{out['wilson']:.6f}"
         if enrich:
             out["title"] = "" if out.get("title") is None else out["title"]
             out["artist"] = "" if out.get("artist") is None else out["artist"]
@@ -533,7 +568,7 @@ def _enrich_stats(rows: list[dict], meta: dict[str, tuple[str, str]]) -> list[di
 
 @app.command("feedback-stats")
 def feedback_stats(
-    sort: str = typer.Option("net", "--sort", "-s", help="Sort by: net, up, down, total, track_id, avg_score, approval."),
+    sort: str = typer.Option("net", "--sort", "-s", help="Sort by: net, up, down, total, track_id, avg_score, approval, wilson (Wilson 95% lower bound of approval, penalises few-vote tracks)."),
     limit: int = typer.Option(0, "--limit", "-n", help="Show top N rows (0 for all)."),
     min_total: int = typer.Option(0, "--min-total", help="Only include tracks with at least this many votes."),
     min_up: int = typer.Option(0, "--min-up", help="Only include tracks with at least this many up-votes."),
@@ -662,11 +697,14 @@ def feedback_stats(
     table.add_column("Net", justify="right")
     table.add_column("Avg score", justify="right")
     table.add_column("Approval", justify="right")
+    table.add_column("Wilson", justify="right")
     for r in stats:
         avg = r["avg_score"]
         avg_cell = f"{avg:.3f}" if isinstance(avg, (int, float)) else ""
         ap = r.get("approval")
         ap_cell = f"{ap * 100:.1f}%" if isinstance(ap, (int, float)) else ""
+        w = r.get("wilson")
+        w_cell = f"{w:.3f}" if isinstance(w, (int, float)) else ""
         cells = [str(r["track_id"])]
         if enrich:
             cells += [str(r.get("title", "")), str(r.get("artist", ""))]
@@ -677,6 +715,7 @@ def feedback_stats(
             str(r["net"]),
             avg_cell,
             ap_cell,
+            w_cell,
         ]
         table.add_row(*cells)
     console.print(table)
