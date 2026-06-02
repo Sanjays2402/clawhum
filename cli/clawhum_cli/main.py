@@ -431,9 +431,11 @@ def _sort_feedback_stats(rows: list[dict], sort: str) -> list[dict]:
     return rows
 
 
-def _feedback_stats_as_csv(rows: list[dict]) -> str:
+def _feedback_stats_as_csv(rows: list[dict], enrich: bool = False) -> str:
     buf = io.StringIO()
     fields = ["track_id", "up", "down", "total", "net", "avg_score", "approval"]
+    if enrich:
+        fields += ["title", "artist"]
     writer = csv.DictWriter(buf, fieldnames=fields, lineterminator="\n", extrasaction="ignore")
     writer.writeheader()
     for row in rows:
@@ -446,8 +448,33 @@ def _feedback_stats_as_csv(rows: list[dict]) -> str:
             out["approval"] = ""
         else:
             out["approval"] = f"{out['approval']:.6f}"
+        if enrich:
+            out["title"] = "" if out.get("title") is None else out["title"]
+            out["artist"] = "" if out.get("artist") is None else out["artist"]
         writer.writerow(out)
     return buf.getvalue()
+
+
+def _load_track_metadata() -> dict[str, tuple[str, str]]:
+    """Load track id -> (title, artist) from the configured metadata file.
+
+    Returns an empty dict if metadata is unavailable so --enrich degrades
+    gracefully (columns appear but values are blank) rather than crashing.
+    """
+    s = get_settings()
+    try:
+        from clawhum_index.persistence import read_metadata
+        return {t.id: (t.title or "", t.artist or "") for t in read_metadata(s.metadata_path)}
+    except Exception:
+        return {}
+
+
+def _enrich_stats(rows: list[dict], meta: dict[str, tuple[str, str]]) -> list[dict]:
+    for r in rows:
+        title, artist = meta.get(r.get("track_id", ""), ("", ""))
+        r["title"] = title
+        r["artist"] = artist
+    return rows
 
 
 @app.command("feedback-stats")
@@ -460,6 +487,7 @@ def feedback_stats(
     track_id: str | None = typer.Option(None, "--track-id", help="Only show this track_id."),
     since: str | None = typer.Option(None, "--since", help="Only aggregate entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
     until: str | None = typer.Option(None, "--until", help="Only aggregate entries strictly before this time (unix seconds or ISO-8601, naive = UTC)."),
+    enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
     fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write to file instead of stdout."),
 ):
@@ -507,6 +535,8 @@ def feedback_stats(
     _sort_feedback_stats(stats, sort)
     if limit > 0:
         stats = stats[:limit]
+    if enrich:
+        _enrich_stats(stats, _load_track_metadata())
 
     if chosen == "json":
         payload = json.dumps(stats)
@@ -517,7 +547,7 @@ def feedback_stats(
             console.print_json(payload)
         return
     if chosen == "csv":
-        payload = _feedback_stats_as_csv(stats)
+        payload = _feedback_stats_as_csv(stats, enrich=enrich)
         if output is not None:
             output.write_text(payload, encoding="utf-8")
             console.print(f"[green]wrote {len(stats)} row(s) to {output}[/green]")
@@ -531,6 +561,9 @@ def feedback_stats(
         return
     table = Table(title=f"Feedback stats ({len(stats)} track(s), sort={sort})")
     table.add_column("Track ID")
+    if enrich:
+        table.add_column("Title")
+        table.add_column("Artist")
     table.add_column("Up", justify="right")
     table.add_column("Down", justify="right")
     table.add_column("Total", justify="right")
@@ -542,15 +575,18 @@ def feedback_stats(
         avg_cell = f"{avg:.3f}" if isinstance(avg, (int, float)) else ""
         ap = r.get("approval")
         ap_cell = f"{ap * 100:.1f}%" if isinstance(ap, (int, float)) else ""
-        table.add_row(
-            str(r["track_id"]),
+        cells = [str(r["track_id"])]
+        if enrich:
+            cells += [str(r.get("title", "")), str(r.get("artist", ""))]
+        cells += [
             str(r["up"]),
             str(r["down"]),
             str(r["total"]),
             str(r["net"]),
             avg_cell,
             ap_cell,
-        )
+        ]
+        table.add_row(*cells)
     console.print(table)
 
 
