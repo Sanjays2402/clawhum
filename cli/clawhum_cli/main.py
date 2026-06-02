@@ -269,5 +269,143 @@ def feedback_list(
     console.print(table)
 
 
+def _aggregate_feedback(rows: list[dict]) -> list[dict]:
+    agg: dict[str, dict] = {}
+    for r in rows:
+        tid = r.get("track_id")
+        if not tid:
+            continue
+        a = agg.setdefault(tid, {"track_id": tid, "up": 0, "down": 0, "score_sum": 0.0, "score_n": 0})
+        v = r.get("vote")
+        if v == 1:
+            a["up"] += 1
+        elif v == -1:
+            a["down"] += 1
+        s = r.get("score")
+        if isinstance(s, (int, float)):
+            a["score_sum"] += float(s)
+            a["score_n"] += 1
+    out = []
+    for a in agg.values():
+        total = a["up"] + a["down"]
+        net = a["up"] - a["down"]
+        avg = (a["score_sum"] / a["score_n"]) if a["score_n"] else None
+        out.append({
+            "track_id": a["track_id"],
+            "up": a["up"],
+            "down": a["down"],
+            "total": total,
+            "net": net,
+            "avg_score": avg,
+        })
+    return out
+
+
+def _sort_feedback_stats(rows: list[dict], sort: str) -> list[dict]:
+    key = sort.lower()
+    if key == "net":
+        rows.sort(key=lambda r: (r["net"], r["total"]), reverse=True)
+    elif key == "up":
+        rows.sort(key=lambda r: r["up"], reverse=True)
+    elif key == "down":
+        rows.sort(key=lambda r: r["down"], reverse=True)
+    elif key == "total":
+        rows.sort(key=lambda r: r["total"], reverse=True)
+    elif key == "track_id":
+        rows.sort(key=lambda r: r["track_id"])
+    else:
+        raise typer.BadParameter("--sort must be one of: net, up, down, total, track_id")
+    return rows
+
+
+def _feedback_stats_as_csv(rows: list[dict]) -> str:
+    buf = io.StringIO()
+    fields = ["track_id", "up", "down", "total", "net", "avg_score"]
+    writer = csv.DictWriter(buf, fieldnames=fields, lineterminator="\n", extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        out = {k: row.get(k) for k in fields}
+        if out["avg_score"] is None:
+            out["avg_score"] = ""
+        else:
+            out["avg_score"] = f"{out['avg_score']:.6f}"
+        writer.writerow(out)
+    return buf.getvalue()
+
+
+@app.command("feedback-stats")
+def feedback_stats(
+    sort: str = typer.Option("net", "--sort", "-s", help="Sort by: net, up, down, total, track_id."),
+    limit: int = typer.Option(0, "--limit", "-n", help="Show top N rows (0 for all)."),
+    min_total: int = typer.Option(0, "--min-total", help="Only include tracks with at least this many votes."),
+    track_id: str | None = typer.Option(None, "--track-id", help="Only show this track_id."),
+    fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Write to file instead of stdout."),
+):
+    """Aggregate recorded feedback per track (up / down / net / avg score)."""
+    chosen = fmt.lower()
+    if chosen not in {"table", "json", "csv"}:
+        raise typer.BadParameter("--format must be one of: table, json, csv")
+    if limit < 0:
+        raise typer.BadParameter("--limit must be >= 0")
+    if min_total < 0:
+        raise typer.BadParameter("--min-total must be >= 0")
+    if output is not None and chosen == "table":
+        chosen = "csv"
+
+    s = get_settings()
+    from clawhum_library.feedback import read_feedback
+    rows = read_feedback(s.feedback_path)
+    if track_id is not None:
+        rows = [r for r in rows if r.get("track_id") == track_id]
+    stats = _aggregate_feedback(rows)
+    if min_total > 0:
+        stats = [r for r in stats if r["total"] >= min_total]
+    _sort_feedback_stats(stats, sort)
+    if limit > 0:
+        stats = stats[:limit]
+
+    if chosen == "json":
+        payload = json.dumps(stats)
+        if output is not None:
+            output.write_text(payload + "\n", encoding="utf-8")
+            console.print(f"[green]wrote {len(stats)} row(s) to {output}[/green]")
+        else:
+            console.print_json(payload)
+        return
+    if chosen == "csv":
+        payload = _feedback_stats_as_csv(stats)
+        if output is not None:
+            output.write_text(payload, encoding="utf-8")
+            console.print(f"[green]wrote {len(stats)} row(s) to {output}[/green]")
+        else:
+            sys.stdout.write(payload)
+            sys.stdout.flush()
+        return
+
+    if not stats:
+        console.print("[dim]no feedback recorded yet[/dim]")
+        return
+    table = Table(title=f"Feedback stats ({len(stats)} track(s), sort={sort})")
+    table.add_column("Track ID")
+    table.add_column("Up", justify="right")
+    table.add_column("Down", justify="right")
+    table.add_column("Total", justify="right")
+    table.add_column("Net", justify="right")
+    table.add_column("Avg score", justify="right")
+    for r in stats:
+        avg = r["avg_score"]
+        avg_cell = f"{avg:.3f}" if isinstance(avg, (int, float)) else ""
+        table.add_row(
+            str(r["track_id"]),
+            str(r["up"]),
+            str(r["down"]),
+            str(r["total"]),
+            str(r["net"]),
+            avg_cell,
+        )
+    console.print(table)
+
+
 if __name__ == "__main__":
     app()
