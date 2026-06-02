@@ -94,3 +94,23 @@ def test_feedback_list_empty(tmp_path, monkeypatch):
     r = runner.invoke(app, ["feedback-list", "--format", "json"])
     assert r.exit_code == 0
     assert json.loads(r.stdout) == []
+
+
+def test_feedback_list_infers_json_from_output_extension(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    out = tmp_path / "feedback.json"
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-list", "--output", str(out)])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert isinstance(payload, list) and len(payload) >= 1
+
+
+def test_feedback_list_infers_csv_from_output_extension(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    out = tmp_path / "feedback.csv"
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-list", "--output", str(out)])
+    assert r.exit_code == 0, r.output
+    text = out.read_text(encoding="utf-8")
+    assert text.splitlines()[0].startswith("ts,")

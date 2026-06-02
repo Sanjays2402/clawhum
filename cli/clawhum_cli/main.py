@@ -99,8 +99,8 @@ def _results_as_csv(results, query_id: str | None = None) -> str:
     return buf.getvalue()
 
 
-def _resolve_output_format(fmt: str | None, json_out: bool, output: Path | None) -> str:
-    """Resolve the effective output format for `match`.
+def _resolve_output_format(fmt: str | None, json_out: bool = False, output: Path | None = None) -> str:
+    """Resolve the effective output format for table/json/csv-producing commands.
 
     Precedence: --json shortcut > explicit --format > inferred from --output
     extension > stdout default (table). When an explicit --format=table is
@@ -568,7 +568,7 @@ def feedback_list(
     max_score: float | None = typer.Option(None, "--max-score", help="Only entries whose recorded score is at most this. Entries without a numeric score are excluded. Combine with --vote -1 to find down-votes on high-confidence matches (false positives)."),
     title: str | None = typer.Option(None, "--title", help="Only entries whose track title contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
     artist: str | None = typer.Option(None, "--artist", help="Only entries whose track artist contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
-    fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
+    fmt: str | None = typer.Option(None, "--format", "-f", help="Output format: table, json, csv. Defaults to table on stdout, or inferred from --output extension (.json/.csv) when writing to a file."),
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
     orphaned: bool = typer.Option(False, "--orphaned", help="Only show entries whose track_id is no longer in the indexed library. Useful after pruning the library to find stale votes to delete with feedback-delete."),
     in_index: bool = typer.Option(False, "--in-index", help="Only show entries whose track_id is still present in the indexed library. Skips orphaned feedback so the list reflects the live catalog."),
@@ -587,17 +587,13 @@ def feedback_list(
     sort_key = sort.lower()
     if sort_key not in {"ts", "ts-asc", "score", "score-asc", "track_id"}:
         raise typer.BadParameter("--sort must be one of: ts, ts-asc, score, score-asc, track_id")
-    chosen = fmt.lower()
-    if chosen not in {"table", "json", "csv"}:
-        raise typer.BadParameter("--format must be one of: table, json, csv")
+    chosen = _resolve_output_format(fmt, output=output)
     if vote is not None and vote not in (1, -1):
         raise typer.BadParameter("--vote must be 1 or -1")
     if limit < 0:
         raise typer.BadParameter("--limit must be >= 0")
     if min_score is not None and max_score is not None and min_score > max_score:
         raise typer.BadParameter("--min-score must be <= --max-score")
-    if output is not None and chosen == "table":
-        chosen = "csv"
     since_ts = _parse_time_bound(since, flag="--since") if since is not None else None
     until_ts = _parse_time_bound(until, flag="--until") if until is not None else None
     if since_ts is not None and until_ts is not None and since_ts > until_ts:
@@ -901,7 +897,7 @@ def feedback_stats(
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
     orphaned: bool = typer.Option(False, "--orphaned", help="Only show tracks with feedback that are no longer in the indexed library. Useful after pruning the library to find stale feedback to delete."),
     in_index: bool = typer.Option(False, "--in-index", help="Only show tracks that are still present in the indexed library. Skips orphaned feedback so stats reflect the live catalog."),
-    fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
+    fmt: str | None = typer.Option(None, "--format", "-f", help="Output format: table, json, csv. Defaults to table on stdout, or inferred from --output extension (.json/.csv) when writing to a file."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write to file instead of stdout."),
     fail_on_empty: bool = typer.Option(
         False,
@@ -913,9 +909,7 @@ def feedback_stats(
     """Aggregate recorded feedback per track (up / down / net / avg score)."""
     if orphaned and in_index:
         raise typer.BadParameter("--orphaned and --in-index are mutually exclusive")
-    chosen = fmt.lower()
-    if chosen not in {"table", "json", "csv"}:
-        raise typer.BadParameter("--format must be one of: table, json, csv")
+    chosen = _resolve_output_format(fmt, output=output)
     if limit < 0:
         raise typer.BadParameter("--limit must be >= 0")
     if min_total < 0:
@@ -948,8 +942,6 @@ def feedback_stats(
         raise typer.BadParameter("--max-wilson must be between 0.0 and 1.0")
     if min_wilson is not None and max_wilson is not None and min_wilson > max_wilson:
         raise typer.BadParameter("--min-wilson must be <= --max-wilson")
-    if output is not None and chosen == "table":
-        chosen = "csv"
     since_ts = _parse_time_bound(since, flag="--since") if since is not None else None
     until_ts = _parse_time_bound(until, flag="--until") if until is not None else None
     if since_ts is not None and until_ts is not None and since_ts > until_ts:

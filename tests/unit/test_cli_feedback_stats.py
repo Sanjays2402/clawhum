@@ -555,3 +555,42 @@ def test_feedback_stats_min_max_wilson_inverted_rejected(tmp_path, monkeypatch):
     runner = CliRunner()
     r = runner.invoke(app, ["feedback-stats", "--min-wilson", "0.8", "--max-wilson", "0.2"])
     assert r.exit_code != 0
+
+
+def test_feedback_stats_infers_json_from_output_extension(tmp_path, monkeypatch):
+    from clawhum_library.feedback import record_feedback
+
+    fb = tmp_path / "feedback.jsonl"
+
+    class _S:
+        feedback_path = str(fb)
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+    record_feedback(fb, "q1", "t1", 0.9, 1)
+    record_feedback(fb, "q2", "t1", 0.8, 1)
+
+    out = tmp_path / "stats.json"
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--output", str(out)])
+    assert r.exit_code == 0, r.output
+    payload = json.loads(out.read_text(encoding="utf-8"))
+    assert payload and payload[0]["track_id"] == "t1"
+
+
+def test_feedback_stats_infers_csv_from_output_extension(tmp_path, monkeypatch):
+    from clawhum_library.feedback import record_feedback
+
+    fb = tmp_path / "feedback.jsonl"
+
+    class _S:
+        feedback_path = str(fb)
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+    record_feedback(fb, "q1", "t1", 0.9, 1)
+
+    out = tmp_path / "stats.csv"
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--output", str(out)])
+    assert r.exit_code == 0, r.output
+    text = out.read_text(encoding="utf-8")
+    assert text.splitlines()[0].startswith("track_id,")
