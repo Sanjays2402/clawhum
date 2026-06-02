@@ -133,8 +133,83 @@ def test_feedback_stats_csv_to_file(tmp_path, monkeypatch):
     r = runner.invoke(app, ["feedback-stats", "--format", "csv", "--output", str(out)])
     assert r.exit_code == 0
     text = out.read_text()
-    assert "track_id,up,down,total,net,avg_score" in text.splitlines()[0]
+    assert "track_id,up,down,total,net,avg_score,approval" in text.splitlines()[0]
     assert "t1" in text
+
+
+def test_aggregate_feedback_approval_ratio():
+    rows = [
+        {"track_id": "t1", "vote": 1, "score": 0.9},
+        {"track_id": "t1", "vote": 1, "score": 0.8},
+        {"track_id": "t1", "vote": -1, "score": 0.1},
+        {"track_id": "t2", "vote": -1, "score": 0.2},
+    ]
+    out = {r["track_id"]: r for r in _aggregate_feedback(rows)}
+    assert abs(out["t1"]["approval"] - (2 / 3)) < 1e-9
+    assert out["t2"]["approval"] == 0.0
+
+
+def test_feedback_stats_sort_by_approval(tmp_path, monkeypatch):
+    from clawhum_library.feedback import record_feedback
+
+    fb = tmp_path / "feedback.jsonl"
+
+    class _S:
+        feedback_path = str(fb)
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+
+    # t_best: 3/3 = 1.0, t_mid: 2/4 = 0.5, t_worst: 0/2 = 0.0
+    for q in ("q1", "q2", "q3"):
+        record_feedback(fb, q, "t_best", 0.9, 1)
+    record_feedback(fb, "q4", "t_mid", 0.5, 1)
+    record_feedback(fb, "q5", "t_mid", 0.5, 1)
+    record_feedback(fb, "q6", "t_mid", 0.4, -1)
+    record_feedback(fb, "q7", "t_mid", 0.4, -1)
+    record_feedback(fb, "q8", "t_worst", 0.1, -1)
+    record_feedback(fb, "q9", "t_worst", 0.1, -1)
+
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--format", "json", "--sort", "approval"])
+    assert r.exit_code == 0, r.output
+    rows = json.loads(r.stdout)
+    assert [row["track_id"] for row in rows] == ["t_best", "t_mid", "t_worst"]
+    assert rows[0]["approval"] == 1.0
+    assert abs(rows[1]["approval"] - 0.5) < 1e-9
+    assert rows[2]["approval"] == 0.0
+
+
+def test_feedback_stats_min_approval_filter(tmp_path, monkeypatch):
+    from clawhum_library.feedback import record_feedback
+
+    fb = tmp_path / "feedback.jsonl"
+
+    class _S:
+        feedback_path = str(fb)
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+
+    for q in ("q1", "q2"):
+        record_feedback(fb, q, "t_good", 0.9, 1)
+    record_feedback(fb, "q3", "t_bad", 0.4, -1)
+    record_feedback(fb, "q4", "t_bad", 0.4, 1)  # 0.5
+
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--format", "json", "--min-approval", "0.75"])
+    assert r.exit_code == 0, r.output
+    rows = json.loads(r.stdout)
+    ids = [row["track_id"] for row in rows]
+    assert ids == ["t_good"]
+
+
+def test_feedback_stats_min_approval_rejects_out_of_range(tmp_path, monkeypatch):
+    class _S:
+        feedback_path = str(tmp_path / "missing.jsonl")
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--min-approval", "1.5"])
+    assert r.exit_code != 0
 
 
 def test_feedback_stats_empty(tmp_path, monkeypatch):

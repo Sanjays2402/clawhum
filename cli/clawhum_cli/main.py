@@ -382,6 +382,7 @@ def _aggregate_feedback(rows: list[dict]) -> list[dict]:
         total = a["up"] + a["down"]
         net = a["up"] - a["down"]
         avg = (a["score_sum"] / a["score_n"]) if a["score_n"] else None
+        approval = (a["up"] / total) if total else None
         out.append({
             "track_id": a["track_id"],
             "up": a["up"],
@@ -389,6 +390,7 @@ def _aggregate_feedback(rows: list[dict]) -> list[dict]:
             "total": total,
             "net": net,
             "avg_score": avg,
+            "approval": approval,
         })
     return out
 
@@ -414,14 +416,24 @@ def _sort_feedback_stats(rows: list[dict], sort: str) -> list[dict]:
                 -r["total"],
             )
         )
+    elif key == "approval":
+        # tracks with no votes (approval=None) sort last; ties broken by total then track_id
+        rows.sort(
+            key=lambda r: (
+                0 if isinstance(r.get("approval"), (int, float)) else 1,
+                -(r["approval"] if isinstance(r.get("approval"), (int, float)) else 0.0),
+                -r["total"],
+                r["track_id"],
+            )
+        )
     else:
-        raise typer.BadParameter("--sort must be one of: net, up, down, total, track_id, avg_score")
+        raise typer.BadParameter("--sort must be one of: net, up, down, total, track_id, avg_score, approval")
     return rows
 
 
 def _feedback_stats_as_csv(rows: list[dict]) -> str:
     buf = io.StringIO()
-    fields = ["track_id", "up", "down", "total", "net", "avg_score"]
+    fields = ["track_id", "up", "down", "total", "net", "avg_score", "approval"]
     writer = csv.DictWriter(buf, fieldnames=fields, lineterminator="\n", extrasaction="ignore")
     writer.writeheader()
     for row in rows:
@@ -430,15 +442,20 @@ def _feedback_stats_as_csv(rows: list[dict]) -> str:
             out["avg_score"] = ""
         else:
             out["avg_score"] = f"{out['avg_score']:.6f}"
+        if out["approval"] is None:
+            out["approval"] = ""
+        else:
+            out["approval"] = f"{out['approval']:.6f}"
         writer.writerow(out)
     return buf.getvalue()
 
 
 @app.command("feedback-stats")
 def feedback_stats(
-    sort: str = typer.Option("net", "--sort", "-s", help="Sort by: net, up, down, total, track_id, avg_score."),
+    sort: str = typer.Option("net", "--sort", "-s", help="Sort by: net, up, down, total, track_id, avg_score, approval."),
     limit: int = typer.Option(0, "--limit", "-n", help="Show top N rows (0 for all)."),
     min_total: int = typer.Option(0, "--min-total", help="Only include tracks with at least this many votes."),
+    min_approval: float | None = typer.Option(None, "--min-approval", help="Only include tracks whose up/total ratio is at least this (0.0 to 1.0). Tracks with no votes are excluded."),
     track_id: str | None = typer.Option(None, "--track-id", help="Only show this track_id."),
     since: str | None = typer.Option(None, "--since", help="Only aggregate entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
     until: str | None = typer.Option(None, "--until", help="Only aggregate entries strictly before this time (unix seconds or ISO-8601, naive = UTC)."),
@@ -453,6 +470,8 @@ def feedback_stats(
         raise typer.BadParameter("--limit must be >= 0")
     if min_total < 0:
         raise typer.BadParameter("--min-total must be >= 0")
+    if min_approval is not None and not (0.0 <= min_approval <= 1.0):
+        raise typer.BadParameter("--min-approval must be between 0.0 and 1.0")
     if output is not None and chosen == "table":
         chosen = "csv"
     since_ts = _parse_time_bound(since, flag="--since") if since is not None else None
@@ -472,6 +491,11 @@ def feedback_stats(
     stats = _aggregate_feedback(rows)
     if min_total > 0:
         stats = [r for r in stats if r["total"] >= min_total]
+    if min_approval is not None:
+        stats = [
+            r for r in stats
+            if isinstance(r.get("approval"), (int, float)) and r["approval"] >= min_approval
+        ]
     _sort_feedback_stats(stats, sort)
     if limit > 0:
         stats = stats[:limit]
@@ -504,9 +528,12 @@ def feedback_stats(
     table.add_column("Total", justify="right")
     table.add_column("Net", justify="right")
     table.add_column("Avg score", justify="right")
+    table.add_column("Approval", justify="right")
     for r in stats:
         avg = r["avg_score"]
         avg_cell = f"{avg:.3f}" if isinstance(avg, (int, float)) else ""
+        ap = r.get("approval")
+        ap_cell = f"{ap * 100:.1f}%" if isinstance(ap, (int, float)) else ""
         table.add_row(
             str(r["track_id"]),
             str(r["up"]),
@@ -514,6 +541,7 @@ def feedback_stats(
             str(r["total"]),
             str(r["net"]),
             avg_cell,
+            ap_cell,
         )
     console.print(table)
 
