@@ -270,14 +270,24 @@ def _filter_feedback(
     return out
 
 
-def _feedback_as_csv(rows: list[dict]) -> str:
+def _feedback_as_csv(rows: list[dict], enrich: bool = False) -> str:
     buf = io.StringIO()
     fields = ["ts", "query_id", "track_id", "score", "vote"]
+    if enrich:
+        fields += ["title", "artist"]
     writer = csv.DictWriter(buf, fieldnames=fields, lineterminator="\n", extrasaction="ignore")
     writer.writeheader()
     for row in rows:
         writer.writerow({k: ("" if row.get(k) is None else row.get(k)) for k in fields})
     return buf.getvalue()
+
+
+def _enrich_feedback_rows(rows: list[dict], meta: dict[str, tuple[str, str]]) -> list[dict]:
+    for r in rows:
+        title, artist = meta.get(str(r.get("track_id", "")), ("", ""))
+        r["title"] = title
+        r["artist"] = artist
+    return rows
 
 
 @app.command("feedback-list")
@@ -289,6 +299,7 @@ def feedback_list(
     since: str | None = typer.Option(None, "--since", help="Only entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
     until: str | None = typer.Option(None, "--until", help="Only entries strictly before this time (unix seconds or ISO-8601, naive = UTC)."),
     fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
+    enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write to file instead of stdout."),
 ):
     """List recorded feedback (most recent first)."""
@@ -317,6 +328,8 @@ def feedback_list(
     rows.sort(key=lambda r: r.get("ts") or 0.0, reverse=True)
     if limit > 0:
         rows = rows[:limit]
+    if enrich:
+        _enrich_feedback_rows(rows, _load_track_metadata())
 
     if chosen == "json":
         payload = json.dumps(rows)
@@ -327,7 +340,7 @@ def feedback_list(
             console.print_json(payload)
         return
     if chosen == "csv":
-        payload = _feedback_as_csv(rows)
+        payload = _feedback_as_csv(rows, enrich=enrich)
         if output is not None:
             output.write_text(payload, encoding="utf-8")
             console.print(f"[green]wrote {len(rows)} entry(s) to {output}[/green]")
@@ -345,6 +358,9 @@ def feedback_list(
     table.add_column("Vote", justify="right")
     table.add_column("Score", justify="right")
     table.add_column("Track ID")
+    if enrich:
+        table.add_column("Title")
+        table.add_column("Artist")
     table.add_column("Query ID")
     for r in rows:
         ts = r.get("ts")
@@ -357,7 +373,11 @@ def feedback_list(
         vote_cell = "+1" if v == 1 else ("-1" if v == -1 else str(v))
         score = r.get("score")
         score_cell = f"{score:.3f}" if isinstance(score, (int, float)) else ""
-        table.add_row(when, vote_cell, score_cell, str(r.get("track_id", "")), str(r.get("query_id", "")))
+        cells = [when, vote_cell, score_cell, str(r.get("track_id", ""))]
+        if enrich:
+            cells += [str(r.get("title", "")), str(r.get("artist", ""))]
+        cells.append(str(r.get("query_id", "")))
+        table.add_row(*cells)
     console.print(table)
 
 
