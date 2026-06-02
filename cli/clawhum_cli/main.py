@@ -583,10 +583,14 @@ def feedback_stats(
     since: str | None = typer.Option(None, "--since", help="Only aggregate entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
     until: str | None = typer.Option(None, "--until", help="Only aggregate entries strictly before this time (unix seconds or ISO-8601, naive = UTC)."),
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
+    orphaned: bool = typer.Option(False, "--orphaned", help="Only show tracks with feedback that are no longer in the indexed library. Useful after pruning the library to find stale feedback to delete."),
+    in_index: bool = typer.Option(False, "--in-index", help="Only show tracks that are still present in the indexed library. Skips orphaned feedback so stats reflect the live catalog."),
     fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write to file instead of stdout."),
 ):
     """Aggregate recorded feedback per track (up / down / net / avg score)."""
+    if orphaned and in_index:
+        raise typer.BadParameter("--orphaned and --in-index are mutually exclusive")
     chosen = fmt.lower()
     if chosen not in {"table", "json", "csv"}:
         raise typer.BadParameter("--format must be one of: table, json, csv")
@@ -660,10 +664,19 @@ def feedback_stats(
             if isinstance(r.get("avg_score"), (int, float)) and r["avg_score"] <= max_avg_score
         ]
     _sort_feedback_stats(stats, sort)
+    # Filter by library membership before enrichment so we only load metadata once.
+    meta_cache: dict[str, tuple[str, str]] | None = None
+    if orphaned or in_index:
+        meta_cache = _load_track_metadata()
+        known = set(meta_cache.keys())
+        if orphaned:
+            stats = [r for r in stats if r.get("track_id") not in known]
+        else:
+            stats = [r for r in stats if r.get("track_id") in known]
     if limit > 0:
         stats = stats[:limit]
     if enrich:
-        _enrich_stats(stats, _load_track_metadata())
+        _enrich_stats(stats, meta_cache if meta_cache is not None else _load_track_metadata())
 
     if chosen == "json":
         payload = json.dumps(stats)
