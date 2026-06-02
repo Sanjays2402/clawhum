@@ -405,11 +405,15 @@ def feedback_list(
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
     orphaned: bool = typer.Option(False, "--orphaned", help="Only show entries whose track_id is no longer in the indexed library. Useful after pruning the library to find stale votes to delete with feedback-delete."),
     in_index: bool = typer.Option(False, "--in-index", help="Only show entries whose track_id is still present in the indexed library. Skips orphaned feedback so the list reflects the live catalog."),
+    sort: str = typer.Option("ts", "--sort", help="Sort order: ts (newest first, default), ts-asc (oldest first), score (highest first), score-asc (lowest first), track_id (asc). Entries missing a numeric ts/score sort last."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write to file instead of stdout."),
 ):
     """List recorded feedback (most recent first)."""
     if orphaned and in_index:
         raise typer.BadParameter("--orphaned and --in-index are mutually exclusive")
+    sort_key = sort.lower()
+    if sort_key not in {"ts", "ts-asc", "score", "score-asc", "track_id"}:
+        raise typer.BadParameter("--sort must be one of: ts, ts-asc, score, score-asc, track_id")
     chosen = fmt.lower()
     if chosen not in {"table", "json", "csv"}:
         raise typer.BadParameter("--format must be one of: table, json, csv")
@@ -460,8 +464,23 @@ def feedback_list(
                 continue
             filtered.append(r)
         rows = filtered
-    # most recent first; entries without ts sort last
-    rows.sort(key=lambda r: r.get("ts") or 0.0, reverse=True)
+    # default: most recent first; entries without a numeric ts always sort last
+    def _num_key(r: dict, field: str) -> tuple[int, float]:
+        v = r.get(field)
+        if isinstance(v, (int, float)):
+            return (0, float(v))
+        return (1, 0.0)
+
+    if sort_key == "ts":
+        rows.sort(key=lambda r: (_num_key(r, "ts")[0], -_num_key(r, "ts")[1]))
+    elif sort_key == "ts-asc":
+        rows.sort(key=lambda r: (_num_key(r, "ts")[0], _num_key(r, "ts")[1]))
+    elif sort_key == "score":
+        rows.sort(key=lambda r: (_num_key(r, "score")[0], -_num_key(r, "score")[1]))
+    elif sort_key == "score-asc":
+        rows.sort(key=lambda r: (_num_key(r, "score")[0], _num_key(r, "score")[1]))
+    else:  # track_id
+        rows.sort(key=lambda r: str(r.get("track_id", "")))
     if limit > 0:
         rows = rows[:limit]
     if needs_meta:
