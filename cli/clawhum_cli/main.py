@@ -524,6 +524,8 @@ def feedback_stats(
     sort: str = typer.Option("net", "--sort", "-s", help="Sort by: net, up, down, total, track_id, avg_score, approval."),
     limit: int = typer.Option(0, "--limit", "-n", help="Show top N rows (0 for all)."),
     min_total: int = typer.Option(0, "--min-total", help="Only include tracks with at least this many votes."),
+    min_net: int | None = typer.Option(None, "--min-net", help="Only include tracks whose net score (up - down) is at least this. Negative values allowed."),
+    max_net: int | None = typer.Option(None, "--max-net", help="Only include tracks whose net score (up - down) is at most this. Negative values allowed. Combine with --max-net -2 to surface tracks the audience clearly rejects."),
     min_approval: float | None = typer.Option(None, "--min-approval", help="Only include tracks whose up/total ratio is at least this (0.0 to 1.0). Tracks with no votes are excluded."),
     max_approval: float | None = typer.Option(None, "--max-approval", help="Only include tracks whose up/total ratio is at most this (0.0 to 1.0). Tracks with no votes are excluded. Useful for finding low-approval matches."),
     min_avg_score: float | None = typer.Option(None, "--min-avg-score", help="Only include tracks whose avg_score is at least this (0.0 to 1.0). Tracks with no numeric scores are excluded."),
@@ -543,6 +545,8 @@ def feedback_stats(
         raise typer.BadParameter("--limit must be >= 0")
     if min_total < 0:
         raise typer.BadParameter("--min-total must be >= 0")
+    if min_net is not None and max_net is not None and min_net > max_net:
+        raise typer.BadParameter("--min-net must be <= --max-net")
     if min_approval is not None and not (0.0 <= min_approval <= 1.0):
         raise typer.BadParameter("--min-approval must be between 0.0 and 1.0")
     if max_approval is not None and not (0.0 <= max_approval <= 1.0):
@@ -574,6 +578,10 @@ def feedback_stats(
     stats = _aggregate_feedback(rows)
     if min_total > 0:
         stats = [r for r in stats if r["total"] >= min_total]
+    if min_net is not None:
+        stats = [r for r in stats if r["net"] >= min_net]
+    if max_net is not None:
+        stats = [r for r in stats if r["net"] <= max_net]
     if min_approval is not None:
         stats = [
             r for r in stats

@@ -323,3 +323,32 @@ def test_feedback_stats_min_max_avg_score_inverted_rejected(tmp_path, monkeypatc
         app, ["feedback-stats", "--min-avg-score", "0.8", "--max-avg-score", "0.2"]
     )
     assert r.exit_code != 0
+
+
+def test_feedback_stats_max_net_surfaces_rejected_tracks(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    # nets from _seed: t1 +2, t2 -1, t3 -1
+    r = runner.invoke(app, ["feedback-stats", "--format", "json", "--max-net", "-1"])
+    assert r.exit_code == 0, r.output
+    ids = {row["track_id"] for row in json.loads(r.stdout)}
+    assert ids == {"t2", "t3"}
+
+
+def test_feedback_stats_min_net_filters_positive_consensus(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--format", "json", "--min-net", "1"])
+    assert r.exit_code == 0, r.output
+    rows = json.loads(r.stdout)
+    assert [row["track_id"] for row in rows] == ["t1"]
+
+
+def test_feedback_stats_min_max_net_inverted_rejected(tmp_path, monkeypatch):
+    class _S:
+        feedback_path = str(tmp_path / "missing.jsonl")
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--min-net", "2", "--max-net", "0"])
+    assert r.exit_code != 0
