@@ -220,11 +220,41 @@ def feedback_delete(
     console.print(f"[green]deleted {removed} entry(s)[/green]")
 
 
+def _parse_time_bound(value: str, *, flag: str) -> float:
+    """Parse a CLI time bound as either a unix epoch seconds value or an ISO-8601
+    date/datetime. Naive ISO inputs are treated as UTC. Raises typer.BadParameter
+    on bad input so the user gets a clean error instead of a traceback.
+    """
+    from datetime import datetime, timezone
+
+    v = value.strip()
+    if not v:
+        raise typer.BadParameter(f"{flag} must not be empty")
+    # numeric epoch seconds (int or float)
+    try:
+        return float(v)
+    except ValueError:
+        pass
+    # ISO-8601: accept trailing Z as UTC
+    iso = v[:-1] + "+00:00" if v.endswith("Z") else v
+    try:
+        dt = datetime.fromisoformat(iso)
+    except ValueError as e:
+        raise typer.BadParameter(
+            f"{flag} must be a unix timestamp or ISO-8601 date/datetime (got {value!r})"
+        ) from e
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
 def _filter_feedback(
     rows: list[dict],
     query_id: str | None = None,
     track_id: str | None = None,
     vote: int | None = None,
+    since: float | None = None,
+    until: float | None = None,
 ) -> list[dict]:
     out = rows
     if query_id is not None:
@@ -233,6 +263,10 @@ def _filter_feedback(
         out = [r for r in out if r.get("track_id") == track_id]
     if vote is not None:
         out = [r for r in out if r.get("vote") == vote]
+    if since is not None:
+        out = [r for r in out if isinstance(r.get("ts"), (int, float)) and r["ts"] >= since]
+    if until is not None:
+        out = [r for r in out if isinstance(r.get("ts"), (int, float)) and r["ts"] < until]
     return out
 
 
@@ -252,6 +286,8 @@ def feedback_list(
     query_id: str | None = typer.Option(None, "--query-id", help="Only show entries for this query_id."),
     track_id: str | None = typer.Option(None, "--track-id", help="Only show entries for this track_id."),
     vote: int | None = typer.Option(None, "--vote", help="Filter by vote: 1 (up) or -1 (down)."),
+    since: str | None = typer.Option(None, "--since", help="Only entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
+    until: str | None = typer.Option(None, "--until", help="Only entries strictly before this time (unix seconds or ISO-8601, naive = UTC)."),
     fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write to file instead of stdout."),
 ):
@@ -265,11 +301,18 @@ def feedback_list(
         raise typer.BadParameter("--limit must be >= 0")
     if output is not None and chosen == "table":
         chosen = "csv"
+    since_ts = _parse_time_bound(since, flag="--since") if since is not None else None
+    until_ts = _parse_time_bound(until, flag="--until") if until is not None else None
+    if since_ts is not None and until_ts is not None and since_ts > until_ts:
+        raise typer.BadParameter("--since must be <= --until")
 
     s = get_settings()
     from clawhum_library.feedback import read_feedback
     rows = read_feedback(s.feedback_path)
-    rows = _filter_feedback(rows, query_id=query_id, track_id=track_id, vote=vote)
+    rows = _filter_feedback(
+        rows, query_id=query_id, track_id=track_id, vote=vote,
+        since=since_ts, until=until_ts,
+    )
     # most recent first; entries without ts sort last
     rows.sort(key=lambda r: r.get("ts") or 0.0, reverse=True)
     if limit > 0:
@@ -397,6 +440,8 @@ def feedback_stats(
     limit: int = typer.Option(0, "--limit", "-n", help="Show top N rows (0 for all)."),
     min_total: int = typer.Option(0, "--min-total", help="Only include tracks with at least this many votes."),
     track_id: str | None = typer.Option(None, "--track-id", help="Only show this track_id."),
+    since: str | None = typer.Option(None, "--since", help="Only aggregate entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
+    until: str | None = typer.Option(None, "--until", help="Only aggregate entries strictly before this time (unix seconds or ISO-8601, naive = UTC)."),
     fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write to file instead of stdout."),
 ):
@@ -410,12 +455,20 @@ def feedback_stats(
         raise typer.BadParameter("--min-total must be >= 0")
     if output is not None and chosen == "table":
         chosen = "csv"
+    since_ts = _parse_time_bound(since, flag="--since") if since is not None else None
+    until_ts = _parse_time_bound(until, flag="--until") if until is not None else None
+    if since_ts is not None and until_ts is not None and since_ts > until_ts:
+        raise typer.BadParameter("--since must be <= --until")
 
     s = get_settings()
     from clawhum_library.feedback import read_feedback
     rows = read_feedback(s.feedback_path)
     if track_id is not None:
         rows = [r for r in rows if r.get("track_id") == track_id]
+    if since_ts is not None:
+        rows = [r for r in rows if isinstance(r.get("ts"), (int, float)) and r["ts"] >= since_ts]
+    if until_ts is not None:
+        rows = [r for r in rows if isinstance(r.get("ts"), (int, float)) and r["ts"] < until_ts]
     stats = _aggregate_feedback(rows)
     if min_total > 0:
         stats = [r for r in stats if r["total"] >= min_total]
