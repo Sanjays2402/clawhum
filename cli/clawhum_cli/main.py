@@ -414,6 +414,12 @@ def feedback_list(
     limit: int = typer.Option(20, "--limit", "-n", help="Show the most recent N entries (0 for all)."),
     query_id: str | None = typer.Option(None, "--query-id", help="Only show entries for this query_id."),
     track_id: str | None = typer.Option(None, "--track-id", help="Only show entries for this track_id."),
+    exclude_track: list[str] = typer.Option(
+        None,
+        "--exclude-track",
+        "-x",
+        help="Drop entries for this track_id from the listing. Repeatable. Useful for looking past a known-noisy track (e.g. a duplicate edition that dominates recent votes) without re-querying.",
+    ),
     vote: int | None = typer.Option(None, "--vote", help="Filter by vote: 1 (up) or -1 (down)."),
     since: str | None = typer.Option(None, "--since", help="Only entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
     until: str | None = typer.Option(None, "--until", help="Only entries strictly before this time (unix seconds or ISO-8601, naive = UTC)."),
@@ -450,6 +456,8 @@ def feedback_list(
     if since_ts is not None and until_ts is not None and since_ts > until_ts:
         raise typer.BadParameter("--since must be <= --until")
 
+    excluded_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
+
     s = get_settings()
     from clawhum_library.feedback import read_feedback
     rows = read_feedback(s.feedback_path)
@@ -458,6 +466,8 @@ def feedback_list(
         since=since_ts, until=until_ts,
         min_score=min_score, max_score=max_score,
     )
+    if excluded_ids:
+        rows = [r for r in rows if str(r.get("track_id", "")) not in excluded_ids]
     # --title/--artist/--orphaned/--in-index need metadata to filter on, so
     # auto-enrich. --title/--artist additionally drop rows whose track isn't in
     # the indexed library (can't match a blank).
