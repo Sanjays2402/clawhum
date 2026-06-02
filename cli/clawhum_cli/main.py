@@ -628,6 +628,8 @@ def feedback_stats(
     min_avg_score: float | None = typer.Option(None, "--min-avg-score", help="Only include tracks whose avg_score is at least this (0.0 to 1.0). Tracks with no numeric scores are excluded."),
     max_avg_score: float | None = typer.Option(None, "--max-avg-score", help="Only include tracks whose avg_score is at most this (0.0 to 1.0). Tracks with no numeric scores are excluded. Useful for finding weak-score matches."),
     track_id: str | None = typer.Option(None, "--track-id", help="Only show this track_id."),
+    title: str | None = typer.Option(None, "--title", help="Only show tracks whose title contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
+    artist: str | None = typer.Option(None, "--artist", help="Only show tracks whose artist contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
     since: str | None = typer.Option(None, "--since", help="Only aggregate entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
     until: str | None = typer.Option(None, "--until", help="Only aggregate entries strictly before this time (unix seconds or ISO-8601, naive = UTC)."),
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
@@ -721,10 +723,31 @@ def feedback_stats(
             stats = [r for r in stats if r.get("track_id") not in known]
         else:
             stats = [r for r in stats if r.get("track_id") in known]
+    # --title/--artist need metadata to filter on, so auto-enrich and drop
+    # orphans (we can't prove a track without metadata matches a name needle).
+    needs_meta = enrich or title is not None or artist is not None
+    if needs_meta and meta_cache is None:
+        meta_cache = _load_track_metadata()
+    if title is not None or artist is not None:
+        t_needle = title.lower() if title is not None else None
+        a_needle = artist.lower() if artist is not None else None
+        filtered = []
+        for r in stats:
+            entry = (meta_cache or {}).get(str(r.get("track_id", "")))
+            if entry is None:
+                continue
+            t_val, a_val = entry
+            if t_needle is not None and t_needle not in (t_val or "").lower():
+                continue
+            if a_needle is not None and a_needle not in (a_val or "").lower():
+                continue
+            filtered.append(r)
+        stats = filtered
     if limit > 0:
         stats = stats[:limit]
-    if enrich:
-        _enrich_stats(stats, meta_cache if meta_cache is not None else _load_track_metadata())
+    if needs_meta:
+        _enrich_stats(stats, meta_cache or {})
+        enrich = True
 
     if chosen == "json":
         payload = json.dumps(stats)
