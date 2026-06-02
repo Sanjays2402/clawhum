@@ -348,9 +348,13 @@ def feedback_list(
     artist: str | None = typer.Option(None, "--artist", help="Only entries whose track artist contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
     fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
+    orphaned: bool = typer.Option(False, "--orphaned", help="Only show entries whose track_id is no longer in the indexed library. Useful after pruning the library to find stale votes to delete with feedback-delete."),
+    in_index: bool = typer.Option(False, "--in-index", help="Only show entries whose track_id is still present in the indexed library. Skips orphaned feedback so the list reflects the live catalog."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write to file instead of stdout."),
 ):
     """List recorded feedback (most recent first)."""
+    if orphaned and in_index:
+        raise typer.BadParameter("--orphaned and --in-index are mutually exclusive")
     chosen = fmt.lower()
     if chosen not in {"table", "json", "csv"}:
         raise typer.BadParameter("--format must be one of: table, json, csv")
@@ -375,10 +379,17 @@ def feedback_list(
         since=since_ts, until=until_ts,
         min_score=min_score, max_score=max_score,
     )
-    # --title/--artist need metadata to filter on, so auto-enrich and
-    # drop rows whose track isn't in the indexed library (can't match a blank).
-    needs_meta = enrich or title is not None or artist is not None
+    # --title/--artist/--orphaned/--in-index need metadata to filter on, so
+    # auto-enrich. --title/--artist additionally drop rows whose track isn't in
+    # the indexed library (can't match a blank).
+    needs_meta = enrich or title is not None or artist is not None or orphaned or in_index
     meta = _load_track_metadata() if needs_meta else None
+    if orphaned:
+        known = set((meta or {}).keys())
+        rows = [r for r in rows if str(r.get("track_id", "")) not in known]
+    elif in_index:
+        known = set((meta or {}).keys())
+        rows = [r for r in rows if str(r.get("track_id", "")) in known]
     if title is not None or artist is not None:
         t_needle = title.lower() if title is not None else None
         a_needle = artist.lower() if artist is not None else None
