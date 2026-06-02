@@ -221,27 +221,35 @@ def feedback_delete(
     max_score: float | None = typer.Option(None, "--max-score", help="Only delete entries whose recorded score is at most this. Entries without a numeric score are never matched. Combine with --vote -1 --max-score 0.2 to purge down-votes on weak matches."),
     title: str | None = typer.Option(None, "--title", help="Only delete entries whose track title contains this substring (case-insensitive). Resolved against the indexed library; tracks missing from the library are skipped. Pair with --dry-run first to preview which votes would be removed."),
     artist: str | None = typer.Option(None, "--artist", help="Only delete entries whose track artist contains this substring (case-insensitive). Resolved against the indexed library; tracks missing from the library are skipped."),
+    orphaned: bool = typer.Option(False, "--orphaned", help="Only delete entries whose track_id is no longer in the indexed library. Intended for purging stale votes after pruning the library. Pair with --dry-run first."),
+    in_index: bool = typer.Option(False, "--in-index", help="Only delete entries whose track_id is still present in the indexed library. Skips orphaned feedback so a name- or score-based purge cannot accidentally wipe votes whose tracks have already been pruned."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Report how many rows would be deleted without writing."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
 ):
     """Delete recorded feedback rows (undo a misclicked vote, or age out old data).
 
     At least one of --query-id, --track-id, --vote, --since, --until,
-    --min-score, --max-score, --title, or --artist must be supplied so a bare
-    invocation can never wipe the whole feedback log. Rows without a numeric
-    ts are never matched by --since / --until and rows without a numeric
-    score are never matched by --min-score / --max-score so undated or
-    unscored entries are not silently purged. --title / --artist are resolved
-    against the indexed library, so feedback whose track has been removed
-    from the index is never deleted by a name-based purge.
+    --min-score, --max-score, --title, --artist, --orphaned, or --in-index
+    must be supplied so a bare invocation can never wipe the whole feedback
+    log. Rows without a numeric ts are never matched by --since / --until
+    and rows without a numeric score are never matched by --min-score /
+    --max-score so undated or unscored entries are not silently purged.
+    --title / --artist are resolved against the indexed library, so feedback
+    whose track has been removed from the index is never deleted by a
+    name-based purge. --orphaned deletes only votes pointing at track_ids
+    no longer in the index (typical use: clean up after a library prune);
+    --in-index is its inverse and is mutually exclusive with --orphaned.
     """
     if (
         query_id is None and track_id is None and vote is None
         and since is None and until is None
         and min_score is None and max_score is None
         and title is None and artist is None
+        and not orphaned and not in_index
     ):
-        raise typer.BadParameter("supply at least one of --query-id, --track-id, --vote, --since, --until, --min-score, --max-score, --title, --artist")
+        raise typer.BadParameter("supply at least one of --query-id, --track-id, --vote, --since, --until, --min-score, --max-score, --title, --artist, --orphaned, --in-index")
+    if orphaned and in_index:
+        raise typer.BadParameter("--orphaned and --in-index are mutually exclusive")
     if vote is not None and vote not in (1, -1):
         raise typer.BadParameter("--vote must be 1 or -1")
     if min_score is not None and max_score is not None and min_score > max_score:
@@ -254,17 +262,21 @@ def feedback_delete(
     s = get_settings()
     from clawhum_library.feedback import read_feedback, delete_feedback as _delete_feedback
 
-    # Resolve --title / --artist to a concrete set of track_ids by joining
-    # against the indexed library. An empty resolved set means "no track
-    # matched the name filter", which we treat as "nothing to delete" rather
-    # than silently degrading to no-filter (which would wipe everything).
+    # Resolve --title / --artist / --in-index to a concrete set of track_ids
+    # by joining against the indexed library. An empty resolved set means
+    # "no track matched", which we treat as "nothing to delete" rather than
+    # silently degrading to no-filter (which would wipe everything).
+    # --orphaned is the inverse: it builds the allowlist from feedback rows
+    # whose track_id is NOT in the index, so it can clean up stale votes
+    # after a library prune.
     resolved_track_ids: set[str] | None = None
-    if title is not None or artist is not None:
-        meta = _load_track_metadata()
+    needs_meta = title is not None or artist is not None or orphaned or in_index
+    meta = _load_track_metadata() if needs_meta else None
+    if title is not None or artist is not None or in_index:
         t_needle = title.lower() if title is not None else None
         a_needle = artist.lower() if artist is not None else None
         resolved_track_ids = set()
-        for tid, (t_val, a_val) in meta.items():
+        for tid, (t_val, a_val) in (meta or {}).items():
             if t_needle is not None and t_needle not in (t_val or "").lower():
                 continue
             if a_needle is not None and a_needle not in (a_val or "").lower():
@@ -275,6 +287,14 @@ def feedback_delete(
             return
 
     rows = read_feedback(s.feedback_path)
+    if orphaned:
+        known = set((meta or {}).keys())
+        orphan_ids = {str(r.get("track_id", "")) for r in rows if str(r.get("track_id", "")) not in known}
+        orphan_ids.discard("")
+        if not orphan_ids:
+            console.print("[dim]no matching feedback entries[/dim]")
+            return
+        resolved_track_ids = orphan_ids
     matches = _filter_feedback(
         rows, query_id=query_id, track_id=track_id, track_ids=resolved_track_ids, vote=vote,
         since=since_ts, until=until_ts,
