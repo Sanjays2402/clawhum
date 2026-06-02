@@ -180,6 +180,46 @@ def feedback(query_id: str, track_id: str, score: float, vote: int):
     console.print("[green]ok[/green]")
 
 
+@app.command("feedback-delete")
+def feedback_delete(
+    query_id: str | None = typer.Option(None, "--query-id", help="Delete entries with this query_id."),
+    track_id: str | None = typer.Option(None, "--track-id", help="Delete entries with this track_id."),
+    vote: int | None = typer.Option(None, "--vote", help="Restrict deletion to this vote (1 or -1)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report how many rows would be deleted without writing."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+):
+    """Delete recorded feedback rows (undo a misclicked vote).
+
+    At least one of --query-id, --track-id, or --vote must be supplied so a
+    bare invocation can never wipe the whole feedback log.
+    """
+    if query_id is None and track_id is None and vote is None:
+        raise typer.BadParameter("supply at least one of --query-id, --track-id, --vote")
+    if vote is not None and vote not in (1, -1):
+        raise typer.BadParameter("--vote must be 1 or -1")
+
+    s = get_settings()
+    from clawhum_library.feedback import read_feedback, delete_feedback as _delete_feedback
+
+    rows = read_feedback(s.feedback_path)
+    matches = _filter_feedback(rows, query_id=query_id, track_id=track_id, vote=vote)
+    if not matches:
+        console.print("[dim]no matching feedback entries[/dim]")
+        return
+    if dry_run:
+        console.print(f"[yellow]would delete {len(matches)} entry(s)[/yellow]")
+        return
+    if not yes:
+        confirm = typer.confirm(f"Delete {len(matches)} feedback entry(s)?", default=False)
+        if not confirm:
+            console.print("[dim]aborted[/dim]")
+            raise typer.Exit(code=1)
+    removed = _delete_feedback(
+        s.feedback_path, query_id=query_id, track_id=track_id, vote=vote
+    )
+    console.print(f"[green]deleted {removed} entry(s)[/green]")
+
+
 def _filter_feedback(
     rows: list[dict],
     query_id: str | None = None,
