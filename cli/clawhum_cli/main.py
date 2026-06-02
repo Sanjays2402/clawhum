@@ -126,6 +126,12 @@ def match(
         "-Q",
         help="Suppress the trailing query_id and vote-command hint in table mode. Useful when piping output to a pager or capturing terminal sessions in scripts.",
     ),
+    fail_on_empty: bool = typer.Option(
+        False,
+        "--fail-on-empty",
+        "-E",
+        help="Exit non-zero (code 2) when no matches survive the threshold and filters. Useful in scripts and CI so a silent miss does not look like a successful match.",
+    ),
 ):
     """Match an audio file (hum/clip) against the index."""
     from clawhum_audio.io import load_audio
@@ -175,6 +181,8 @@ def match(
             console.print(f"[green]wrote {len(results)} match(es) to {output} (query_id={query_id})[/green]")
         else:
             console.print_json(payload)
+        if fail_on_empty and not results:
+            raise typer.Exit(code=2)
         return
     if chosen == "csv":
         payload = _results_as_csv(results, query_id=query_id)
@@ -184,6 +192,24 @@ def match(
         else:
             sys.stdout.write(payload)
             sys.stdout.flush()
+        if fail_on_empty and not results:
+            raise typer.Exit(code=2)
+        return
+
+    if not results:
+        # Empty table mode: print an actionable message instead of an
+        # empty table followed by a vote hint pointing at no track id.
+        hints = []
+        if threshold > 0.0:
+            hints.append(f"lowering --threshold (currently {threshold})")
+        if n_excl:
+            hints.append("removing --exclude-track filters")
+        suffix = f" (try {', '.join(hints)})" if hints else ""
+        console.print(f"[yellow]no matches{suffix}[/yellow]")
+        if not no_hint:
+            console.print(f"[dim]query_id: {query_id}[/dim]")
+        if fail_on_empty:
+            raise typer.Exit(code=2)
         return
 
     table = Table(title=f"Top {len(results)} matches")
