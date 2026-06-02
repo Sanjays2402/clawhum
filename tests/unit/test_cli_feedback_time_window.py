@@ -30,6 +30,19 @@ def test_parse_time_bound_rejects_garbage():
         _parse_time_bound("", flag="--since")
 
 
+def test_parse_time_bound_rejects_bare_year_or_short_int():
+    # Regression: "2024" used to silently parse as epoch=2024s (1970-01-01)
+    # and let nearly every row through the since/until filter.
+    import typer
+    for bad in ("2024", "20240101", "99999999", "0", "-1"):
+        with pytest.raises(typer.BadParameter):
+            _parse_time_bound(bad, flag="--since")
+    # Plausible epoch seconds (>= 100000000 ~ 1973) still work as integers.
+    assert _parse_time_bound("100000000", flag="--since") == 100000000.0
+    # Explicit float keeps working for any magnitude.
+    assert _parse_time_bound("0.0", flag="--since") == 0.0
+
+
 def test_filter_feedback_since_until_inclusive_lower_exclusive_upper():
     rows = [
         {"query_id": "q", "track_id": "t", "vote": 1, "score": 0.5, "ts": 10.0},
@@ -74,16 +87,16 @@ def test_feedback_list_filters_by_since_and_until(tmp_path, monkeypatch):
     _seed_two_epochs(tmp_path, monkeypatch)
     runner = CliRunner()
 
-    r = runner.invoke(app, ["feedback-list", "--format", "json", "--since", "200"])
+    r = runner.invoke(app, ["feedback-list", "--format", "json", "--since", "200.0"])
     assert r.exit_code == 0, r.output
     assert sorted(row["ts"] for row in json.loads(r.stdout)) == [200.0, 300.0]
 
-    r = runner.invoke(app, ["feedback-list", "--format", "json", "--until", "300"])
+    r = runner.invoke(app, ["feedback-list", "--format", "json", "--until", "300.0"])
     assert r.exit_code == 0
     assert sorted(row["ts"] for row in json.loads(r.stdout)) == [100.0, 200.0]
 
     r = runner.invoke(
-        app, ["feedback-list", "--format", "json", "--since", "150", "--until", "250"]
+        app, ["feedback-list", "--format", "json", "--since", "150.0", "--until", "250.0"]
     )
     assert r.exit_code == 0
     rows = json.loads(r.stdout)
@@ -94,7 +107,7 @@ def test_feedback_list_rejects_inverted_window(tmp_path, monkeypatch):
     _seed_two_epochs(tmp_path, monkeypatch)
     runner = CliRunner()
     r = runner.invoke(
-        app, ["feedback-list", "--since", "300", "--until", "200"]
+        app, ["feedback-list", "--since", "300.0", "--until", "200.0"]
     )
     assert r.exit_code != 0
 
@@ -104,7 +117,7 @@ def test_feedback_stats_window_excludes_older_rows(tmp_path, monkeypatch):
     runner = CliRunner()
     # window 250..inf keeps only ts=300 (q2/t1, +1)
     r = runner.invoke(
-        app, ["feedback-stats", "--format", "json", "--since", "250"]
+        app, ["feedback-stats", "--format", "json", "--since", "250.0"]
     )
     assert r.exit_code == 0, r.output
     stats = json.loads(r.stdout)

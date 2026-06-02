@@ -230,9 +230,20 @@ def _parse_time_bound(value: str, *, flag: str) -> float:
     v = value.strip()
     if not v:
         raise typer.BadParameter(f"{flag} must not be empty")
-    # numeric epoch seconds (int or float)
+    # numeric epoch seconds (int or float). Reject implausibly small bare
+    # integers (e.g. "2024" or "20240101") because a user almost certainly
+    # meant a calendar year/date, not 2024 seconds after 1970-01-01. Without
+    # this guard those inputs silently match nearly every row. Floats with an
+    # explicit decimal point are accepted as-is so tests like 0.0 still work.
     try:
-        return float(v)
+        n = float(v)
+        if "." in v or "e" in v or "E" in v or n >= 100_000_000:
+            return n
+        raise typer.BadParameter(
+            f"{flag}={value!r} looks like a year/date, not a unix timestamp "
+            f"(epoch seconds must be >= 100000000, i.e. >= 1973-03-03). "
+            f"Use an ISO-8601 date like 2024-01-01 instead."
+        )
     except ValueError:
         pass
     # ISO-8601: accept trailing Z as UTC
