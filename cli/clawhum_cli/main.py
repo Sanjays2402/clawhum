@@ -329,6 +329,8 @@ def feedback_list(
     until: str | None = typer.Option(None, "--until", help="Only entries strictly before this time (unix seconds or ISO-8601, naive = UTC)."),
     min_score: float | None = typer.Option(None, "--min-score", help="Only entries whose recorded score is at least this. Entries without a numeric score are excluded."),
     max_score: float | None = typer.Option(None, "--max-score", help="Only entries whose recorded score is at most this. Entries without a numeric score are excluded. Combine with --vote -1 to find down-votes on high-confidence matches (false positives)."),
+    title: str | None = typer.Option(None, "--title", help="Only entries whose track title contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
+    artist: str | None = typer.Option(None, "--artist", help="Only entries whose track artist contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
     fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write to file instead of stdout."),
@@ -358,12 +360,32 @@ def feedback_list(
         since=since_ts, until=until_ts,
         min_score=min_score, max_score=max_score,
     )
+    # --title/--artist need metadata to filter on, so auto-enrich and
+    # drop rows whose track isn't in the indexed library (can't match a blank).
+    needs_meta = enrich or title is not None or artist is not None
+    meta = _load_track_metadata() if needs_meta else None
+    if title is not None or artist is not None:
+        t_needle = title.lower() if title is not None else None
+        a_needle = artist.lower() if artist is not None else None
+        filtered = []
+        for r in rows:
+            entry = meta.get(str(r.get("track_id", ""))) if meta else None
+            if entry is None:
+                continue
+            t_val, a_val = entry
+            if t_needle is not None and t_needle not in (t_val or "").lower():
+                continue
+            if a_needle is not None and a_needle not in (a_val or "").lower():
+                continue
+            filtered.append(r)
+        rows = filtered
     # most recent first; entries without ts sort last
     rows.sort(key=lambda r: r.get("ts") or 0.0, reverse=True)
     if limit > 0:
         rows = rows[:limit]
-    if enrich:
-        _enrich_feedback_rows(rows, _load_track_metadata())
+    if needs_meta:
+        _enrich_feedback_rows(rows, meta or {})
+    enrich = needs_meta
 
     if chosen == "json":
         payload = json.dumps(rows)
