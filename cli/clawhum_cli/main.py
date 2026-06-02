@@ -503,7 +503,9 @@ def feedback_stats(
     limit: int = typer.Option(0, "--limit", "-n", help="Show top N rows (0 for all)."),
     min_total: int = typer.Option(0, "--min-total", help="Only include tracks with at least this many votes."),
     min_approval: float | None = typer.Option(None, "--min-approval", help="Only include tracks whose up/total ratio is at least this (0.0 to 1.0). Tracks with no votes are excluded."),
+    max_approval: float | None = typer.Option(None, "--max-approval", help="Only include tracks whose up/total ratio is at most this (0.0 to 1.0). Tracks with no votes are excluded. Useful for finding low-approval matches."),
     min_avg_score: float | None = typer.Option(None, "--min-avg-score", help="Only include tracks whose avg_score is at least this (0.0 to 1.0). Tracks with no numeric scores are excluded."),
+    max_avg_score: float | None = typer.Option(None, "--max-avg-score", help="Only include tracks whose avg_score is at most this (0.0 to 1.0). Tracks with no numeric scores are excluded. Useful for finding weak-score matches."),
     track_id: str | None = typer.Option(None, "--track-id", help="Only show this track_id."),
     since: str | None = typer.Option(None, "--since", help="Only aggregate entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
     until: str | None = typer.Option(None, "--until", help="Only aggregate entries strictly before this time (unix seconds or ISO-8601, naive = UTC)."),
@@ -521,8 +523,16 @@ def feedback_stats(
         raise typer.BadParameter("--min-total must be >= 0")
     if min_approval is not None and not (0.0 <= min_approval <= 1.0):
         raise typer.BadParameter("--min-approval must be between 0.0 and 1.0")
+    if max_approval is not None and not (0.0 <= max_approval <= 1.0):
+        raise typer.BadParameter("--max-approval must be between 0.0 and 1.0")
+    if min_approval is not None and max_approval is not None and min_approval > max_approval:
+        raise typer.BadParameter("--min-approval must be <= --max-approval")
     if min_avg_score is not None and not (0.0 <= min_avg_score <= 1.0):
         raise typer.BadParameter("--min-avg-score must be between 0.0 and 1.0")
+    if max_avg_score is not None and not (0.0 <= max_avg_score <= 1.0):
+        raise typer.BadParameter("--max-avg-score must be between 0.0 and 1.0")
+    if min_avg_score is not None and max_avg_score is not None and min_avg_score > max_avg_score:
+        raise typer.BadParameter("--min-avg-score must be <= --max-avg-score")
     if output is not None and chosen == "table":
         chosen = "csv"
     since_ts = _parse_time_bound(since, flag="--since") if since is not None else None
@@ -547,10 +557,20 @@ def feedback_stats(
             r for r in stats
             if isinstance(r.get("approval"), (int, float)) and r["approval"] >= min_approval
         ]
+    if max_approval is not None:
+        stats = [
+            r for r in stats
+            if isinstance(r.get("approval"), (int, float)) and r["approval"] <= max_approval
+        ]
     if min_avg_score is not None:
         stats = [
             r for r in stats
             if isinstance(r.get("avg_score"), (int, float)) and r["avg_score"] >= min_avg_score
+        ]
+    if max_avg_score is not None:
+        stats = [
+            r for r in stats
+            if isinstance(r.get("avg_score"), (int, float)) and r["avg_score"] <= max_avg_score
         ]
     _sort_feedback_stats(stats, sort)
     if limit > 0:

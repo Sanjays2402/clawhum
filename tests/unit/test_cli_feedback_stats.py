@@ -242,3 +242,84 @@ def test_feedback_stats_empty(tmp_path, monkeypatch):
     r = runner.invoke(app, ["feedback-stats", "--format", "json"])
     assert r.exit_code == 0
     assert json.loads(r.stdout) == []
+
+
+def test_feedback_stats_max_approval_filter(tmp_path, monkeypatch):
+    from clawhum_library.feedback import record_feedback
+
+    fb = tmp_path / "feedback.jsonl"
+
+    class _S:
+        feedback_path = str(fb)
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+
+    # t_good: 2 up (approval 1.0)
+    record_feedback(fb, "q1", "t_good", 0.9, 1)
+    record_feedback(fb, "q2", "t_good", 0.8, 1)
+    # t_mid: 1 up 1 down (approval 0.5)
+    record_feedback(fb, "q3", "t_mid", 0.5, 1)
+    record_feedback(fb, "q4", "t_mid", 0.4, -1)
+    # t_bad: 2 down (approval 0.0)
+    record_feedback(fb, "q5", "t_bad", 0.2, -1)
+    record_feedback(fb, "q6", "t_bad", 0.1, -1)
+
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--format", "json", "--max-approval", "0.5"])
+    assert r.exit_code == 0, r.output
+    ids = {row["track_id"] for row in json.loads(r.stdout)}
+    assert ids == {"t_mid", "t_bad"}
+
+
+def test_feedback_stats_max_approval_rejects_out_of_range(tmp_path, monkeypatch):
+    class _S:
+        feedback_path = str(tmp_path / "missing.jsonl")
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--max-approval", "1.5"])
+    assert r.exit_code != 0
+
+
+def test_feedback_stats_min_max_approval_inverted_rejected(tmp_path, monkeypatch):
+    class _S:
+        feedback_path = str(tmp_path / "missing.jsonl")
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+    runner = CliRunner()
+    r = runner.invoke(
+        app, ["feedback-stats", "--min-approval", "0.8", "--max-approval", "0.2"]
+    )
+    assert r.exit_code != 0
+
+
+def test_feedback_stats_max_avg_score_filters(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    # t1 avg=0.85, t2 avg=0.4, t3 avg=0.2 (from _seed)
+    r = runner.invoke(app, ["feedback-stats", "--format", "json", "--max-avg-score", "0.45"])
+    assert r.exit_code == 0, r.output
+    ids = {row["track_id"] for row in json.loads(r.stdout)}
+    assert ids == {"t2", "t3"}
+
+
+def test_feedback_stats_max_avg_score_rejects_out_of_range(tmp_path, monkeypatch):
+    class _S:
+        feedback_path = str(tmp_path / "missing.jsonl")
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--max-avg-score", "-0.1"])
+    assert r.exit_code != 0
+
+
+def test_feedback_stats_min_max_avg_score_inverted_rejected(tmp_path, monkeypatch):
+    class _S:
+        feedback_path = str(tmp_path / "missing.jsonl")
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+    runner = CliRunner()
+    r = runner.invoke(
+        app, ["feedback-stats", "--min-avg-score", "0.8", "--max-avg-score", "0.2"]
+    )
+    assert r.exit_code != 0
