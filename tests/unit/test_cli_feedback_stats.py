@@ -83,6 +83,43 @@ def test_feedback_stats_min_total_filter(tmp_path, monkeypatch):
     assert ids == {"t1", "t2"}  # t3 has only 1 vote
 
 
+def test_feedback_stats_max_total_filter(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    # t1 has 2 votes, t2 has 3, t3 has 1
+    r = runner.invoke(app, ["feedback-stats", "--format", "json", "--max-total", "2"])
+    assert r.exit_code == 0
+    ids = {row["track_id"] for row in json.loads(r.stdout)}
+    assert ids == {"t1", "t3"}
+
+
+def test_feedback_stats_min_total_max_total_combined(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    r = runner.invoke(
+        app, ["feedback-stats", "--format", "json", "--min-total", "2", "--max-total", "2"]
+    )
+    assert r.exit_code == 0
+    ids = {row["track_id"] for row in json.loads(r.stdout)}
+    assert ids == {"t1"}
+
+
+def test_feedback_stats_max_total_rejects_negative(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--max-total", "-1"])
+    assert r.exit_code != 0
+    assert "--max-total must be >= 0" in r.output
+
+
+def test_feedback_stats_min_total_gt_max_total_rejected(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--min-total", "3", "--max-total", "2"])
+    assert r.exit_code != 0
+    assert "--min-total must be <= --max-total" in r.output
+
+
 def test_feedback_stats_min_up_filter(tmp_path, monkeypatch):
     _seed(tmp_path, monkeypatch)
     runner = CliRunner()

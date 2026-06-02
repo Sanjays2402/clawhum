@@ -693,6 +693,7 @@ def feedback_stats(
     sort: str = typer.Option("net", "--sort", "-s", help="Sort by: net, up, down, total, track_id, avg_score, approval, wilson (Wilson 95% lower bound of approval, penalises few-vote tracks)."),
     limit: int = typer.Option(0, "--limit", "-n", help="Show top N rows (0 for all)."),
     min_total: int = typer.Option(0, "--min-total", help="Only include tracks with at least this many votes."),
+    max_total: int | None = typer.Option(None, "--max-total", help="Only include tracks with at most this many votes. Useful for surfacing sparsely-voted tracks that need more feedback before their stats can be trusted. Pair with --min-total 1 to skip zero-vote rows."),
     min_up: int = typer.Option(0, "--min-up", help="Only include tracks with at least this many up-votes."),
     min_down: int = typer.Option(0, "--min-down", help="Only include tracks with at least this many down-votes. Useful for surfacing clearly problematic matches without needing a net-score threshold."),
     min_net: int | None = typer.Option(None, "--min-net", help="Only include tracks whose net score (up - down) is at least this. Negative values allowed."),
@@ -724,6 +725,10 @@ def feedback_stats(
         raise typer.BadParameter("--limit must be >= 0")
     if min_total < 0:
         raise typer.BadParameter("--min-total must be >= 0")
+    if max_total is not None and max_total < 0:
+        raise typer.BadParameter("--max-total must be >= 0")
+    if max_total is not None and min_total > max_total:
+        raise typer.BadParameter("--min-total must be <= --max-total")
     if min_up < 0:
         raise typer.BadParameter("--min-up must be >= 0")
     if min_down < 0:
@@ -767,6 +772,8 @@ def feedback_stats(
     stats = _aggregate_feedback(rows)
     if min_total > 0:
         stats = [r for r in stats if r["total"] >= min_total]
+    if max_total is not None:
+        stats = [r for r in stats if r["total"] <= max_total]
     if min_up > 0:
         stats = [r for r in stats if r["up"] >= min_up]
     if min_down > 0:
