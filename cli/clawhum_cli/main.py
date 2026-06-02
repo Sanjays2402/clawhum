@@ -255,6 +255,8 @@ def _filter_feedback(
     vote: int | None = None,
     since: float | None = None,
     until: float | None = None,
+    min_score: float | None = None,
+    max_score: float | None = None,
 ) -> list[dict]:
     out = rows
     if query_id is not None:
@@ -267,6 +269,10 @@ def _filter_feedback(
         out = [r for r in out if isinstance(r.get("ts"), (int, float)) and r["ts"] >= since]
     if until is not None:
         out = [r for r in out if isinstance(r.get("ts"), (int, float)) and r["ts"] < until]
+    if min_score is not None:
+        out = [r for r in out if isinstance(r.get("score"), (int, float)) and r["score"] >= min_score]
+    if max_score is not None:
+        out = [r for r in out if isinstance(r.get("score"), (int, float)) and r["score"] <= max_score]
     return out
 
 
@@ -298,6 +304,8 @@ def feedback_list(
     vote: int | None = typer.Option(None, "--vote", help="Filter by vote: 1 (up) or -1 (down)."),
     since: str | None = typer.Option(None, "--since", help="Only entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
     until: str | None = typer.Option(None, "--until", help="Only entries strictly before this time (unix seconds or ISO-8601, naive = UTC)."),
+    min_score: float | None = typer.Option(None, "--min-score", help="Only entries whose recorded score is at least this. Entries without a numeric score are excluded."),
+    max_score: float | None = typer.Option(None, "--max-score", help="Only entries whose recorded score is at most this. Entries without a numeric score are excluded. Combine with --vote -1 to find down-votes on high-confidence matches (false positives)."),
     fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write to file instead of stdout."),
@@ -310,6 +318,8 @@ def feedback_list(
         raise typer.BadParameter("--vote must be 1 or -1")
     if limit < 0:
         raise typer.BadParameter("--limit must be >= 0")
+    if min_score is not None and max_score is not None and min_score > max_score:
+        raise typer.BadParameter("--min-score must be <= --max-score")
     if output is not None and chosen == "table":
         chosen = "csv"
     since_ts = _parse_time_bound(since, flag="--since") if since is not None else None
@@ -323,6 +333,7 @@ def feedback_list(
     rows = _filter_feedback(
         rows, query_id=query_id, track_id=track_id, vote=vote,
         since=since_ts, until=until_ts,
+        min_score=min_score, max_score=max_score,
     )
     # most recent first; entries without ts sort last
     rows.sort(key=lambda r: r.get("ts") or 0.0, reverse=True)
