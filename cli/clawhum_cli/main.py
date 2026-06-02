@@ -190,20 +190,30 @@ def feedback_delete(
     vote: int | None = typer.Option(None, "--vote", help="Restrict deletion to this vote (1 or -1)."),
     since: str | None = typer.Option(None, "--since", help="Only delete entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
     until: str | None = typer.Option(None, "--until", help="Only delete entries strictly before this time (unix seconds or ISO-8601, naive = UTC). Pair with no other filter to purge old feedback (e.g. --until 2024-01-01 to age out last year)."),
+    min_score: float | None = typer.Option(None, "--min-score", help="Only delete entries whose recorded score is at least this. Entries without a numeric score are never matched."),
+    max_score: float | None = typer.Option(None, "--max-score", help="Only delete entries whose recorded score is at most this. Entries without a numeric score are never matched. Combine with --vote -1 --max-score 0.2 to purge down-votes on weak matches."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Report how many rows would be deleted without writing."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
 ):
     """Delete recorded feedback rows (undo a misclicked vote, or age out old data).
 
-    At least one of --query-id, --track-id, --vote, --since, or --until must be
-    supplied so a bare invocation can never wipe the whole feedback log. Rows
-    without a numeric ts are never matched by --since / --until so undated
-    entries are not silently purged.
+    At least one of --query-id, --track-id, --vote, --since, --until,
+    --min-score, or --max-score must be supplied so a bare invocation can
+    never wipe the whole feedback log. Rows without a numeric ts are never
+    matched by --since / --until and rows without a numeric score are never
+    matched by --min-score / --max-score so undated or unscored entries are
+    not silently purged.
     """
-    if query_id is None and track_id is None and vote is None and since is None and until is None:
-        raise typer.BadParameter("supply at least one of --query-id, --track-id, --vote, --since, --until")
+    if (
+        query_id is None and track_id is None and vote is None
+        and since is None and until is None
+        and min_score is None and max_score is None
+    ):
+        raise typer.BadParameter("supply at least one of --query-id, --track-id, --vote, --since, --until, --min-score, --max-score")
     if vote is not None and vote not in (1, -1):
         raise typer.BadParameter("--vote must be 1 or -1")
+    if min_score is not None and max_score is not None and min_score > max_score:
+        raise typer.BadParameter("--min-score must be <= --max-score")
     since_ts = _parse_time_bound(since, flag="--since") if since is not None else None
     until_ts = _parse_time_bound(until, flag="--until") if until is not None else None
     if since_ts is not None and until_ts is not None and since_ts > until_ts:
@@ -216,6 +226,7 @@ def feedback_delete(
     matches = _filter_feedback(
         rows, query_id=query_id, track_id=track_id, vote=vote,
         since=since_ts, until=until_ts,
+        min_score=min_score, max_score=max_score,
     )
     if not matches:
         console.print("[dim]no matching feedback entries[/dim]")
@@ -231,6 +242,7 @@ def feedback_delete(
     removed = _delete_feedback(
         s.feedback_path, query_id=query_id, track_id=track_id, vote=vote,
         since=since_ts, until=until_ts,
+        min_score=min_score, max_score=max_score,
     )
     console.print(f"[green]deleted {removed} entry(s)[/green]")
 

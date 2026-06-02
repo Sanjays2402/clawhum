@@ -50,17 +50,21 @@ def delete_feedback(
     vote: int | None = None,
     since: float | None = None,
     until: float | None = None,
+    min_score: float | None = None,
+    max_score: float | None = None,
 ) -> int:
     """Delete feedback rows matching the given filters.
 
-    At least one of query_id/track_id/vote/since/until must be provided; a
-    no-filter call raises ValueError so a misuse never wipes the whole log.
-    `since` keeps rows whose ts is strictly less than the bound; `until` keeps
-    rows whose ts is greater than or equal to the bound. Rows without a numeric
-    ts are always kept when a time bound is in play so undated entries are
-    never silently purged. Returns the number of rows removed. The rewrite is
-    atomic via a tempfile + os.replace in the same directory, so a crash
-    mid-write cannot leave a truncated log.
+    At least one of query_id/track_id/vote/since/until/min_score/max_score
+    must be provided; a no-filter call raises ValueError so a misuse never
+    wipes the whole log. `since` keeps rows whose ts is strictly less than the
+    bound; `until` keeps rows whose ts is greater than or equal to the bound.
+    Rows without a numeric ts are always kept when a time bound is in play so
+    undated entries are never silently purged. Similarly, rows without a
+    numeric score are always kept when a score bound is in play so entries
+    with a missing/non-numeric score are never silently purged. Returns the
+    number of rows removed. The rewrite is atomic via a tempfile + os.replace
+    in the same directory, so a crash mid-write cannot leave a truncated log.
     """
     if (
         query_id is None
@@ -68,6 +72,8 @@ def delete_feedback(
         and vote is None
         and since is None
         and until is None
+        and min_score is None
+        and max_score is None
     ):
         raise ValueError("delete_feedback requires at least one filter")
     p = Path(path)
@@ -99,6 +105,17 @@ def delete_feedback(
                     kept.append(row)
                     continue
                 if until is not None and ts >= until:
+                    kept.append(row)
+                    continue
+            if min_score is not None or max_score is not None:
+                score = row.get("score")
+                if not isinstance(score, (int, float)) or isinstance(score, bool):
+                    kept.append(row)
+                    continue
+                if min_score is not None and score < min_score:
+                    kept.append(row)
+                    continue
+                if max_score is not None and score > max_score:
                     kept.append(row)
                     continue
             removed += 1
