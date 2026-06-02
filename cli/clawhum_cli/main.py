@@ -185,24 +185,35 @@ def feedback_delete(
     query_id: str | None = typer.Option(None, "--query-id", help="Delete entries with this query_id."),
     track_id: str | None = typer.Option(None, "--track-id", help="Delete entries with this track_id."),
     vote: int | None = typer.Option(None, "--vote", help="Restrict deletion to this vote (1 or -1)."),
+    since: str | None = typer.Option(None, "--since", help="Only delete entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
+    until: str | None = typer.Option(None, "--until", help="Only delete entries strictly before this time (unix seconds or ISO-8601, naive = UTC). Pair with no other filter to purge old feedback (e.g. --until 2024-01-01 to age out last year)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Report how many rows would be deleted without writing."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
 ):
-    """Delete recorded feedback rows (undo a misclicked vote).
+    """Delete recorded feedback rows (undo a misclicked vote, or age out old data).
 
-    At least one of --query-id, --track-id, or --vote must be supplied so a
-    bare invocation can never wipe the whole feedback log.
+    At least one of --query-id, --track-id, --vote, --since, or --until must be
+    supplied so a bare invocation can never wipe the whole feedback log. Rows
+    without a numeric ts are never matched by --since / --until so undated
+    entries are not silently purged.
     """
-    if query_id is None and track_id is None and vote is None:
-        raise typer.BadParameter("supply at least one of --query-id, --track-id, --vote")
+    if query_id is None and track_id is None and vote is None and since is None and until is None:
+        raise typer.BadParameter("supply at least one of --query-id, --track-id, --vote, --since, --until")
     if vote is not None and vote not in (1, -1):
         raise typer.BadParameter("--vote must be 1 or -1")
+    since_ts = _parse_time_bound(since, flag="--since") if since is not None else None
+    until_ts = _parse_time_bound(until, flag="--until") if until is not None else None
+    if since_ts is not None and until_ts is not None and since_ts > until_ts:
+        raise typer.BadParameter("--since must be <= --until")
 
     s = get_settings()
     from clawhum_library.feedback import read_feedback, delete_feedback as _delete_feedback
 
     rows = read_feedback(s.feedback_path)
-    matches = _filter_feedback(rows, query_id=query_id, track_id=track_id, vote=vote)
+    matches = _filter_feedback(
+        rows, query_id=query_id, track_id=track_id, vote=vote,
+        since=since_ts, until=until_ts,
+    )
     if not matches:
         console.print("[dim]no matching feedback entries[/dim]")
         return
@@ -215,7 +226,8 @@ def feedback_delete(
             console.print("[dim]aborted[/dim]")
             raise typer.Exit(code=1)
     removed = _delete_feedback(
-        s.feedback_path, query_id=query_id, track_id=track_id, vote=vote
+        s.feedback_path, query_id=query_id, track_id=track_id, vote=vote,
+        since=since_ts, until=until_ts,
     )
     console.print(f"[green]deleted {removed} entry(s)[/green]")
 

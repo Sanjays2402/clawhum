@@ -48,15 +48,27 @@ def delete_feedback(
     query_id: str | None = None,
     track_id: str | None = None,
     vote: int | None = None,
+    since: float | None = None,
+    until: float | None = None,
 ) -> int:
     """Delete feedback rows matching the given filters.
 
-    At least one of query_id/track_id/vote must be provided; a no-filter call
-    raises ValueError so a misuse never wipes the whole log. Returns the number
-    of rows removed. The rewrite is atomic via a tempfile + os.replace in the
-    same directory, so a crash mid-write cannot leave a truncated log.
+    At least one of query_id/track_id/vote/since/until must be provided; a
+    no-filter call raises ValueError so a misuse never wipes the whole log.
+    `since` keeps rows whose ts is strictly less than the bound; `until` keeps
+    rows whose ts is greater than or equal to the bound. Rows without a numeric
+    ts are always kept when a time bound is in play so undated entries are
+    never silently purged. Returns the number of rows removed. The rewrite is
+    atomic via a tempfile + os.replace in the same directory, so a crash
+    mid-write cannot leave a truncated log.
     """
-    if query_id is None and track_id is None and vote is None:
+    if (
+        query_id is None
+        and track_id is None
+        and vote is None
+        and since is None
+        and until is None
+    ):
         raise ValueError("delete_feedback requires at least one filter")
     p = Path(path)
     if not p.exists():
@@ -78,6 +90,17 @@ def delete_feedback(
             if vote is not None and row.get("vote") != vote:
                 kept.append(row)
                 continue
+            ts = row.get("ts")
+            if since is not None or until is not None:
+                if not isinstance(ts, (int, float)):
+                    kept.append(row)
+                    continue
+                if since is not None and ts < since:
+                    kept.append(row)
+                    continue
+                if until is not None and ts >= until:
+                    kept.append(row)
+                    continue
             removed += 1
     if removed == 0:
         return 0
