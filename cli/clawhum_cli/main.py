@@ -35,6 +35,21 @@ def index(
     console.print_json(json.dumps(res))
 
 
+def _filter_excluded_tracks(results, exclude: list[str] | None):
+    """Drop matches whose track_id is in ``exclude``.
+
+    Comparison is case-sensitive and whitespace-trimmed so users can pass
+    ``--exclude-track " abc "`` without surprises. ``None`` or empty list is a
+    no-op so callers don't need to special-case it.
+    """
+    if not exclude:
+        return list(results)
+    blocked = {t.strip() for t in exclude if t and t.strip()}
+    if not blocked:
+        return list(results)
+    return [m for m in results if m.track.id not in blocked]
+
+
 def _results_as_dicts(results, query_id: str | None = None):
     rows = [
         {
@@ -74,6 +89,12 @@ def match(
     json_out: bool = typer.Option(False, "--json", help="Emit JSON (shortcut for --format json)."),
     fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write results to file instead of stdout."),
+    exclude_track: list[str] = typer.Option(
+        None,
+        "--exclude-track",
+        "-x",
+        help="Drop matches with this track_id. Repeatable. Useful to peek past a known-wrong top hit (e.g. a duplicate edition) without re-humming.",
+    ),
 ):
     """Match an audio file (hum/clip) against the index."""
     from clawhum_audio.io import load_audio
@@ -97,7 +118,13 @@ def match(
         raise typer.Exit(code=1)
     x, sr = load_audio(query, target_sr=state.embedder.sr)
     matcher = Matcher(state.embedder, state.index, state.tracks)
-    results = matcher.match(x, sr, top_k=top_k, threshold=threshold)
+    # Pull a few extra candidates when excluding so the user still gets ~top_k
+    # rows after filtering rather than a short list.
+    n_excl = len({t.strip() for t in (exclude_track or []) if t and t.strip()})
+    fetch_k = top_k + n_excl if n_excl else top_k
+    results = matcher.match(x, sr, top_k=fetch_k, threshold=threshold)
+    if n_excl:
+        results = _filter_excluded_tracks(results, exclude_track)[:top_k]
     query_id = str(uuid.uuid4())
 
     if chosen == "json":
