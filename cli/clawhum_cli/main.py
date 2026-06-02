@@ -3,6 +3,7 @@ import csv
 import io
 import json
 import sys
+import uuid
 from pathlib import Path
 import typer
 from rich.console import Console
@@ -34,8 +35,8 @@ def index(
     console.print_json(json.dumps(res))
 
 
-def _results_as_dicts(results):
-    return [
+def _results_as_dicts(results, query_id: str | None = None):
+    rows = [
         {
             "rank": i,
             "track_id": m.track.id,
@@ -46,17 +47,20 @@ def _results_as_dicts(results):
         }
         for i, m in enumerate(results, 1)
     ]
+    if query_id is not None:
+        for r in rows:
+            r["query_id"] = query_id
+    return rows
 
 
-def _results_as_csv(results) -> str:
+def _results_as_csv(results, query_id: str | None = None) -> str:
     buf = io.StringIO()
-    writer = csv.DictWriter(
-        buf,
-        fieldnames=["rank", "track_id", "title", "artist", "score", "segment"],
-        lineterminator="\n",
-    )
+    fields = ["rank", "track_id", "title", "artist", "score", "segment"]
+    if query_id is not None:
+        fields.append("query_id")
+    writer = csv.DictWriter(buf, fieldnames=fields, lineterminator="\n")
     writer.writeheader()
-    for row in _results_as_dicts(results):
+    for row in _results_as_dicts(results, query_id=query_id):
         writer.writerow({k: ("" if v is None else v) for k, v in row.items()})
     return buf.getvalue()
 
@@ -91,20 +95,21 @@ def match(
     x, sr = load_audio(query, target_sr=state.embedder.sr)
     matcher = Matcher(state.embedder, state.index, state.tracks)
     results = matcher.match(x, sr, top_k=top_k, threshold=threshold)
+    query_id = str(uuid.uuid4())
 
     if chosen == "json":
-        payload = json.dumps(_results_as_dicts(results))
+        payload = json.dumps(_results_as_dicts(results, query_id=query_id))
         if output is not None:
             output.write_text(payload + "\n", encoding="utf-8")
-            console.print(f"[green]wrote {len(results)} match(es) to {output}[/green]")
+            console.print(f"[green]wrote {len(results)} match(es) to {output} (query_id={query_id})[/green]")
         else:
             console.print_json(payload)
         return
     if chosen == "csv":
-        payload = _results_as_csv(results)
+        payload = _results_as_csv(results, query_id=query_id)
         if output is not None:
             output.write_text(payload, encoding="utf-8")
-            console.print(f"[green]wrote {len(results)} match(es) to {output}[/green]")
+            console.print(f"[green]wrote {len(results)} match(es) to {output} (query_id={query_id})[/green]")
         else:
             sys.stdout.write(payload)
             sys.stdout.flush()
@@ -115,9 +120,14 @@ def match(
     table.add_column("Score", justify="right")
     table.add_column("Title")
     table.add_column("Artist")
+    table.add_column("Track ID")
     for i, m in enumerate(results, 1):
-        table.add_row(str(i), f"{m.score:.3f}", m.track.title, m.track.artist)
+        table.add_row(str(i), f"{m.score:.3f}", m.track.title, m.track.artist, m.track.id)
     console.print(table)
+    console.print(
+        f"[dim]query_id: {query_id}\n"
+        f"vote a match: clawhum feedback {query_id} <track_id> <score> <1|-1>[/dim]"
+    )
 
 
 @app.command()

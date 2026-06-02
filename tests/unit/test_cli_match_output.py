@@ -41,3 +41,21 @@ def test_results_as_csv_empty():
     # header line only
     lines = [ln for ln in payload.splitlines() if ln]
     assert lines == ["rank,track_id,title,artist,score,segment"]
+
+
+def test_results_as_dicts_includes_query_id_when_set():
+    rows = _results_as_dicts(_sample_results(), query_id="q-123")
+    assert all(r["query_id"] == "q-123" for r in rows)
+    # without query_id the field is omitted (backward compatible)
+    rows_plain = _results_as_dicts(_sample_results())
+    assert "query_id" not in rows_plain[0]
+
+
+def test_results_as_csv_includes_query_id_column_when_set():
+    payload = _results_as_csv(_sample_results(), query_id="q-abc")
+    reader = list(csv.DictReader(io.StringIO(payload)))
+    assert reader[0]["query_id"] == "q-abc"
+    assert reader[1]["query_id"] == "q-abc"
+    # header order keeps query_id at the end so existing column indexes are stable
+    header = payload.splitlines()[0].split(",")
+    assert header == ["rank", "track_id", "title", "artist", "score", "segment", "query_id"]
