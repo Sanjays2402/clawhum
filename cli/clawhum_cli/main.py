@@ -99,6 +99,35 @@ def _results_as_csv(results, query_id: str | None = None) -> str:
     return buf.getvalue()
 
 
+def _resolve_output_format(fmt: str | None, json_out: bool, output: Path | None) -> str:
+    """Resolve the effective output format for `match`.
+
+    Precedence: --json shortcut > explicit --format > inferred from --output
+    extension > stdout default (table). When an explicit --format=table is
+    paired with --output we downgrade to csv since rich tables do not
+    round-trip cleanly to disk.
+    """
+    chosen = fmt.lower() if fmt else None
+    if json_out:
+        chosen = "json"
+    if chosen is not None and chosen not in {"table", "json", "csv"}:
+        raise typer.BadParameter("--format must be one of: table, json, csv")
+    if chosen is None:
+        if output is not None:
+            suffix = output.suffix.lower()
+            if suffix == ".json":
+                return "json"
+            if suffix in {".csv", ".tsv", ".txt"}:
+                return "csv"
+            # Unknown extension going to a file: fall back to csv rather than
+            # dumping ANSI table escapes.
+            return "csv"
+        return "table"
+    if output is not None and chosen == "table":
+        return "csv"
+    return chosen
+
+
 @app.command()
 def match(
     query: Path = typer.Argument(..., exists=True, dir_okay=False, file_okay=True),
@@ -106,7 +135,7 @@ def match(
     threshold: float = typer.Option(0.0, "--threshold", "-t"),
     no_clap: bool = typer.Option(False, "--no-clap"),
     json_out: bool = typer.Option(False, "--json", help="Emit JSON (shortcut for --format json)."),
-    fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
+    fmt: str | None = typer.Option(None, "--format", "-f", help="Output format: table, json, csv. Defaults to table on stdout, or inferred from --output extension (.json/.csv) when writing to a file."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write results to file instead of stdout."),
     exclude_track: list[str] = typer.Option(
         None,
@@ -138,14 +167,7 @@ def match(
     from clawhum_match.matcher import Matcher
     from services.api.clawhum_api.state import AppState  # type: ignore
 
-    chosen = fmt.lower()
-    if json_out:
-        chosen = "json"
-    if chosen not in {"table", "json", "csv"}:
-        raise typer.BadParameter("--format must be one of: table, json, csv")
-    if output is not None and chosen == "table":
-        # writing rich tables to a file is rarely what users want; default to csv
-        chosen = "csv"
+    chosen = _resolve_output_format(fmt, json_out, output)
 
     state = AppState.boot(prefer_clap=not no_clap)
     if not state.tracks:
