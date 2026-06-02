@@ -970,6 +970,18 @@ def feedback_stats(
         "-x",
         help="Drop this track_id from the aggregation. Repeatable. Useful for looking past known-good or known-bad tracks (e.g. a duplicate edition that dominates the top of the list) without re-querying.",
     ),
+    query_id: list[str] = typer.Option(
+        None,
+        "--query-id",
+        "-q",
+        help="Only aggregate entries for this query_id. Repeatable. Useful for slicing stats down to a single hum attempt or a small set of related attempts (e.g. one user session) without exporting the raw feedback log.",
+    ),
+    exclude_query_id: list[str] = typer.Option(
+        None,
+        "--exclude-query-id",
+        "-X",
+        help="Drop entries with this query_id from the aggregation. Repeatable. Useful for excluding a known-noisy session (e.g. a smoke-test run that flooded the log with junk votes) without rewriting the feedback file.",
+    ),
     title: str | None = typer.Option(None, "--title", help="Only show tracks whose title contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
     artist: str | None = typer.Option(None, "--artist", help="Only show tracks whose artist contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
     since: str | None = typer.Option(None, "--since", help="Only aggregate entries at/after this time (unix seconds, ISO-8601 naive = UTC, or relative offset from now like 24h/7d/30m/45s/2w)."),
@@ -1028,6 +1040,12 @@ def feedback_stats(
         raise typer.BadParameter("--since must be <= --until")
 
     excluded_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
+    only_qids = {q.strip() for q in (query_id or []) if q and q.strip()}
+    excluded_qids = {q.strip() for q in (exclude_query_id or []) if q and q.strip()}
+    if only_qids and excluded_qids and only_qids & excluded_qids:
+        raise typer.BadParameter(
+            "--query-id and --exclude-query-id must not overlap"
+        )
 
     s = get_settings()
     from clawhum_library.feedback import read_feedback
@@ -1036,6 +1054,10 @@ def feedback_stats(
         rows = [r for r in rows if r.get("track_id") == track_id]
     if excluded_ids:
         rows = [r for r in rows if str(r.get("track_id", "")) not in excluded_ids]
+    if only_qids:
+        rows = [r for r in rows if str(r.get("query_id", "")) in only_qids]
+    if excluded_qids:
+        rows = [r for r in rows if str(r.get("query_id", "")) not in excluded_qids]
     if since_ts is not None:
         rows = [r for r in rows if isinstance(r.get("ts"), (int, float)) and r["ts"] >= since_ts]
     if until_ts is not None:
