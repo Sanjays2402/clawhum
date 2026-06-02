@@ -528,6 +528,12 @@ def feedback_list(
     in_index: bool = typer.Option(False, "--in-index", help="Only show entries whose track_id is still present in the indexed library. Skips orphaned feedback so the list reflects the live catalog."),
     sort: str = typer.Option("ts", "--sort", help="Sort order: ts (newest first, default), ts-asc (oldest first), score (highest first), score-asc (lowest first), track_id (asc). Entries missing a numeric ts/score sort last."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write to file instead of stdout."),
+    fail_on_empty: bool = typer.Option(
+        False,
+        "--fail-on-empty",
+        "-E",
+        help="Exit non-zero (code 2) when no entries survive the filters. Useful in scripts and CI (e.g. nightly checks that votes are being recorded) so an empty list does not look like a successful no-op.",
+    ),
 ):
     """List recorded feedback (most recent first)."""
     if orphaned and in_index:
@@ -619,6 +625,8 @@ def feedback_list(
             console.print(f"[green]wrote {len(rows)} entry(s) to {output}[/green]")
         else:
             console.print_json(payload)
+        if fail_on_empty and not rows:
+            raise typer.Exit(code=2)
         return
     if chosen == "csv":
         payload = _feedback_as_csv(rows, enrich=enrich)
@@ -628,10 +636,14 @@ def feedback_list(
         else:
             sys.stdout.write(payload)
             sys.stdout.flush()
+        if fail_on_empty and not rows:
+            raise typer.Exit(code=2)
         return
 
     if not rows:
         console.print("[dim]no feedback recorded yet[/dim]")
+        if fail_on_empty:
+            raise typer.Exit(code=2)
         return
     from datetime import datetime, timezone
     table = Table(title=f"Feedback ({len(rows)})")
