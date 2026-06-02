@@ -725,6 +725,12 @@ def feedback_stats(
     min_wilson: float | None = typer.Option(None, "--min-wilson", help="Only include tracks whose Wilson 95% lower bound is at least this (0.0 to 1.0). Penalises few-vote tracks, so this surfaces tracks with both high approval and enough evidence to trust it."),
     max_wilson: float | None = typer.Option(None, "--max-wilson", help="Only include tracks whose Wilson 95% lower bound is at most this (0.0 to 1.0). Useful for surfacing tracks whose approval is statistically weak (low evidence or low ratio)."),
     track_id: str | None = typer.Option(None, "--track-id", help="Only show this track_id."),
+    exclude_track: list[str] = typer.Option(
+        None,
+        "--exclude-track",
+        "-x",
+        help="Drop this track_id from the aggregation. Repeatable. Useful for looking past known-good or known-bad tracks (e.g. a duplicate edition that dominates the top of the list) without re-querying.",
+    ),
     title: str | None = typer.Option(None, "--title", help="Only show tracks whose title contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
     artist: str | None = typer.Option(None, "--artist", help="Only show tracks whose artist contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
     since: str | None = typer.Option(None, "--since", help="Only aggregate entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
@@ -780,11 +786,15 @@ def feedback_stats(
     if since_ts is not None and until_ts is not None and since_ts > until_ts:
         raise typer.BadParameter("--since must be <= --until")
 
+    excluded_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
+
     s = get_settings()
     from clawhum_library.feedback import read_feedback
     rows = read_feedback(s.feedback_path)
     if track_id is not None:
         rows = [r for r in rows if r.get("track_id") == track_id]
+    if excluded_ids:
+        rows = [r for r in rows if str(r.get("track_id", "")) not in excluded_ids]
     if since_ts is not None:
         rows = [r for r in rows if isinstance(r.get("ts"), (int, float)) and r["ts"] >= since_ts]
     if until_ts is not None:

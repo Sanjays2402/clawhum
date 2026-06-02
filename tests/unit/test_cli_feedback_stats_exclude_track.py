@@ -1,0 +1,101 @@
+"""`clawhum feedback-stats --exclude-track <id>` drops the given track_id from
+the aggregation so the user can look past known-good or known-bad tracks (e.g.
+a duplicate edition that dominates the top of the list) without re-querying.
+Repeatable; whitespace-trimmed; unknown ids are a no-op."""
+
+import json
+
+from typer.testing import CliRunner
+
+from cli.clawhum_cli.main import app
+
+
+def _seed(tmp_path, monkeypatch):
+    from clawhum_library.feedback import record_feedback
+
+    fb = tmp_path / "feedback.jsonl"
+
+    class _S:
+        feedback_path = str(fb)
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+
+    # t1: 2 up
+    record_feedback(fb, "q1", "t1", 0.9, 1)
+    record_feedback(fb, "q2", "t1", 0.8, 1)
+    # t2: 1 up, 2 down
+    record_feedback(fb, "q1", "t2", 0.4, -1)
+    record_feedback(fb, "q3", "t2", 0.5, 1)
+    record_feedback(fb, "q4", "t2", 0.3, -1)
+    # t3: 1 down
+    record_feedback(fb, "q5", "t3", 0.2, -1)
+    return fb
+
+
+def _ids(out: str) -> list[str]:
+    rows = json.loads(out)
+    return [r["track_id"] for r in rows]
+
+
+def test_exclude_track_drops_named_track(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--exclude-track", "t1", "-f", "json"])
+    assert r.exit_code == 0, r.output
+    ids = _ids(r.output)
+    assert "t1" not in ids
+    assert set(ids) == {"t2", "t3"}
+
+
+def test_exclude_track_is_repeatable(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    r = runner.invoke(
+        app,
+        ["feedback-stats", "--exclude-track", "t1", "-x", "t3", "-f", "json"],
+    )
+    assert r.exit_code == 0, r.output
+    assert _ids(r.output) == ["t2"]
+
+
+def test_exclude_track_trims_whitespace(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    r = runner.invoke(
+        app, ["feedback-stats", "--exclude-track", "  t1  ", "-f", "json"]
+    )
+    assert r.exit_code == 0, r.output
+    assert "t1" not in _ids(r.output)
+
+
+def test_exclude_unknown_track_is_noop(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    r = runner.invoke(
+        app, ["feedback-stats", "--exclude-track", "nope", "-f", "json"]
+    )
+    assert r.exit_code == 0, r.output
+    assert set(_ids(r.output)) == {"t1", "t2", "t3"}
+
+
+def test_exclude_blank_entries_are_ignored(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    r = runner.invoke(
+        app,
+        ["feedback-stats", "--exclude-track", "", "--exclude-track", "   ", "-f", "json"],
+    )
+    assert r.exit_code == 0, r.output
+    assert set(_ids(r.output)) == {"t1", "t2", "t3"}
+
+
+def test_exclude_track_does_not_affect_other_aggregates(tmp_path, monkeypatch):
+    """Excluding t1 must not change t2's up/down/net counts."""
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--exclude-track", "t1", "-f", "json"])
+    assert r.exit_code == 0, r.output
+    rows = {r["track_id"]: r for r in json.loads(r.output)}
+    assert rows["t2"]["up"] == 1
+    assert rows["t2"]["down"] == 2
+    assert rows["t2"]["net"] == -1
