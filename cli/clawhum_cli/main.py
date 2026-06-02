@@ -322,8 +322,17 @@ def _sort_feedback_stats(rows: list[dict], sort: str) -> list[dict]:
         rows.sort(key=lambda r: r["total"], reverse=True)
     elif key == "track_id":
         rows.sort(key=lambda r: r["track_id"])
+    elif key == "avg_score":
+        # tracks with no avg_score (no numeric scores recorded) sort last
+        rows.sort(
+            key=lambda r: (
+                0 if isinstance(r.get("avg_score"), (int, float)) else 1,
+                -(r["avg_score"] if isinstance(r.get("avg_score"), (int, float)) else 0.0),
+                -r["total"],
+            )
+        )
     else:
-        raise typer.BadParameter("--sort must be one of: net, up, down, total, track_id")
+        raise typer.BadParameter("--sort must be one of: net, up, down, total, track_id, avg_score")
     return rows
 
 
@@ -344,7 +353,7 @@ def _feedback_stats_as_csv(rows: list[dict]) -> str:
 
 @app.command("feedback-stats")
 def feedback_stats(
-    sort: str = typer.Option("net", "--sort", "-s", help="Sort by: net, up, down, total, track_id."),
+    sort: str = typer.Option("net", "--sort", "-s", help="Sort by: net, up, down, total, track_id, avg_score."),
     limit: int = typer.Option(0, "--limit", "-n", help="Show top N rows (0 for all)."),
     min_total: int = typer.Option(0, "--min-total", help="Only include tracks with at least this many votes."),
     track_id: str | None = typer.Option(None, "--track-id", help="Only show this track_id."),

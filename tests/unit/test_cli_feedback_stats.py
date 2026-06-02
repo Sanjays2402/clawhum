@@ -103,6 +103,29 @@ def test_feedback_stats_rejects_bad_sort(tmp_path, monkeypatch):
     assert r.exit_code != 0
 
 
+def test_feedback_stats_sort_by_avg_score(tmp_path, monkeypatch):
+    from clawhum_library.feedback import record_feedback
+
+    fb = tmp_path / "feedback.jsonl"
+
+    class _S:
+        feedback_path = str(fb)
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+
+    # t_high: avg 0.9, t_mid: avg 0.5, t_low: avg 0.1
+    record_feedback(fb, "q1", "t_mid", 0.5, 1)
+    record_feedback(fb, "q2", "t_high", 0.9, 1)
+    record_feedback(fb, "q3", "t_low", 0.1, -1)
+
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--format", "json", "--sort", "avg_score"])
+    assert r.exit_code == 0, r.output
+    rows = json.loads(r.stdout)
+    ids = [row["track_id"] for row in rows]
+    assert ids == ["t_high", "t_mid", "t_low"]
+
+
 def test_feedback_stats_csv_to_file(tmp_path, monkeypatch):
     _seed(tmp_path, monkeypatch)
     runner = CliRunner()
