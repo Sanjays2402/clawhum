@@ -976,7 +976,11 @@ def feedback_stats(
     max_avg_score: float | None = typer.Option(None, "--max-avg-score", help="Only include tracks whose avg_score is at most this (0.0 to 1.0). Tracks with no numeric scores are excluded. Useful for finding weak-score matches."),
     min_wilson: float | None = typer.Option(None, "--min-wilson", help="Only include tracks whose Wilson 95% lower bound is at least this (0.0 to 1.0). Penalises few-vote tracks, so this surfaces tracks with both high approval and enough evidence to trust it."),
     max_wilson: float | None = typer.Option(None, "--max-wilson", help="Only include tracks whose Wilson 95% lower bound is at most this (0.0 to 1.0). Useful for surfacing tracks whose approval is statistically weak (low evidence or low ratio)."),
-    track_id: str | None = typer.Option(None, "--track-id", help="Only show this track_id."),
+    track_id: list[str] = typer.Option(
+        None,
+        "--track-id",
+        help="Only aggregate entries for this track_id. Repeatable. Useful for scoping stats to a curated shortlist of tracks (e.g. the top candidates from a recent `clawhum match`) without sifting through the full list. Mutually exclusive with --exclude-track on the same id.",
+    ),
     exclude_track: list[str] = typer.Option(
         None,
         "--exclude-track",
@@ -1052,7 +1056,12 @@ def feedback_stats(
     if since_ts is not None and until_ts is not None and since_ts > until_ts:
         raise typer.BadParameter("--since must be <= --until")
 
+    only_ids = {t.strip() for t in (track_id or []) if t and t.strip()}
     excluded_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
+    if only_ids and excluded_ids and only_ids & excluded_ids:
+        raise typer.BadParameter(
+            "--track-id and --exclude-track must not overlap"
+        )
     only_qids = {q.strip() for q in (query_id or []) if q and q.strip()}
     excluded_qids = {q.strip() for q in (exclude_query_id or []) if q and q.strip()}
     if only_qids and excluded_qids and only_qids & excluded_qids:
@@ -1063,8 +1072,8 @@ def feedback_stats(
     s = get_settings()
     from clawhum_library.feedback import read_feedback
     rows = read_feedback(s.feedback_path)
-    if track_id is not None:
-        rows = [r for r in rows if r.get("track_id") == track_id]
+    if only_ids:
+        rows = [r for r in rows if str(r.get("track_id", "")) in only_ids]
     if excluded_ids:
         rows = [r for r in rows if str(r.get("track_id", "")) not in excluded_ids]
     if only_qids:
