@@ -654,6 +654,8 @@ def feedback_stats(
     max_approval: float | None = typer.Option(None, "--max-approval", help="Only include tracks whose up/total ratio is at most this (0.0 to 1.0). Tracks with no votes are excluded. Useful for finding low-approval matches."),
     min_avg_score: float | None = typer.Option(None, "--min-avg-score", help="Only include tracks whose avg_score is at least this (0.0 to 1.0). Tracks with no numeric scores are excluded."),
     max_avg_score: float | None = typer.Option(None, "--max-avg-score", help="Only include tracks whose avg_score is at most this (0.0 to 1.0). Tracks with no numeric scores are excluded. Useful for finding weak-score matches."),
+    min_wilson: float | None = typer.Option(None, "--min-wilson", help="Only include tracks whose Wilson 95% lower bound is at least this (0.0 to 1.0). Penalises few-vote tracks, so this surfaces tracks with both high approval and enough evidence to trust it."),
+    max_wilson: float | None = typer.Option(None, "--max-wilson", help="Only include tracks whose Wilson 95% lower bound is at most this (0.0 to 1.0). Useful for surfacing tracks whose approval is statistically weak (low evidence or low ratio)."),
     track_id: str | None = typer.Option(None, "--track-id", help="Only show this track_id."),
     title: str | None = typer.Option(None, "--title", help="Only show tracks whose title contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
     artist: str | None = typer.Option(None, "--artist", help="Only show tracks whose artist contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
@@ -693,6 +695,12 @@ def feedback_stats(
         raise typer.BadParameter("--max-avg-score must be between 0.0 and 1.0")
     if min_avg_score is not None and max_avg_score is not None and min_avg_score > max_avg_score:
         raise typer.BadParameter("--min-avg-score must be <= --max-avg-score")
+    if min_wilson is not None and not (0.0 <= min_wilson <= 1.0):
+        raise typer.BadParameter("--min-wilson must be between 0.0 and 1.0")
+    if max_wilson is not None and not (0.0 <= max_wilson <= 1.0):
+        raise typer.BadParameter("--max-wilson must be between 0.0 and 1.0")
+    if min_wilson is not None and max_wilson is not None and min_wilson > max_wilson:
+        raise typer.BadParameter("--min-wilson must be <= --max-wilson")
     if output is not None and chosen == "table":
         chosen = "csv"
     since_ts = _parse_time_bound(since, flag="--since") if since is not None else None
@@ -739,6 +747,16 @@ def feedback_stats(
         stats = [
             r for r in stats
             if isinstance(r.get("avg_score"), (int, float)) and r["avg_score"] <= max_avg_score
+        ]
+    if min_wilson is not None:
+        stats = [
+            r for r in stats
+            if isinstance(r.get("wilson"), (int, float)) and r["wilson"] >= min_wilson
+        ]
+    if max_wilson is not None:
+        stats = [
+            r for r in stats
+            if isinstance(r.get("wilson"), (int, float)) and r["wilson"] <= max_wilson
         ]
     _sort_feedback_stats(stats, sort)
     # Filter by library membership before enrichment so we only load metadata once.

@@ -451,3 +451,70 @@ def test_feedback_stats_csv_includes_wilson_column(tmp_path, monkeypatch):
     for row in reader:
         assert row["wilson"] != ""
         float(row["wilson"])  # parseable
+
+
+def test_feedback_stats_min_wilson_filters_few_vote_tracks(tmp_path, monkeypatch):
+    from clawhum_library.feedback import record_feedback
+
+    fb = tmp_path / "feedback.jsonl"
+
+    class _S:
+        feedback_path = str(fb)
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+
+    # t_strong: many up-votes, no down -> high wilson lower bound
+    for i in range(20):
+        record_feedback(fb, f"q{i}", "t_strong", 0.9, 1)
+    # t_thin: single up-vote -> approval 1.0 but wilson << 1
+    record_feedback(fb, "q_thin", "t_thin", 0.9, 1)
+    # t_bad: only down-votes -> wilson 0
+    record_feedback(fb, "q_bad", "t_bad", 0.2, -1)
+
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--format", "json", "--min-wilson", "0.7"])
+    assert r.exit_code == 0, r.output
+    ids = {row["track_id"] for row in json.loads(r.stdout)}
+    assert ids == {"t_strong"}
+
+
+def test_feedback_stats_max_wilson_surfaces_weak_evidence(tmp_path, monkeypatch):
+    from clawhum_library.feedback import record_feedback
+
+    fb = tmp_path / "feedback.jsonl"
+
+    class _S:
+        feedback_path = str(fb)
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+
+    for i in range(20):
+        record_feedback(fb, f"q{i}", "t_strong", 0.9, 1)
+    record_feedback(fb, "q_thin", "t_thin", 0.9, 1)
+    record_feedback(fb, "q_bad", "t_bad", 0.2, -1)
+
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--format", "json", "--max-wilson", "0.5"])
+    assert r.exit_code == 0, r.output
+    ids = {row["track_id"] for row in json.loads(r.stdout)}
+    assert ids == {"t_thin", "t_bad"}
+
+
+def test_feedback_stats_min_wilson_rejects_out_of_range(tmp_path, monkeypatch):
+    class _S:
+        feedback_path = str(tmp_path / "missing.jsonl")
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--min-wilson", "1.5"])
+    assert r.exit_code != 0
+
+
+def test_feedback_stats_min_max_wilson_inverted_rejected(tmp_path, monkeypatch):
+    class _S:
+        feedback_path = str(tmp_path / "missing.jsonl")
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--min-wilson", "0.8", "--max-wilson", "0.2"])
+    assert r.exit_code != 0
