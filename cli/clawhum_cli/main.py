@@ -283,8 +283,8 @@ def feedback_delete(
     query_id: str | None = typer.Option(None, "--query-id", help="Delete entries with this query_id."),
     track_id: str | None = typer.Option(None, "--track-id", help="Delete entries with this track_id."),
     vote: int | None = typer.Option(None, "--vote", help="Restrict deletion to this vote (1 or -1)."),
-    since: str | None = typer.Option(None, "--since", help="Only delete entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
-    until: str | None = typer.Option(None, "--until", help="Only delete entries strictly before this time (unix seconds or ISO-8601, naive = UTC). Pair with no other filter to purge old feedback (e.g. --until 2024-01-01 to age out last year)."),
+    since: str | None = typer.Option(None, "--since", help="Only delete entries at/after this time (unix seconds, ISO-8601 naive = UTC, or relative offset from now like 24h/7d/30m/45s/2w)."),
+    until: str | None = typer.Option(None, "--until", help="Only delete entries strictly before this time (unix seconds, ISO-8601 naive = UTC, or relative offset from now like 24h/7d/30m/45s/2w). Pair with no other filter to purge old feedback (e.g. --until 30d to age out anything older than 30 days, or --until 2024-01-01 to age out last year)."),
     min_score: float | None = typer.Option(None, "--min-score", help="Only delete entries whose recorded score is at least this. Entries without a numeric score are never matched."),
     max_score: float | None = typer.Option(None, "--max-score", help="Only delete entries whose recorded score is at most this. Entries without a numeric score are never matched. Combine with --vote -1 --max-score 0.2 to purge down-votes on weak matches."),
     title: str | None = typer.Option(None, "--title", help="Only delete entries whose track title contains this substring (case-insensitive). Resolved against the indexed library; tracks missing from the library are skipped. Pair with --dry-run first to preview which votes would be removed."),
@@ -387,16 +387,43 @@ def feedback_delete(
     console.print(f"[green]deleted {removed} entry(s)[/green]")
 
 
-def _parse_time_bound(value: str, *, flag: str) -> float:
-    """Parse a CLI time bound as either a unix epoch seconds value or an ISO-8601
-    date/datetime. Naive ISO inputs are treated as UTC. Raises typer.BadParameter
-    on bad input so the user gets a clean error instead of a traceback.
+_RELATIVE_TIME_UNITS = {
+    "s": 1.0,
+    "m": 60.0,
+    "h": 3600.0,
+    "d": 86400.0,
+    "w": 604800.0,
+}
+
+
+def _parse_time_bound(value: str, *, flag: str, now: float | None = None) -> float:
+    """Parse a CLI time bound as a unix epoch seconds value, an ISO-8601
+    date/datetime, or a relative offset from now like ``24h``, ``7d``, ``30m``,
+    ``45s`` or ``2w``. Relative offsets resolve to ``now - offset`` so users can
+    say ``--since 24h`` instead of computing a timestamp. Naive ISO inputs are
+    treated as UTC. Raises typer.BadParameter on bad input so the user gets a
+    clean error instead of a traceback.
     """
+    import time
     from datetime import datetime, timezone
 
     v = value.strip()
     if not v:
         raise typer.BadParameter(f"{flag} must not be empty")
+    # relative offset shorthand: <number><unit> where unit is one of s/m/h/d/w.
+    # Resolves to (now - offset). A bare "0d"/"0h" means "now" which is a useful
+    # upper bound ("everything up to this instant"). Negative offsets are not
+    # accepted because the only well-defined meaning is "future", which feedback
+    # filters never want.
+    if len(v) >= 2 and v[-1] in _RELATIVE_TIME_UNITS:
+        head = v[:-1]
+        try:
+            n = float(head)
+        except ValueError:
+            n = None
+        if n is not None and n >= 0:
+            base = time.time() if now is None else now
+            return base - n * _RELATIVE_TIME_UNITS[v[-1]]
     # numeric epoch seconds (int or float). Reject implausibly small bare
     # integers (e.g. "2024" or "20240101") because a user almost certainly
     # meant a calendar year/date, not 2024 seconds after 1970-01-01. Without
@@ -489,8 +516,8 @@ def feedback_list(
         help="Drop entries for this track_id from the listing. Repeatable. Useful for looking past a known-noisy track (e.g. a duplicate edition that dominates recent votes) without re-querying.",
     ),
     vote: int | None = typer.Option(None, "--vote", help="Filter by vote: 1 (up) or -1 (down)."),
-    since: str | None = typer.Option(None, "--since", help="Only entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
-    until: str | None = typer.Option(None, "--until", help="Only entries strictly before this time (unix seconds or ISO-8601, naive = UTC)."),
+    since: str | None = typer.Option(None, "--since", help="Only entries at/after this time (unix seconds, ISO-8601 naive = UTC, or relative offset from now like 24h/7d/30m/45s/2w)."),
+    until: str | None = typer.Option(None, "--until", help="Only entries strictly before this time (unix seconds, ISO-8601 naive = UTC, or relative offset from now like 24h/7d/30m/45s/2w)."),
     min_score: float | None = typer.Option(None, "--min-score", help="Only entries whose recorded score is at least this. Entries without a numeric score are excluded."),
     max_score: float | None = typer.Option(None, "--max-score", help="Only entries whose recorded score is at most this. Entries without a numeric score are excluded. Combine with --vote -1 to find down-votes on high-confidence matches (false positives)."),
     title: str | None = typer.Option(None, "--title", help="Only entries whose track title contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
@@ -811,8 +838,8 @@ def feedback_stats(
     ),
     title: str | None = typer.Option(None, "--title", help="Only show tracks whose title contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
     artist: str | None = typer.Option(None, "--artist", help="Only show tracks whose artist contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
-    since: str | None = typer.Option(None, "--since", help="Only aggregate entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
-    until: str | None = typer.Option(None, "--until", help="Only aggregate entries strictly before this time (unix seconds or ISO-8601, naive = UTC)."),
+    since: str | None = typer.Option(None, "--since", help="Only aggregate entries at/after this time (unix seconds, ISO-8601 naive = UTC, or relative offset from now like 24h/7d/30m/45s/2w)."),
+    until: str | None = typer.Option(None, "--until", help="Only aggregate entries strictly before this time (unix seconds, ISO-8601 naive = UTC, or relative offset from now like 24h/7d/30m/45s/2w)."),
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
     orphaned: bool = typer.Option(False, "--orphaned", help="Only show tracks with feedback that are no longer in the indexed library. Useful after pruning the library to find stale feedback to delete."),
     in_index: bool = typer.Option(False, "--in-index", help="Only show tracks that are still present in the indexed library. Skips orphaned feedback so stats reflect the live catalog."),
