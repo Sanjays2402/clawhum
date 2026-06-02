@@ -91,7 +91,10 @@ def match(
 
     state = AppState.boot(prefer_clap=not no_clap)
     if not state.tracks:
-        raise typer.Exit("index empty; run `clawhum index <dir>` first")
+        # typer.Exit takes a code, not a message. Print first, then exit non-zero,
+        # so users actually see why match failed instead of a silent exit code.
+        console.print("[red]index empty; run `clawhum index <dir>` first[/red]")
+        raise typer.Exit(code=1)
     x, sr = load_audio(query, target_sr=state.embedder.sr)
     matcher = Matcher(state.embedder, state.index, state.tracks)
     results = matcher.match(x, sr, top_k=top_k, threshold=threshold)
