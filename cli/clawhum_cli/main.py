@@ -165,6 +165,15 @@ def stats():
 @app.command()
 def feedback(query_id: str, track_id: str, score: float, vote: int):
     """Record a thumbs-up (1) / thumbs-down (-1) for a match."""
+    if vote not in (1, -1):
+        raise typer.BadParameter("vote must be 1 (thumbs up) or -1 (thumbs down)")
+    if not query_id or not query_id.strip():
+        raise typer.BadParameter("query_id must not be empty")
+    if not track_id or not track_id.strip():
+        raise typer.BadParameter("track_id must not be empty")
+    import math
+    if math.isnan(score) or math.isinf(score):
+        raise typer.BadParameter("score must be a finite number")
     s = get_settings()
     from clawhum_library.feedback import record_feedback
     record_feedback(s.feedback_path, query_id, track_id, score, vote)
