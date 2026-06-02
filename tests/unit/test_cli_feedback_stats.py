@@ -83,6 +83,37 @@ def test_feedback_stats_min_total_filter(tmp_path, monkeypatch):
     assert ids == {"t1", "t2"}  # t3 has only 1 vote
 
 
+def test_feedback_stats_min_up_filter(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    # t1 has 2 up, t2 has 1 up, t3 has 0 up
+    r = runner.invoke(app, ["feedback-stats", "--format", "json", "--min-up", "2"])
+    assert r.exit_code == 0
+    ids = {row["track_id"] for row in json.loads(r.stdout)}
+    assert ids == {"t1"}
+
+
+def test_feedback_stats_min_down_filter(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    # t1 has 0 down, t2 has 2 down, t3 has 1 down
+    r = runner.invoke(app, ["feedback-stats", "--format", "json", "--min-down", "2"])
+    assert r.exit_code == 0
+    ids = {row["track_id"] for row in json.loads(r.stdout)}
+    assert ids == {"t2"}
+
+
+def test_feedback_stats_rejects_negative_min_up_min_down(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--min-up", "-1"])
+    assert r.exit_code != 0
+    assert "--min-up must be >= 0" in (r.stdout + (r.stderr or ""))
+    r = runner.invoke(app, ["feedback-stats", "--min-down", "-1"])
+    assert r.exit_code != 0
+    assert "--min-down must be >= 0" in (r.stdout + (r.stderr or ""))
+
+
 def test_feedback_stats_track_id_filter_and_limit(tmp_path, monkeypatch):
     _seed(tmp_path, monkeypatch)
     runner = CliRunner()

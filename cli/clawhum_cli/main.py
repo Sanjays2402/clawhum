@@ -524,6 +524,8 @@ def feedback_stats(
     sort: str = typer.Option("net", "--sort", "-s", help="Sort by: net, up, down, total, track_id, avg_score, approval."),
     limit: int = typer.Option(0, "--limit", "-n", help="Show top N rows (0 for all)."),
     min_total: int = typer.Option(0, "--min-total", help="Only include tracks with at least this many votes."),
+    min_up: int = typer.Option(0, "--min-up", help="Only include tracks with at least this many up-votes."),
+    min_down: int = typer.Option(0, "--min-down", help="Only include tracks with at least this many down-votes. Useful for surfacing clearly problematic matches without needing a net-score threshold."),
     min_net: int | None = typer.Option(None, "--min-net", help="Only include tracks whose net score (up - down) is at least this. Negative values allowed."),
     max_net: int | None = typer.Option(None, "--max-net", help="Only include tracks whose net score (up - down) is at most this. Negative values allowed. Combine with --max-net -2 to surface tracks the audience clearly rejects."),
     min_approval: float | None = typer.Option(None, "--min-approval", help="Only include tracks whose up/total ratio is at least this (0.0 to 1.0). Tracks with no votes are excluded."),
@@ -545,6 +547,10 @@ def feedback_stats(
         raise typer.BadParameter("--limit must be >= 0")
     if min_total < 0:
         raise typer.BadParameter("--min-total must be >= 0")
+    if min_up < 0:
+        raise typer.BadParameter("--min-up must be >= 0")
+    if min_down < 0:
+        raise typer.BadParameter("--min-down must be >= 0")
     if min_net is not None and max_net is not None and min_net > max_net:
         raise typer.BadParameter("--min-net must be <= --max-net")
     if min_approval is not None and not (0.0 <= min_approval <= 1.0):
@@ -578,6 +584,10 @@ def feedback_stats(
     stats = _aggregate_feedback(rows)
     if min_total > 0:
         stats = [r for r in stats if r["total"] >= min_total]
+    if min_up > 0:
+        stats = [r for r in stats if r["up"] >= min_up]
+    if min_down > 0:
+        stats = [r for r in stats if r["down"] >= min_down]
     if min_net is not None:
         stats = [r for r in stats if r["net"] >= min_net]
     if max_net is not None:
