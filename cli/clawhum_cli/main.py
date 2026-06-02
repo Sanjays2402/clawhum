@@ -171,5 +171,103 @@ def feedback(query_id: str, track_id: str, score: float, vote: int):
     console.print("[green]ok[/green]")
 
 
+def _filter_feedback(
+    rows: list[dict],
+    query_id: str | None = None,
+    track_id: str | None = None,
+    vote: int | None = None,
+) -> list[dict]:
+    out = rows
+    if query_id is not None:
+        out = [r for r in out if r.get("query_id") == query_id]
+    if track_id is not None:
+        out = [r for r in out if r.get("track_id") == track_id]
+    if vote is not None:
+        out = [r for r in out if r.get("vote") == vote]
+    return out
+
+
+def _feedback_as_csv(rows: list[dict]) -> str:
+    buf = io.StringIO()
+    fields = ["ts", "query_id", "track_id", "score", "vote"]
+    writer = csv.DictWriter(buf, fieldnames=fields, lineterminator="\n", extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({k: ("" if row.get(k) is None else row.get(k)) for k in fields})
+    return buf.getvalue()
+
+
+@app.command("feedback-list")
+def feedback_list(
+    limit: int = typer.Option(20, "--limit", "-n", help="Show the most recent N entries (0 for all)."),
+    query_id: str | None = typer.Option(None, "--query-id", help="Only show entries for this query_id."),
+    track_id: str | None = typer.Option(None, "--track-id", help="Only show entries for this track_id."),
+    vote: int | None = typer.Option(None, "--vote", help="Filter by vote: 1 (up) or -1 (down)."),
+    fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Write to file instead of stdout."),
+):
+    """List recorded feedback (most recent first)."""
+    chosen = fmt.lower()
+    if chosen not in {"table", "json", "csv"}:
+        raise typer.BadParameter("--format must be one of: table, json, csv")
+    if vote is not None and vote not in (1, -1):
+        raise typer.BadParameter("--vote must be 1 or -1")
+    if limit < 0:
+        raise typer.BadParameter("--limit must be >= 0")
+    if output is not None and chosen == "table":
+        chosen = "csv"
+
+    s = get_settings()
+    from clawhum_library.feedback import read_feedback
+    rows = read_feedback(s.feedback_path)
+    rows = _filter_feedback(rows, query_id=query_id, track_id=track_id, vote=vote)
+    # most recent first; entries without ts sort last
+    rows.sort(key=lambda r: r.get("ts") or 0.0, reverse=True)
+    if limit > 0:
+        rows = rows[:limit]
+
+    if chosen == "json":
+        payload = json.dumps(rows)
+        if output is not None:
+            output.write_text(payload + "\n", encoding="utf-8")
+            console.print(f"[green]wrote {len(rows)} entry(s) to {output}[/green]")
+        else:
+            console.print_json(payload)
+        return
+    if chosen == "csv":
+        payload = _feedback_as_csv(rows)
+        if output is not None:
+            output.write_text(payload, encoding="utf-8")
+            console.print(f"[green]wrote {len(rows)} entry(s) to {output}[/green]")
+        else:
+            sys.stdout.write(payload)
+            sys.stdout.flush()
+        return
+
+    if not rows:
+        console.print("[dim]no feedback recorded yet[/dim]")
+        return
+    from datetime import datetime, timezone
+    table = Table(title=f"Feedback ({len(rows)})")
+    table.add_column("When")
+    table.add_column("Vote", justify="right")
+    table.add_column("Score", justify="right")
+    table.add_column("Track ID")
+    table.add_column("Query ID")
+    for r in rows:
+        ts = r.get("ts")
+        when = (
+            datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+            if isinstance(ts, (int, float))
+            else ""
+        )
+        v = r.get("vote")
+        vote_cell = "+1" if v == 1 else ("-1" if v == -1 else str(v))
+        score = r.get("score")
+        score_cell = f"{score:.3f}" if isinstance(score, (int, float)) else ""
+        table.add_row(when, vote_cell, score_cell, str(r.get("track_id", "")), str(r.get("query_id", "")))
+    console.print(table)
+
+
 if __name__ == "__main__":
     app()
