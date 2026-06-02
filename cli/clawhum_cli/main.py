@@ -634,6 +634,12 @@ def _enrich_feedback_rows(rows: list[dict], meta: dict[str, tuple[str, str]]) ->
 def feedback_list(
     limit: int = typer.Option(20, "--limit", "-n", help="Show the most recent N entries (0 for all)."),
     query_id: str | None = typer.Option(None, "--query-id", help="Only show entries for this query_id."),
+    exclude_query_id: list[str] = typer.Option(
+        None,
+        "--exclude-query-id",
+        "-X",
+        help="Drop entries with this query_id from the listing. Repeatable. Useful for hiding a known-noisy session (e.g. a smoke-test run that flooded the log with junk votes) without rewriting the feedback file.",
+    ),
     track_id: str | None = typer.Option(None, "--track-id", help="Only show entries for this track_id."),
     exclude_track: list[str] = typer.Option(
         None,
@@ -680,6 +686,11 @@ def feedback_list(
         raise typer.BadParameter("--since must be <= --until")
 
     excluded_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
+    excluded_qids = {q.strip() for q in (exclude_query_id or []) if q and q.strip()}
+    if query_id is not None and query_id.strip() in excluded_qids:
+        raise typer.BadParameter(
+            "--query-id and --exclude-query-id must not overlap"
+        )
 
     s = get_settings()
     from clawhum_library.feedback import read_feedback
@@ -691,6 +702,8 @@ def feedback_list(
     )
     if excluded_ids:
         rows = [r for r in rows if str(r.get("track_id", "")) not in excluded_ids]
+    if excluded_qids:
+        rows = [r for r in rows if str(r.get("query_id", "")) not in excluded_qids]
     # --title/--artist/--orphaned/--in-index need metadata to filter on, so
     # auto-enrich. --title/--artist additionally drop rows whose track isn't in
     # the indexed library (can't match a blank).
