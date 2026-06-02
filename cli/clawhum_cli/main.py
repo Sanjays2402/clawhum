@@ -456,6 +456,7 @@ def feedback_stats(
     limit: int = typer.Option(0, "--limit", "-n", help="Show top N rows (0 for all)."),
     min_total: int = typer.Option(0, "--min-total", help="Only include tracks with at least this many votes."),
     min_approval: float | None = typer.Option(None, "--min-approval", help="Only include tracks whose up/total ratio is at least this (0.0 to 1.0). Tracks with no votes are excluded."),
+    min_avg_score: float | None = typer.Option(None, "--min-avg-score", help="Only include tracks whose avg_score is at least this (0.0 to 1.0). Tracks with no numeric scores are excluded."),
     track_id: str | None = typer.Option(None, "--track-id", help="Only show this track_id."),
     since: str | None = typer.Option(None, "--since", help="Only aggregate entries at/after this time (unix seconds or ISO-8601, naive = UTC)."),
     until: str | None = typer.Option(None, "--until", help="Only aggregate entries strictly before this time (unix seconds or ISO-8601, naive = UTC)."),
@@ -472,6 +473,8 @@ def feedback_stats(
         raise typer.BadParameter("--min-total must be >= 0")
     if min_approval is not None and not (0.0 <= min_approval <= 1.0):
         raise typer.BadParameter("--min-approval must be between 0.0 and 1.0")
+    if min_avg_score is not None and not (0.0 <= min_avg_score <= 1.0):
+        raise typer.BadParameter("--min-avg-score must be between 0.0 and 1.0")
     if output is not None and chosen == "table":
         chosen = "csv"
     since_ts = _parse_time_bound(since, flag="--since") if since is not None else None
@@ -495,6 +498,11 @@ def feedback_stats(
         stats = [
             r for r in stats
             if isinstance(r.get("approval"), (int, float)) and r["approval"] >= min_approval
+        ]
+    if min_avg_score is not None:
+        stats = [
+            r for r in stats
+            if isinstance(r.get("avg_score"), (int, float)) and r["avg_score"] >= min_avg_score
         ]
     _sort_feedback_stats(stats, sort)
     if limit > 0:

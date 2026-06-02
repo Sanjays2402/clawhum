@@ -212,6 +212,27 @@ def test_feedback_stats_min_approval_rejects_out_of_range(tmp_path, monkeypatch)
     assert r.exit_code != 0
 
 
+def test_feedback_stats_min_avg_score_filters(tmp_path, monkeypatch):
+    _seed(tmp_path, monkeypatch)
+    runner = CliRunner()
+    # t1 avg=0.85, t2 avg=0.4, t3 avg=0.2 (from _seed)
+    r = runner.invoke(app, ["feedback-stats", "--format", "json", "--min-avg-score", "0.5"])
+    assert r.exit_code == 0, r.output
+    rows = json.loads(r.stdout)
+    ids = {row["track_id"] for row in rows}
+    assert ids == {"t1"}
+
+
+def test_feedback_stats_min_avg_score_rejects_out_of_range(tmp_path, monkeypatch):
+    class _S:
+        feedback_path = str(tmp_path / "missing.jsonl")
+
+    monkeypatch.setattr("cli.clawhum_cli.main.get_settings", lambda: _S())
+    runner = CliRunner()
+    r = runner.invoke(app, ["feedback-stats", "--min-avg-score", "1.5"])
+    assert r.exit_code != 0
+
+
 def test_feedback_stats_empty(tmp_path, monkeypatch):
     class _S:
         feedback_path = str(tmp_path / "missing.jsonl")
