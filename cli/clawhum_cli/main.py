@@ -183,6 +183,12 @@ def match(
         "-E",
         help="Exit non-zero (code 2) when no matches survive the threshold and filters. Useful in scripts and CI so a silent miss does not look like a successful match.",
     ),
+    query_id_opt: str | None = typer.Option(
+        None,
+        "--query-id",
+        "-q",
+        help="Tag this match run with a caller-supplied query id instead of a fresh UUID. Useful to (1) re-run the same hum and have follow-up `clawhum feedback` votes line up against a stable id, (2) thread a higher-level request id (e.g. `user_42_attempt_3`) through to the feedback log, or (3) make table/JSON/CSV output deterministic in tests. Must be a non-blank string of at most 128 characters; raw whitespace is rejected so it round-trips cleanly through shells and CSV.",
+    ),
 ):
     """Match an audio file (hum/clip) against the index."""
     from clawhum_audio.io import load_audio
@@ -228,7 +234,21 @@ def match(
         results = _dedupe_by_track(results)
     if n_excl or unique_tracks or only_ids:
         results = results[:top_k]
-    query_id = str(uuid.uuid4())
+    if query_id_opt is not None:
+        # Caller-supplied id: validate aggressively so a malformed value can
+        # never poison the feedback log or table/CSV output. Reject blanks
+        # (would look like the auto-uuid was skipped), reject any whitespace
+        # (breaks shell pipelines and CSV reliably), and cap the length so a
+        # runaway value can't bloat every row.
+        if not query_id_opt or not query_id_opt.strip():
+            raise typer.BadParameter("--query-id must not be empty")
+        if any(ch.isspace() for ch in query_id_opt):
+            raise typer.BadParameter("--query-id must not contain whitespace")
+        if len(query_id_opt) > 128:
+            raise typer.BadParameter("--query-id must be at most 128 characters")
+        query_id = query_id_opt
+    else:
+        query_id = str(uuid.uuid4())
 
     if chosen == "json":
         payload = json.dumps(_results_as_dicts(results, query_id=query_id))
