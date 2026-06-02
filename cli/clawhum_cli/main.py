@@ -120,6 +120,12 @@ def match(
         "-u",
         help="Collapse multiple segment hits from the same track into one row (the best-scoring segment). Useful when one song's segments fill the whole top-K and crowd out other candidates.",
     ),
+    no_hint: bool = typer.Option(
+        False,
+        "--no-hint",
+        "-Q",
+        help="Suppress the trailing query_id and vote-command hint in table mode. Useful when piping output to a pager or capturing terminal sessions in scripts.",
+    ),
 ):
     """Match an audio file (hum/clip) against the index."""
     from clawhum_audio.io import load_audio
@@ -197,10 +203,11 @@ def match(
             m.track.id,
         )
     console.print(table)
-    console.print(
-        f"[dim]query_id: {query_id}\n"
-        f"vote a match: clawhum feedback {query_id} <track_id> <score> <1|-1>[/dim]"
-    )
+    if not no_hint:
+        console.print(
+            f"[dim]query_id: {query_id}\n"
+            f"vote a match: clawhum feedback {query_id} <track_id> <score> <1|-1>[/dim]"
+        )
 
 
 @app.command()
