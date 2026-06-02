@@ -50,6 +50,25 @@ def _filter_excluded_tracks(results, exclude: list[str] | None):
     return [m for m in results if m.track.id not in blocked]
 
 
+def _dedupe_by_track(results):
+    """Keep only the best-scoring match per track_id, preserving input order.
+
+    The matcher returns one row per (track, segment), so a single song with
+    several strong segments can fill the whole top-K and crowd out other
+    candidates. Callers can opt in to one row per track via ``--unique-tracks``.
+    Input is assumed to be score-descending (matcher's contract); the first hit
+    for each track_id therefore has the highest score and is the one kept.
+    """
+    seen: set[str] = set()
+    out = []
+    for m in results:
+        if m.track.id in seen:
+            continue
+        seen.add(m.track.id)
+        out.append(m)
+    return out
+
+
 def _results_as_dicts(results, query_id: str | None = None):
     rows = [
         {
@@ -95,6 +114,12 @@ def match(
         "-x",
         help="Drop matches with this track_id. Repeatable. Useful to peek past a known-wrong top hit (e.g. a duplicate edition) without re-humming.",
     ),
+    unique_tracks: bool = typer.Option(
+        False,
+        "--unique-tracks",
+        "-u",
+        help="Collapse multiple segment hits from the same track into one row (the best-scoring segment). Useful when one song's segments fill the whole top-K and crowd out other candidates.",
+    ),
 ):
     """Match an audio file (hum/clip) against the index."""
     from clawhum_audio.io import load_audio
@@ -121,10 +146,20 @@ def match(
     # Pull a few extra candidates when excluding so the user still gets ~top_k
     # rows after filtering rather than a short list.
     n_excl = len({t.strip() for t in (exclude_track or []) if t and t.strip()})
+    # When deduping by track or excluding ids, pull extra candidates so the
+    # post-filter list still has ~top_k rows. For --unique-tracks we don't know
+    # the duplication factor up front, so fetch a generous multiple capped at a
+    # sane ceiling; the matcher caps to the index size internally.
     fetch_k = top_k + n_excl if n_excl else top_k
+    if unique_tracks:
+        fetch_k = max(fetch_k, top_k * 8)
     results = matcher.match(x, sr, top_k=fetch_k, threshold=threshold)
     if n_excl:
-        results = _filter_excluded_tracks(results, exclude_track)[:top_k]
+        results = _filter_excluded_tracks(results, exclude_track)
+    if unique_tracks:
+        results = _dedupe_by_track(results)
+    if n_excl or unique_tracks:
+        results = results[:top_k]
     query_id = str(uuid.uuid4())
 
     if chosen == "json":
