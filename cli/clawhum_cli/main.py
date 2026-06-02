@@ -845,6 +845,12 @@ def feedback_stats(
     in_index: bool = typer.Option(False, "--in-index", help="Only show tracks that are still present in the indexed library. Skips orphaned feedback so stats reflect the live catalog."),
     fmt: str = typer.Option("table", "--format", "-f", help="Output format: table, json, csv."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write to file instead of stdout."),
+    fail_on_empty: bool = typer.Option(
+        False,
+        "--fail-on-empty",
+        "-E",
+        help="Exit non-zero (code 2) when no rows survive the filters. Useful in monitoring scripts and CI so a silent empty result (e.g. no tracks above --min-wilson, or no tracks with --max-net rejection) does not look like a successful no-op.",
+    ),
 ):
     """Aggregate recorded feedback per track (up / down / net / avg score)."""
     if orphaned and in_index:
@@ -990,6 +996,8 @@ def feedback_stats(
             console.print(f"[green]wrote {len(stats)} row(s) to {output}[/green]")
         else:
             console.print_json(payload)
+        if fail_on_empty and not stats:
+            raise typer.Exit(code=2)
         return
     if chosen == "csv":
         payload = _feedback_stats_as_csv(stats, enrich=enrich)
@@ -999,10 +1007,14 @@ def feedback_stats(
         else:
             sys.stdout.write(payload)
             sys.stdout.flush()
+        if fail_on_empty and not stats:
+            raise typer.Exit(code=2)
         return
 
     if not stats:
         console.print("[dim]no feedback recorded yet[/dim]")
+        if fail_on_empty:
+            raise typer.Exit(code=2)
         return
     table = Table(title=f"Feedback stats ({len(stats)} track(s), sort={sort})")
     table.add_column("Track ID")
