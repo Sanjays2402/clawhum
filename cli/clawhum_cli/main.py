@@ -183,6 +183,12 @@ def match(
         "-E",
         help="Exit non-zero (code 2) when no matches survive the threshold and filters. Useful in scripts and CI so a silent miss does not look like a successful match.",
     ),
+    min_results: int | None = typer.Option(
+        None,
+        "--min-results",
+        "-N",
+        help="Exit non-zero (code 2) when fewer than N matches survive the threshold and filters. Useful in CI to gate on a minimum candidate count (e.g. require at least 3 above-threshold hits before promoting an auto-tag). Must be a positive integer. --fail-on-empty is equivalent to --min-results 1; if both are set the stricter wins.",
+    ),
     query_id_opt: str | None = typer.Option(
         None,
         "--query-id",
@@ -201,6 +207,9 @@ def match(
     excl_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
     if only_ids and excl_ids:
         raise typer.BadParameter("--only-track and --exclude-track are mutually exclusive")
+
+    if min_results is not None and min_results < 1:
+        raise typer.BadParameter("--min-results must be a positive integer")
 
     state = AppState.boot(prefer_clap=not no_clap)
     if not state.tracks:
@@ -250,6 +259,13 @@ def match(
     else:
         query_id = str(uuid.uuid4())
 
+    def _under_min_results() -> bool:
+        # --min-results N gates the exit code: exit 2 if fewer than N matches
+        # survive. Treat --fail-on-empty as min_results=1 so the two flags
+        # compose cleanly (the stricter floor wins).
+        floor = min_results if min_results is not None else (1 if fail_on_empty else 0)
+        return floor > 0 and len(results) < floor
+
     if chosen == "json":
         payload = json.dumps(_results_as_dicts(results, query_id=query_id))
         if output is not None:
@@ -257,7 +273,7 @@ def match(
             console.print(f"[green]wrote {len(results)} match(es) to {output} (query_id={query_id})[/green]")
         else:
             console.print_json(payload)
-        if fail_on_empty and not results:
+        if _under_min_results():
             raise typer.Exit(code=2)
         return
     if chosen == "csv":
@@ -268,7 +284,7 @@ def match(
         else:
             sys.stdout.write(payload)
             sys.stdout.flush()
-        if fail_on_empty and not results:
+        if _under_min_results():
             raise typer.Exit(code=2)
         return
 
@@ -286,7 +302,7 @@ def match(
         console.print(f"[yellow]no matches{suffix}[/yellow]")
         if not no_hint:
             console.print(f"[dim]query_id: {query_id}[/dim]")
-        if fail_on_empty:
+        if _under_min_results():
             raise typer.Exit(code=2)
         return
 
@@ -312,6 +328,14 @@ def match(
             f"[dim]query_id: {query_id}\n"
             f"vote a match: clawhum feedback {query_id} <track_id> <score> <1|-1>[/dim]"
         )
+    if _under_min_results():
+        # Result table was shown so the user can see what did survive, but exit
+        # non-zero so scripts gating on --min-results still fail.
+        console.print(
+            f"[yellow]only {len(results)} match(es) survived (need at least "
+            f"{min_results if min_results is not None else 1})[/yellow]"
+        )
+        raise typer.Exit(code=2)
 
 
 @app.command()
