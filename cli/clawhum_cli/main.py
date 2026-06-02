@@ -120,9 +120,17 @@ def match(
     table.add_column("Score", justify="right")
     table.add_column("Title")
     table.add_column("Artist")
+    table.add_column("Seg", justify="right")
     table.add_column("Track ID")
     for i, m in enumerate(results, 1):
-        table.add_row(str(i), f"{m.score:.3f}", m.track.title, m.track.artist, m.track.id)
+        table.add_row(
+            str(i),
+            f"{m.score:.3f}",
+            m.track.title,
+            m.track.artist,
+            str(m.segment_index),
+            m.track.id,
+        )
     console.print(table)
     console.print(
         f"[dim]query_id: {query_id}\n"
