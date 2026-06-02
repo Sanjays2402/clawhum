@@ -640,7 +640,11 @@ def feedback_list(
         "-X",
         help="Drop entries with this query_id from the listing. Repeatable. Useful for hiding a known-noisy session (e.g. a smoke-test run that flooded the log with junk votes) without rewriting the feedback file.",
     ),
-    track_id: str | None = typer.Option(None, "--track-id", help="Only show entries for this track_id."),
+    track_id: list[str] = typer.Option(
+        None,
+        "--track-id",
+        help="Only show entries for this track_id. Repeatable. Useful for scoping the listing to a curated shortlist of tracks (e.g. the top candidates from a recent `clawhum match`) without grepping the table. Mutually exclusive with --exclude-track on the same id.",
+    ),
     exclude_track: list[str] = typer.Option(
         None,
         "--exclude-track",
@@ -685,7 +689,12 @@ def feedback_list(
     if since_ts is not None and until_ts is not None and since_ts > until_ts:
         raise typer.BadParameter("--since must be <= --until")
 
+    only_ids = {t.strip() for t in (track_id or []) if t and t.strip()}
     excluded_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
+    if only_ids and excluded_ids and only_ids & excluded_ids:
+        raise typer.BadParameter(
+            "--track-id and --exclude-track must not overlap"
+        )
     excluded_qids = {q.strip() for q in (exclude_query_id or []) if q and q.strip()}
     if query_id is not None and query_id.strip() in excluded_qids:
         raise typer.BadParameter(
@@ -696,7 +705,7 @@ def feedback_list(
     from clawhum_library.feedback import read_feedback
     rows = read_feedback(s.feedback_path)
     rows = _filter_feedback(
-        rows, query_id=query_id, track_id=track_id, vote=vote,
+        rows, query_id=query_id, track_ids=only_ids or None, vote=vote,
         since=since_ts, until=until_ts,
         min_score=min_score, max_score=max_score,
     )
