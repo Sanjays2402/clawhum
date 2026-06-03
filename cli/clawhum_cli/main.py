@@ -113,6 +113,32 @@ def _load_track_ids_from_file(path: Path) -> list[str]:
     return ids
 
 
+def _load_artist_names_from_file(path: Path) -> list[str]:
+    """Read newline-delimited artist names from ``path``.
+
+    Parallel to :func:`_load_track_ids_from_file` but tuned for artist names,
+    which (unlike opaque track ids) routinely contain embedded whitespace
+    ("the beatles", "earth wind and fire"). Empty lines and lines whose first
+    non-whitespace character is ``#`` are skipped so users can comment
+    allow/deny lists. Each kept line is stripped of leading/trailing
+    whitespace; the downstream filter casefolds for comparison, so casing in
+    the file does not matter. Duplicates and order are preserved so the
+    loader behaves like a sequence of repeated ``--only-artist`` /
+    ``--exclude-artist`` options.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise typer.BadParameter(f"could not read artist file {path}: {exc}")
+    names: list[str] = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        names.append(stripped)
+    return names
+
+
 def _filter_excluded_tracks(results, exclude: list[str] | None):
     """Drop matches whose track_id is in ``exclude``.
 
@@ -337,6 +363,22 @@ def match(
         "-A",
         help="Restrict matches to tracks whose artist name matches this value. Repeatable. Comparison is case-insensitive and whitespace-trimmed so '--only-artist \"the beatles\"' keeps tracks tagged 'The Beatles'. Useful as a 'does this hum match anything by <artist>?' filter without scanning the whole top-K. Combines as an intersection with --only-track (a match must satisfy both allowlists). Mutually exclusive with --exclude-artist.",
     ),
+    only_artist_file: Path | None = typer.Option(
+        None,
+        "--only-artist-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --only-artist names from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --only-artist values. Useful when the allowlist outgrows the command line (e.g. a saved list of favourite artists piped into many match runs) and case/whitespace of each name does not need to match the catalog exactly.",
+    ),
+    exclude_artist_file: Path | None = typer.Option(
+        None,
+        "--exclude-artist-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --exclude-artist names from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --exclude-artist values. Useful for a persistent 'never show me anything by these artists' list maintained outside the feedback log (e.g. covers/tribute artists that crowd the top-K).",
+    ),
     exclude_downvoted: bool = typer.Option(
         False,
         "--exclude-downvoted",
@@ -365,6 +407,10 @@ def match(
         only_track = list(only_track or []) + _load_track_ids_from_file(only_track_file)
     if exclude_track_file is not None:
         exclude_track = list(exclude_track or []) + _load_track_ids_from_file(exclude_track_file)
+    if only_artist_file is not None:
+        only_artist = list(only_artist or []) + _load_artist_names_from_file(only_artist_file)
+    if exclude_artist_file is not None:
+        exclude_artist = list(exclude_artist or []) + _load_artist_names_from_file(exclude_artist_file)
 
     only_ids = {t.strip() for t in (only_track or []) if t and t.strip()}
     excl_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
