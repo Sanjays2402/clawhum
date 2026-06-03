@@ -35,6 +35,31 @@ def index(
     console.print_json(json.dumps(res))
 
 
+def _downvoted_track_ids(rows: list[dict]) -> set[str]:
+    """Return track_ids whose recorded feedback is net negative (down > up).
+
+    Used by ``clawhum match --exclude-downvoted`` to auto-drop tracks the user
+    has previously rejected. A single stray down-vote does not blacklist a
+    track: only tracks where down-votes strictly outnumber up-votes qualify,
+    so an accidental thumbs-down on a track the user later up-voted twice
+    will not silently disappear from future matches. Rows with missing or
+    non-integer ``track_id`` / ``vote`` fields are ignored rather than
+    raising, so a malformed feedback line can never crash ``match``.
+    """
+    up: dict[str, int] = {}
+    down: dict[str, int] = {}
+    for r in rows:
+        tid = r.get("track_id")
+        if not isinstance(tid, str) or not tid:
+            continue
+        v = r.get("vote")
+        if v == 1:
+            up[tid] = up.get(tid, 0) + 1
+        elif v == -1:
+            down[tid] = down.get(tid, 0) + 1
+    return {tid for tid, d in down.items() if d > up.get(tid, 0)}
+
+
 def _filter_excluded_tracks(results, exclude: list[str] | None):
     """Drop matches whose track_id is in ``exclude``.
 
@@ -195,6 +220,12 @@ def match(
         "-q",
         help="Tag this match run with a caller-supplied query id instead of a fresh UUID. Useful to (1) re-run the same hum and have follow-up `clawhum feedback` votes line up against a stable id, (2) thread a higher-level request id (e.g. `user_42_attempt_3`) through to the feedback log, or (3) make table/JSON/CSV output deterministic in tests. Must be a non-blank string of at most 128 characters; raw whitespace is rejected so it round-trips cleanly through shells and CSV.",
     ),
+    exclude_downvoted: bool = typer.Option(
+        False,
+        "--exclude-downvoted",
+        "-D",
+        help="Drop matches for tracks whose recorded feedback is net negative (down-votes > up-votes). Lets a returning user re-hum a melody without the songs they already rejected crowding the top of the list. A single stray down-vote does not blacklist a track: only tracks where down-votes strictly outnumber up-votes are dropped, so an accidental thumbs-down that was later corrected with two thumbs-up will still appear. Unions with any --exclude-track ids; mutually exclusive with --only-track (where the user has explicitly opted into a shortlist).",
+    ),
 ):
     """Match an audio file (hum/clip) against the index."""
     from clawhum_audio.io import load_audio
@@ -207,6 +238,18 @@ def match(
     excl_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
     if only_ids and excl_ids:
         raise typer.BadParameter("--only-track and --exclude-track are mutually exclusive")
+    if exclude_downvoted and only_ids:
+        raise typer.BadParameter("--exclude-downvoted and --only-track are mutually exclusive")
+    if exclude_downvoted:
+        from clawhum_library.feedback import read_feedback
+        s_fb = get_settings()
+        dv_ids = _downvoted_track_ids(read_feedback(s_fb.feedback_path))
+        if dv_ids:
+            # Union with the user-supplied exclude list so the downstream
+            # filter and fetch_k accounting see one combined set; the user's
+            # explicit ids still get whitespace-trimmed there.
+            excl_ids = excl_ids | dv_ids
+            exclude_track = list((exclude_track or [])) + sorted(dv_ids - {t.strip() for t in (exclude_track or []) if t and t.strip()})
 
     if min_results is not None and min_results < 1:
         raise typer.BadParameter("--min-results must be a positive integer")
