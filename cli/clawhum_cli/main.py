@@ -60,6 +60,35 @@ def _downvoted_track_ids(rows: list[dict]) -> set[str]:
     return {tid for tid, d in down.items() if d > up.get(tid, 0)}
 
 
+def _load_track_ids_from_file(path: Path) -> list[str]:
+    """Read newline-delimited track ids from ``path``.
+
+    Empty lines and lines whose first non-whitespace character is ``#`` are
+    skipped so users can comment shortlists. Leading/trailing whitespace on
+    each id is trimmed (matching the in-memory filter semantics) and any
+    embedded whitespace in an id is rejected with ``typer.BadParameter`` since
+    track ids in this codebase are opaque tokens and a space almost always
+    means the file was malformed (e.g. a CSV row pasted in). Duplicates are
+    preserved in input order so the caller's de-dup behaviour matches
+    ``--only-track``/``--exclude-track`` (which de-dup via a set downstream).
+    """
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise typer.BadParameter(f"could not read track id file {path}: {exc}")
+    ids: list[str] = []
+    for lineno, line in enumerate(raw.splitlines(), 1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if any(ch.isspace() for ch in stripped):
+            raise typer.BadParameter(
+                f"track id file {path} line {lineno}: ids must not contain whitespace (got {stripped!r})"
+            )
+        ids.append(stripped)
+    return ids
+
+
 def _filter_excluded_tracks(results, exclude: list[str] | None):
     """Drop matches whose track_id is in ``exclude``.
 
@@ -190,6 +219,22 @@ def match(
         "-O",
         help="Restrict matches to this track_id. Repeatable. Useful to ask 'does this hum match one of these specific tracks?' (e.g. comparing a clip against a shortlist of suspected songs) without scanning the whole top-K. Mutually exclusive with --exclude-track.",
     ),
+    only_track_file: Path | None = typer.Option(
+        None,
+        "--only-track-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --only-track ids from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --only-track values. Useful when the shortlist has more ids than fit cleanly on a command line, or when the same shortlist is reused across many match runs in a script.",
+    ),
+    exclude_track_file: Path | None = typer.Option(
+        None,
+        "--exclude-track-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --exclude-track ids from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --exclude-track values and with --exclude-downvoted. Useful for a persistent 'never show me this again' list maintained outside the feedback log.",
+    ),
     unique_tracks: bool = typer.Option(
         False,
         "--unique-tracks",
@@ -233,6 +278,15 @@ def match(
     from services.api.clawhum_api.state import AppState  # type: ignore
 
     chosen = _resolve_output_format(fmt, json_out, output)
+
+    # Merge file-sourced ids into the option lists before any filter logic so
+    # the downstream fetch_k accounting and mutual-exclusion checks see one
+    # combined view. File ids are appended after CLI ids; the downstream
+    # filters de-dup via sets so order only matters for accounting.
+    if only_track_file is not None:
+        only_track = list(only_track or []) + _load_track_ids_from_file(only_track_file)
+    if exclude_track_file is not None:
+        exclude_track = list(exclude_track or []) + _load_track_ids_from_file(exclude_track_file)
 
     only_ids = {t.strip() for t in (only_track or []) if t and t.strip()}
     excl_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
