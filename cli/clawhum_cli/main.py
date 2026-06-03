@@ -1475,6 +1475,19 @@ def feedback_stats(
         file_okay=True,
         help="Load --exclude-artist names from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --exclude-artist values. Useful for a persistent 'never show me anything by these artists' list maintained outside the feedback log (e.g. covers/tribute artists that crowd the aggregated stats run after run).",
     ),
+    only_artist: list[str] = typer.Option(
+        None,
+        "--only-artist",
+        help="Restrict aggregation to tracks whose artist matches this value (case-insensitive, whitespace-trimmed exact match). Repeatable. Implies --enrich. Useful as a 'how does the audience feel about <artist>?' filter without sifting through the full list. Orphan tracks (no metadata) are dropped because we cannot prove they belong to the allowlisted artist. Mutually exclusive with --exclude-artist.",
+    ),
+    only_artist_file: Path | None = typer.Option(
+        None,
+        "--only-artist-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --only-artist names from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --only-artist values. Useful when the allowlist outgrows the command line (e.g. a saved set of favourite artists piped into a scheduled feedback-stats run) and the same list is reused across many invocations.",
+    ),
     since: str | None = typer.Option(None, "--since", help="Only aggregate entries at/after this time (unix seconds, ISO-8601 naive = UTC, or relative offset from now like 24h/7d/30m/45s/2w)."),
     until: str | None = typer.Option(None, "--until", help="Only aggregate entries strictly before this time (unix seconds, ISO-8601 naive = UTC, or relative offset from now like 24h/7d/30m/45s/2w)."),
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
@@ -1536,6 +1549,8 @@ def feedback_stats(
         exclude_track = list(exclude_track or []) + _load_track_ids_from_file(exclude_track_file)
     if exclude_artist_file is not None:
         exclude_artist = list(exclude_artist or []) + _load_artist_names_from_file(exclude_artist_file)
+    if only_artist_file is not None:
+        only_artist = list(only_artist or []) + _load_artist_names_from_file(only_artist_file)
 
     only_ids = {t.strip() for t in (track_id or []) if t and t.strip()}
     excluded_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
@@ -1623,11 +1638,18 @@ def feedback_stats(
     # track without metadata matches a name needle); --exclude-artist keeps
     # orphans so they stay visible for cleanup (pair with --in-index to drop).
     excluded_artists = {a.strip().casefold() for a in (exclude_artist or []) if a and a.strip()}
+    only_artists = {a.strip().casefold() for a in (only_artist or []) if a and a.strip()}
+    if only_artists and excluded_artists:
+        raise typer.BadParameter("--only-artist and --exclude-artist are mutually exclusive")
     if artist is not None and excluded_artists and artist.strip().casefold() in excluded_artists:
         raise typer.BadParameter(
             "--artist and --exclude-artist must not target the same artist"
         )
-    needs_meta = enrich or title is not None or artist is not None or bool(excluded_artists)
+    if artist is not None and only_artists and artist.strip().casefold() not in only_artists:
+        raise typer.BadParameter(
+            "--artist substring is not present in any --only-artist value (no rows can match both)"
+        )
+    needs_meta = enrich or title is not None or artist is not None or bool(excluded_artists) or bool(only_artists)
     if needs_meta and meta_cache is None:
         meta_cache = _load_track_metadata()
     if excluded_artists:
@@ -1639,6 +1661,20 @@ def feedback_stats(
                 continue
             _, a_val = entry
             if (a_val or "").strip().casefold() in excluded_artists:
+                continue
+            kept.append(r)
+        stats = kept
+    if only_artists:
+        kept = []
+        for r in stats:
+            entry = (meta_cache or {}).get(str(r.get("track_id", "")))
+            if entry is None:
+                # Orphan rows are dropped: we cannot prove they belong to an
+                # allowlisted artist. Use feedback-stats without --only-artist
+                # (and with --orphaned) to surface them for cleanup.
+                continue
+            _, a_val = entry
+            if (a_val or "").strip().casefold() not in only_artists:
                 continue
             kept.append(r)
         stats = kept
