@@ -1380,11 +1380,27 @@ def feedback_stats(
         "--track-id",
         help="Only aggregate entries for this track_id. Repeatable. Useful for scoping stats to a curated shortlist of tracks (e.g. the top candidates from a recent `clawhum match`) without sifting through the full list. Mutually exclusive with --exclude-track on the same id.",
     ),
+    track_id_file: Path | None = typer.Option(
+        None,
+        "--track-id-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --track-id values from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --track-id values. Useful when the shortlist (e.g. a saved set of candidate ids from an earlier `clawhum match`) has more ids than fit cleanly on a command line, or when the same shortlist is reused across many feedback-stats runs in a script.",
+    ),
     exclude_track: list[str] = typer.Option(
         None,
         "--exclude-track",
         "-x",
         help="Drop this track_id from the aggregation. Repeatable. Useful for looking past known-good or known-bad tracks (e.g. a duplicate edition that dominates the top of the list) without re-querying.",
+    ),
+    exclude_track_file: Path | None = typer.Option(
+        None,
+        "--exclude-track-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --exclude-track values from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --exclude-track values. Useful for a persistent 'never include these tracks in the aggregation' set maintained outside the feedback log (e.g. duplicate editions or smoke-test seeds).",
     ),
     query_id: list[str] = typer.Option(
         None,
@@ -1454,6 +1470,11 @@ def feedback_stats(
     until_ts = _parse_time_bound(until, flag="--until") if until is not None else None
     if since_ts is not None and until_ts is not None and since_ts > until_ts:
         raise typer.BadParameter("--since must be <= --until")
+
+    if track_id_file is not None:
+        track_id = list(track_id or []) + _load_track_ids_from_file(track_id_file)
+    if exclude_track_file is not None:
+        exclude_track = list(exclude_track or []) + _load_track_ids_from_file(exclude_track_file)
 
     only_ids = {t.strip() for t in (track_id or []) if t and t.strip()}
     excluded_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
