@@ -1019,11 +1019,27 @@ def feedback_list(
         "-q",
         help="Only show entries for this query_id. Repeatable. Useful for scoping the listing to a small set of related hum attempts (e.g. a single user session, or the qids returned by a few back-to-back `clawhum match` runs) without grepping the table. Mutually exclusive with --exclude-query-id on the same id.",
     ),
+    query_id_file: Path | None = typer.Option(
+        None,
+        "--query-id-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --query-id values from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --query-id values. Useful when the session id shortlist (e.g. a saved set of qids from a recent evaluation run) has more ids than fit cleanly on a command line, or when the same shortlist is reused across many feedback-list runs in a script.",
+    ),
     exclude_query_id: list[str] = typer.Option(
         None,
         "--exclude-query-id",
         "-X",
         help="Drop entries with this query_id from the listing. Repeatable. Useful for hiding a known-noisy session (e.g. a smoke-test run that flooded the log with junk votes) without rewriting the feedback file.",
+    ),
+    exclude_query_id_file: Path | None = typer.Option(
+        None,
+        "--exclude-query-id-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --exclude-query-id values from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --exclude-query-id values. Useful for a persistent 'never show these sessions in the listing' denylist (e.g. smoke-test or evaluation run qids that crowd day-to-day feedback review).",
     ),
     track_id: list[str] = typer.Option(
         None,
@@ -1103,6 +1119,10 @@ def feedback_list(
         track_id = list(track_id or []) + _load_track_ids_from_file(track_id_file)
     if exclude_track_file is not None:
         exclude_track = list(exclude_track or []) + _load_track_ids_from_file(exclude_track_file)
+    if query_id_file is not None:
+        query_id = list(query_id or []) + _load_track_ids_from_file(query_id_file)
+    if exclude_query_id_file is not None:
+        exclude_query_id = list(exclude_query_id or []) + _load_track_ids_from_file(exclude_query_id_file)
 
     only_ids = {t.strip() for t in (track_id or []) if t and t.strip()}
     excluded_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
