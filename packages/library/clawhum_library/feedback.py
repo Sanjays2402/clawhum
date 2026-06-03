@@ -49,6 +49,8 @@ def delete_feedback(
     query_id: str | None = None,
     track_id: str | None = None,
     track_ids: "Iterable[str] | None" = None,
+    exclude_track_ids: "Iterable[str] | None" = None,
+    exclude_query_ids: "Iterable[str] | None" = None,
     vote: int | None = None,
     since: float | None = None,
     until: float | None = None,
@@ -67,13 +69,20 @@ def delete_feedback(
     entries with a missing/non-numeric score are never silently purged.
     `track_ids` is an allowlist (set of ids to delete) and ANDs with
     `track_id`; an empty allowlist matches no rows so a title/artist resolver
-    that returned no hits never wipes the log. Returns the number of rows
-    removed. The rewrite is atomic via a tempfile + os.replace in the same
+    that returned no hits never wipes the log. `exclude_track_ids` /
+    `exclude_query_ids` are denylists: any row whose track_id or query_id is
+    in the corresponding set is always kept, so an operator can scope a bulk
+    purge to skip known-good tracks or a curated set of sessions (e.g.
+    `--vote -1 --until 30d --exclude-track t-keepme` to age out old down-votes
+    while preserving a track you still care about). Empty denylists are a
+    no-op. Returns the number of rows removed. The rewrite is atomic via a tempfile + os.replace in the same
     directory, so a crash mid-write cannot leave a truncated log.
     """
     track_id_set: set[str] | None = None
     if track_ids is not None:
         track_id_set = {str(t) for t in track_ids}
+    exclude_track_set: set[str] = {str(t) for t in (exclude_track_ids or [])}
+    exclude_query_set: set[str] = {str(q) for q in (exclude_query_ids or [])}
     if (
         query_id is None
         and track_id is None
@@ -101,6 +110,12 @@ def delete_feedback(
             if not stripped:
                 continue
             row = json.loads(stripped)
+            if exclude_query_set and str(row.get("query_id", "")) in exclude_query_set:
+                kept.append(row)
+                continue
+            if exclude_track_set and str(row.get("track_id", "")) in exclude_track_set:
+                kept.append(row)
+                continue
             if query_id is not None and row.get("query_id") != query_id:
                 kept.append(row)
                 continue

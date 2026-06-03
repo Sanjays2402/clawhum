@@ -408,6 +408,16 @@ def feedback(
 def feedback_delete(
     query_id: str | None = typer.Option(None, "--query-id", help="Delete entries with this query_id."),
     track_id: str | None = typer.Option(None, "--track-id", help="Delete entries with this track_id."),
+    exclude_track: list[str] = typer.Option(
+        None,
+        "--exclude-track",
+        help="Never delete entries for this track_id. Repeatable. Use as a safety net when bulk-purging by --vote, --since/--until, or score range so a track you still care about is preserved (e.g. --vote -1 --until 30d --exclude-track t-keepme ages out old down-votes while leaving that track untouched). Whitespace-trimmed; blank entries ignored; unknown ids are a no-op. Must not overlap with --track-id.",
+    ),
+    exclude_query_id: list[str] = typer.Option(
+        None,
+        "--exclude-query-id",
+        help="Never delete entries with this query_id. Repeatable. Useful for scoping a bulk purge to skip a curated set of sessions (e.g. votes recorded during a known-good evaluation run). Whitespace-trimmed; blank entries ignored; unknown ids are a no-op. Must not overlap with --query-id.",
+    ),
     vote: int | None = typer.Option(None, "--vote", help="Restrict deletion to this vote (1 or -1)."),
     since: str | None = typer.Option(None, "--since", help="Only delete entries at/after this time (unix seconds, ISO-8601 naive = UTC, or relative offset from now like 24h/7d/30m/45s/2w)."),
     until: str | None = typer.Option(None, "--until", help="Only delete entries strictly before this time (unix seconds, ISO-8601 naive = UTC, or relative offset from now like 24h/7d/30m/45s/2w). Pair with no other filter to purge old feedback (e.g. --until 30d to age out anything older than 30 days, or --until 2024-01-01 to age out last year)."),
@@ -425,9 +435,13 @@ def feedback_delete(
     At least one of --query-id, --track-id, --vote, --since, --until,
     --min-score, --max-score, --title, --artist, --orphaned, or --in-index
     must be supplied so a bare invocation can never wipe the whole feedback
-    log. Rows without a numeric ts are never matched by --since / --until
-    and rows without a numeric score are never matched by --min-score /
-    --max-score so undated or unscored entries are not silently purged.
+    log. --exclude-track and --exclude-query-id (both repeatable) act as a
+    denylist on top of those positive filters so a bulk purge (e.g.
+    `--vote -1 --until 30d`) can skip tracks or sessions you still want to
+    keep; they cannot stand alone. Rows without a numeric ts are never
+    matched by --since / --until and rows without a numeric score are never
+    matched by --min-score / --max-score so undated or unscored entries are
+    not silently purged.
     --title / --artist are resolved against the indexed library, so feedback
     whose track has been removed from the index is never deleted by a
     name-based purge. --orphaned deletes only votes pointing at track_ids
@@ -442,6 +456,12 @@ def feedback_delete(
         and not orphaned and not in_index
     ):
         raise typer.BadParameter("supply at least one of --query-id, --track-id, --vote, --since, --until, --min-score, --max-score, --title, --artist, --orphaned, --in-index")
+    excluded_track_set = {t.strip() for t in (exclude_track or []) if t and t.strip()}
+    excluded_query_set = {q.strip() for q in (exclude_query_id or []) if q and q.strip()}
+    if track_id is not None and track_id in excluded_track_set:
+        raise typer.BadParameter("--track-id and --exclude-track must not overlap")
+    if query_id is not None and query_id in excluded_query_set:
+        raise typer.BadParameter("--query-id and --exclude-query-id must not overlap")
     if orphaned and in_index:
         raise typer.BadParameter("--orphaned and --in-index are mutually exclusive")
     if vote is not None and vote not in (1, -1):
@@ -490,7 +510,10 @@ def feedback_delete(
             return
         resolved_track_ids = orphan_ids
     matches = _filter_feedback(
-        rows, query_id=query_id, track_id=track_id, track_ids=resolved_track_ids, vote=vote,
+        rows, query_id=query_id, track_id=track_id, track_ids=resolved_track_ids,
+        exclude_track_ids=excluded_track_set or None,
+        exclude_query_ids=excluded_query_set or None,
+        vote=vote,
         since=since_ts, until=until_ts,
         min_score=min_score, max_score=max_score,
     )
@@ -506,7 +529,10 @@ def feedback_delete(
             console.print("[dim]aborted[/dim]")
             raise typer.Exit(code=1)
     removed = _delete_feedback(
-        s.feedback_path, query_id=query_id, track_id=track_id, track_ids=resolved_track_ids, vote=vote,
+        s.feedback_path, query_id=query_id, track_id=track_id, track_ids=resolved_track_ids,
+        exclude_track_ids=excluded_track_set or None,
+        exclude_query_ids=excluded_query_set or None,
+        vote=vote,
         since=since_ts, until=until_ts,
         min_score=min_score, max_score=max_score,
     )
@@ -584,6 +610,8 @@ def _filter_feedback(
     query_id: str | None = None,
     track_id: str | None = None,
     track_ids: set[str] | None = None,
+    exclude_track_ids: set[str] | None = None,
+    exclude_query_ids: set[str] | None = None,
     vote: int | None = None,
     since: float | None = None,
     until: float | None = None,
@@ -591,6 +619,10 @@ def _filter_feedback(
     max_score: float | None = None,
 ) -> list[dict]:
     out = rows
+    if exclude_query_ids:
+        out = [r for r in out if str(r.get("query_id", "")) not in exclude_query_ids]
+    if exclude_track_ids:
+        out = [r for r in out if str(r.get("track_id", "")) not in exclude_track_ids]
     if query_id is not None:
         out = [r for r in out if r.get("query_id") == query_id]
     if track_id is not None:
