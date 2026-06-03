@@ -608,6 +608,7 @@ def _parse_time_bound(value: str, *, flag: str, now: float | None = None) -> flo
 def _filter_feedback(
     rows: list[dict],
     query_id: str | None = None,
+    query_ids: set[str] | None = None,
     track_id: str | None = None,
     track_ids: set[str] | None = None,
     exclude_track_ids: set[str] | None = None,
@@ -625,6 +626,8 @@ def _filter_feedback(
         out = [r for r in out if str(r.get("track_id", "")) not in exclude_track_ids]
     if query_id is not None:
         out = [r for r in out if r.get("query_id") == query_id]
+    if query_ids is not None:
+        out = [r for r in out if str(r.get("query_id", "")) in query_ids]
     if track_id is not None:
         out = [r for r in out if r.get("track_id") == track_id]
     if track_ids is not None:
@@ -665,7 +668,12 @@ def _enrich_feedback_rows(rows: list[dict], meta: dict[str, tuple[str, str]]) ->
 @app.command("feedback-list")
 def feedback_list(
     limit: int = typer.Option(20, "--limit", "-n", help="Show the most recent N entries (0 for all)."),
-    query_id: str | None = typer.Option(None, "--query-id", help="Only show entries for this query_id."),
+    query_id: list[str] = typer.Option(
+        None,
+        "--query-id",
+        "-q",
+        help="Only show entries for this query_id. Repeatable. Useful for scoping the listing to a small set of related hum attempts (e.g. a single user session, or the qids returned by a few back-to-back `clawhum match` runs) without grepping the table. Mutually exclusive with --exclude-query-id on the same id.",
+    ),
     exclude_query_id: list[str] = typer.Option(
         None,
         "--exclude-query-id",
@@ -727,8 +735,9 @@ def feedback_list(
         raise typer.BadParameter(
             "--track-id and --exclude-track must not overlap"
         )
+    only_qids = {q.strip() for q in (query_id or []) if q and q.strip()}
     excluded_qids = {q.strip() for q in (exclude_query_id or []) if q and q.strip()}
-    if query_id is not None and query_id.strip() in excluded_qids:
+    if only_qids and excluded_qids and only_qids & excluded_qids:
         raise typer.BadParameter(
             "--query-id and --exclude-query-id must not overlap"
         )
@@ -737,7 +746,7 @@ def feedback_list(
     from clawhum_library.feedback import read_feedback
     rows = read_feedback(s.feedback_path)
     rows = _filter_feedback(
-        rows, query_id=query_id, track_ids=only_ids or None, vote=vote,
+        rows, query_ids=only_qids or None, track_ids=only_ids or None, vote=vote,
         since=since_ts, until=until_ts,
         min_score=min_score, max_score=max_score,
     )
