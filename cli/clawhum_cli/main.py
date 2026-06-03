@@ -146,6 +146,24 @@ def _filter_excluded_artists(results, exclude: list[str] | None):
     return [m for m in results if (m.track.artist or "").strip().casefold() not in blocked]
 
 
+def _filter_only_artists(results, only: list[str] | None):
+    """Keep only matches whose ``track.artist`` matches a name in ``only``.
+
+    Symmetric to :func:`_filter_excluded_artists`: comparison is
+    case-insensitive and whitespace-trimmed so ``--only-artist " the beatles "``
+    keeps tracks tagged ``"The Beatles"``. Empty / whitespace-only entries are
+    ignored rather than treated as a blanket pass (which would silently turn
+    the flag into a no-op and surprise the caller). ``None`` or an all-blank
+    list is itself a no-op so callers don't need to special-case it.
+    """
+    if not only:
+        return list(results)
+    allowed = {a.strip().casefold() for a in only if a and a.strip()}
+    if not allowed:
+        return list(results)
+    return [m for m in results if (m.track.artist or "").strip().casefold() in allowed]
+
+
 def _filter_only_tracks(results, only: list[str] | None):
     """Keep only matches whose track_id is in ``only``.
 
@@ -313,6 +331,12 @@ def match(
         "-X",
         help="Drop matches whose artist name matches this value. Repeatable. Comparison is case-insensitive and whitespace-trimmed so '--exclude-artist beatles' drops tracks tagged 'The Beatles' is not collapsed, but 'The Beatles' and ' the beatles ' are treated as the same artist. Useful when the top hits are saturated by one artist (covers, remasters, alternate editions) and the user wants to see what else the hum matches.",
     ),
+    only_artist: list[str] = typer.Option(
+        None,
+        "--only-artist",
+        "-A",
+        help="Restrict matches to tracks whose artist name matches this value. Repeatable. Comparison is case-insensitive and whitespace-trimmed so '--only-artist \"the beatles\"' keeps tracks tagged 'The Beatles'. Useful as a 'does this hum match anything by <artist>?' filter without scanning the whole top-K. Combines as an intersection with --only-track (a match must satisfy both allowlists). Mutually exclusive with --exclude-artist.",
+    ),
     exclude_downvoted: bool = typer.Option(
         False,
         "--exclude-downvoted",
@@ -345,6 +369,9 @@ def match(
     only_ids = {t.strip() for t in (only_track or []) if t and t.strip()}
     excl_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
     excl_artists = {a.strip().casefold() for a in (exclude_artist or []) if a and a.strip()}
+    only_artists = {a.strip().casefold() for a in (only_artist or []) if a and a.strip()}
+    if only_artists and excl_artists:
+        raise typer.BadParameter("--only-artist and --exclude-artist are mutually exclusive")
     if only_ids and excl_ids:
         raise typer.BadParameter("--only-track and --exclude-track are mutually exclusive")
     if exclude_downvoted and only_ids and not only_upvoted:
@@ -399,6 +426,7 @@ def match(
     # rows after filtering rather than a short list.
     n_excl = len(excl_ids)
     n_excl_artist = len(excl_artists)
+    n_only_artist = len(only_artists)
     # When deduping by track or excluding ids, pull extra candidates so the
     # post-filter list still has ~top_k rows. For --unique-tracks we don't know
     # the duplication factor up front, so fetch a generous multiple capped at a
@@ -412,6 +440,11 @@ def match(
         # discography), so widen the fetch generously and let the matcher cap
         # to the index size.
         fetch_k = max(fetch_k, top_k * 8)
+    if n_only_artist:
+        # Restricting to one artist may push the matching hits far down the
+        # ranking, so ask the matcher for the whole index and let the filter
+        # slice the top_k off the survivors; the matcher caps to index size.
+        fetch_k = max(fetch_k, state.index.size())
     if unique_tracks:
         fetch_k = max(fetch_k, top_k * 8)
     if only_ids:
@@ -423,9 +456,11 @@ def match(
         results = _filter_excluded_tracks(results, exclude_track)
     if n_excl_artist:
         results = _filter_excluded_artists(results, exclude_artist)
+    if n_only_artist:
+        results = _filter_only_artists(results, only_artist)
     if unique_tracks:
         results = _dedupe_by_track(results)
-    if n_excl or n_excl_artist or unique_tracks or only_ids:
+    if n_excl or n_excl_artist or unique_tracks or only_ids or n_only_artist:
         results = results[:top_k]
     if query_id_opt is not None:
         # Caller-supplied id: validate aggressively so a malformed value can
@@ -482,6 +517,8 @@ def match(
             hints.append("removing --exclude-track filters")
         if n_excl_artist:
             hints.append("removing --exclude-artist filters")
+        if n_only_artist:
+            hints.append("widening or dropping --only-artist filters")
         if only_ids:
             hints.append("widening or dropping --only-track filters")
         suffix = f" (try {', '.join(hints)})" if hints else ""
