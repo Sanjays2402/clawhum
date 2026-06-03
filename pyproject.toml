@@ -32,7 +32,7 @@ dependencies = [
 ml = [
   "torch>=2.4",
   "torchaudio>=2.4",
-  "transformers>=4.45",
+  "transformers>=5.9.0",
   "accelerate>=1.13.0",
 ]
 sentry = [
