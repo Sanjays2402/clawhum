@@ -1080,6 +1080,14 @@ def feedback_list(
         "--exclude-artist",
         help="Drop entries whose track artist matches this value (case-insensitive, whitespace-trimmed exact match). Repeatable. Implies --enrich. Useful to hide one noisy artist that dominates the listing (covers, alternate editions, smoke-test seeds) without rewriting the feedback file. Orphan tracks (no metadata) are kept so they remain visible for cleanup; pair with --in-index to drop them too.",
     ),
+    exclude_artist_file: Path | None = typer.Option(
+        None,
+        "--exclude-artist-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --exclude-artist names from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --exclude-artist values. Useful for a persistent 'never show me anything by these artists' list maintained outside the feedback log (e.g. covers/tribute artists that crowd the listing run after run).",
+    ),
     fmt: str | None = typer.Option(None, "--format", "-f", help="Output format: table, json, csv. Defaults to table on stdout, or inferred from --output extension (.json/.csv) when writing to a file."),
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
     orphaned: bool = typer.Option(False, "--orphaned", help="Only show entries whose track_id is no longer in the indexed library. Useful after pruning the library to find stale votes to delete with feedback-delete."),
@@ -1123,6 +1131,8 @@ def feedback_list(
         query_id = list(query_id or []) + _load_track_ids_from_file(query_id_file)
     if exclude_query_id_file is not None:
         exclude_query_id = list(exclude_query_id or []) + _load_track_ids_from_file(exclude_query_id_file)
+    if exclude_artist_file is not None:
+        exclude_artist = list(exclude_artist or []) + _load_artist_names_from_file(exclude_artist_file)
 
     only_ids = {t.strip() for t in (track_id or []) if t and t.strip()}
     excluded_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
