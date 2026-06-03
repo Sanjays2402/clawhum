@@ -33,7 +33,7 @@ ml = [
   "torch>=2.4",
   "torchaudio>=2.4",
   "transformers>=4.45",
-  "accelerate>=1.0",
+  "accelerate>=1.13.0",
 ]
 sentry = [
   "sentry-sdk[fastapi]>=2.18",
