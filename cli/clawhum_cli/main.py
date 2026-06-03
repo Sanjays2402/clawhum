@@ -951,6 +951,11 @@ def feedback_list(
     max_score: float | None = typer.Option(None, "--max-score", help="Only entries whose recorded score is at most this. Entries without a numeric score are excluded. Combine with --vote -1 to find down-votes on high-confidence matches (false positives)."),
     title: str | None = typer.Option(None, "--title", help="Only entries whose track title contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
     artist: str | None = typer.Option(None, "--artist", help="Only entries whose track artist contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
+    exclude_artist: list[str] = typer.Option(
+        None,
+        "--exclude-artist",
+        help="Drop entries whose track artist matches this value (case-insensitive, whitespace-trimmed exact match). Repeatable. Implies --enrich. Useful to hide one noisy artist that dominates the listing (covers, alternate editions, smoke-test seeds) without rewriting the feedback file. Orphan tracks (no metadata) are kept so they remain visible for cleanup; pair with --in-index to drop them too.",
+    ),
     fmt: str | None = typer.Option(None, "--format", "-f", help="Output format: table, json, csv. Defaults to table on stdout, or inferred from --output extension (.json/.csv) when writing to a file."),
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
     orphaned: bool = typer.Option(False, "--orphaned", help="Only show entries whose track_id is no longer in the indexed library. Useful after pruning the library to find stale votes to delete with feedback-delete."),
@@ -1007,10 +1012,15 @@ def feedback_list(
         rows = [r for r in rows if str(r.get("track_id", "")) not in excluded_ids]
     if excluded_qids:
         rows = [r for r in rows if str(r.get("query_id", "")) not in excluded_qids]
-    # --title/--artist/--orphaned/--in-index need metadata to filter on, so
-    # auto-enrich. --title/--artist additionally drop rows whose track isn't in
-    # the indexed library (can't match a blank).
-    needs_meta = enrich or title is not None or artist is not None or orphaned or in_index
+    # --title/--artist/--exclude-artist/--orphaned/--in-index need metadata to
+    # filter on, so auto-enrich. --title/--artist additionally drop rows whose
+    # track isn't in the indexed library (can't match a blank).
+    excluded_artists = {a.strip().casefold() for a in (exclude_artist or []) if a and a.strip()}
+    if artist is not None and excluded_artists and artist.strip().casefold() in excluded_artists:
+        raise typer.BadParameter(
+            "--artist and --exclude-artist must not target the same artist"
+        )
+    needs_meta = enrich or title is not None or artist is not None or excluded_artists or orphaned or in_index
     meta = _load_track_metadata() if needs_meta else None
     if orphaned:
         known = set((meta or {}).keys())
@@ -1018,6 +1028,21 @@ def feedback_list(
     elif in_index:
         known = set((meta or {}).keys())
         rows = [r for r in rows if str(r.get("track_id", "")) in known]
+    if excluded_artists:
+        # Drop rows whose artist (case-insensitive, whitespace-trimmed) matches
+        # any excluded value. Orphan tracks (no metadata row) are kept so they
+        # remain visible for cleanup; pair with --in-index to drop them too.
+        kept = []
+        for r in rows:
+            entry = (meta or {}).get(str(r.get("track_id", "")))
+            if entry is None:
+                kept.append(r)
+                continue
+            _, a_val = entry
+            if (a_val or "").strip().casefold() in excluded_artists:
+                continue
+            kept.append(r)
+        rows = kept
     if title is not None or artist is not None:
         t_needle = title.lower() if title is not None else None
         a_needle = artist.lower() if artist is not None else None
