@@ -680,20 +680,52 @@ def feedback_delete(
         "--query-id",
         help="Delete entries with this query_id. Repeatable: pass multiple --query-id values to purge several sessions in one call (e.g. `--query-id q-a --query-id q-b`) instead of looping the command per id. Whitespace-trimmed; blank entries ignored; unknown ids are a no-op. Must not overlap with --exclude-query-id.",
     ),
+    query_id_file: Path | None = typer.Option(
+        None,
+        "--query-id-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --query-id values from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --query-id values. Useful for scripted purges where the session id set is too long to pass on the command line or is reused across many runs (e.g. a saved list of evaluation sessions to retire after a model swap).",
+    ),
     track_id: list[str] = typer.Option(
         None,
         "--track-id",
         help="Delete entries with this track_id. Repeatable: pass multiple --track-id values to purge several tracks' votes in one call instead of looping. Whitespace-trimmed; blank entries ignored; unknown ids are a no-op. Must not overlap with --exclude-track.",
+    ),
+    track_id_file: Path | None = typer.Option(
+        None,
+        "--track-id-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --track-id values from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --track-id values. Useful for scripted purges where the track id set is too long to pass on the command line or is reused across many runs (e.g. a saved list of duplicate-edition ids to wipe votes for).",
     ),
     exclude_track: list[str] = typer.Option(
         None,
         "--exclude-track",
         help="Never delete entries for this track_id. Repeatable. Use as a safety net when bulk-purging by --vote, --since/--until, or score range so a track you still care about is preserved (e.g. --vote -1 --until 30d --exclude-track t-keepme ages out old down-votes while leaving that track untouched). Whitespace-trimmed; blank entries ignored; unknown ids are a no-op. Must not overlap with --track-id.",
     ),
+    exclude_track_file: Path | None = typer.Option(
+        None,
+        "--exclude-track-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --exclude-track values from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --exclude-track values. Useful for a persistent 'never purge these tracks' denylist maintained outside the feedback log so bulk purges (e.g. `--vote -1 --until 30d`) cannot accidentally wipe votes you still care about.",
+    ),
     exclude_query_id: list[str] = typer.Option(
         None,
         "--exclude-query-id",
         help="Never delete entries with this query_id. Repeatable. Useful for scoping a bulk purge to skip a curated set of sessions (e.g. votes recorded during a known-good evaluation run). Whitespace-trimmed; blank entries ignored; unknown ids are a no-op. Must not overlap with --query-id.",
+    ),
+    exclude_query_id_file: Path | None = typer.Option(
+        None,
+        "--exclude-query-id-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --exclude-query-id values from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --exclude-query-id values. Useful for a persistent 'never purge these sessions' denylist (e.g. a list of evaluation-run query ids to keep intact across bulk purges).",
     ),
     vote: int | None = typer.Option(None, "--vote", help="Restrict deletion to this vote (1 or -1)."),
     since: str | None = typer.Option(None, "--since", help="Only delete entries at/after this time (unix seconds, ISO-8601 naive = UTC, or relative offset from now like 24h/7d/30m/45s/2w)."),
@@ -728,6 +760,20 @@ def feedback_delete(
     no longer in the index (typical use: clean up after a library prune);
     --in-index is its inverse and is mutually exclusive with --orphaned.
     """
+    # Merge file-sourced ids into the option lists before the no-positive-filter
+    # guard and the overlap check so a positive filter supplied only via
+    # --track-id-file / --query-id-file is accepted, and overlap checks see one
+    # combined view. File ids union with any CLI ids; the downstream filter
+    # de-dups via sets so order only matters for accounting.
+    if query_id_file is not None:
+        query_id = list(query_id or []) + _load_track_ids_from_file(query_id_file)
+    if track_id_file is not None:
+        track_id = list(track_id or []) + _load_track_ids_from_file(track_id_file)
+    if exclude_track_file is not None:
+        exclude_track = list(exclude_track or []) + _load_track_ids_from_file(exclude_track_file)
+    if exclude_query_id_file is not None:
+        exclude_query_id = list(exclude_query_id or []) + _load_track_ids_from_file(exclude_query_id_file)
+
     if (
         not query_id and not track_id and vote is None
         and since is None and until is None
