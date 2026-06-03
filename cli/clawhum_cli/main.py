@@ -1474,11 +1474,27 @@ def feedback_stats(
         "-q",
         help="Only aggregate entries for this query_id. Repeatable. Useful for slicing stats down to a single hum attempt or a small set of related attempts (e.g. one user session) without exporting the raw feedback log.",
     ),
+    query_id_file: Path | None = typer.Option(
+        None,
+        "--query-id-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --query-id values from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --query-id values. Useful when the session id shortlist (e.g. a saved set of evaluation-run query ids) is too long to pass on the command line or is reused across many feedback-stats invocations in a script.",
+    ),
     exclude_query_id: list[str] = typer.Option(
         None,
         "--exclude-query-id",
         "-X",
         help="Drop entries with this query_id from the aggregation. Repeatable. Useful for excluding a known-noisy session (e.g. a smoke-test run that flooded the log with junk votes) without rewriting the feedback file.",
+    ),
+    exclude_query_id_file: Path | None = typer.Option(
+        None,
+        "--exclude-query-id-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --exclude-query-id values from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --exclude-query-id values. Useful for a persistent 'never include these sessions in aggregated stats' denylist (e.g. smoke-test session ids that flood the feedback log).",
     ),
     title: str | None = typer.Option(None, "--title", help="Only show tracks whose title contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
     artist: str | None = typer.Option(None, "--artist", help="Only show tracks whose artist contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
@@ -1567,6 +1583,10 @@ def feedback_stats(
         track_id = list(track_id or []) + _load_track_ids_from_file(track_id_file)
     if exclude_track_file is not None:
         exclude_track = list(exclude_track or []) + _load_track_ids_from_file(exclude_track_file)
+    if query_id_file is not None:
+        query_id = list(query_id or []) + _load_track_ids_from_file(query_id_file)
+    if exclude_query_id_file is not None:
+        exclude_query_id = list(exclude_query_id or []) + _load_track_ids_from_file(exclude_query_id_file)
     if exclude_artist_file is not None:
         exclude_artist = list(exclude_artist or []) + _load_artist_names_from_file(exclude_artist_file)
     if only_artist_file is not None:
