@@ -406,8 +406,16 @@ def feedback(
 
 @app.command("feedback-delete")
 def feedback_delete(
-    query_id: str | None = typer.Option(None, "--query-id", help="Delete entries with this query_id."),
-    track_id: str | None = typer.Option(None, "--track-id", help="Delete entries with this track_id."),
+    query_id: list[str] = typer.Option(
+        None,
+        "--query-id",
+        help="Delete entries with this query_id. Repeatable: pass multiple --query-id values to purge several sessions in one call (e.g. `--query-id q-a --query-id q-b`) instead of looping the command per id. Whitespace-trimmed; blank entries ignored; unknown ids are a no-op. Must not overlap with --exclude-query-id.",
+    ),
+    track_id: list[str] = typer.Option(
+        None,
+        "--track-id",
+        help="Delete entries with this track_id. Repeatable: pass multiple --track-id values to purge several tracks' votes in one call instead of looping. Whitespace-trimmed; blank entries ignored; unknown ids are a no-op. Must not overlap with --exclude-track.",
+    ),
     exclude_track: list[str] = typer.Option(
         None,
         "--exclude-track",
@@ -435,7 +443,10 @@ def feedback_delete(
     At least one of --query-id, --track-id, --vote, --since, --until,
     --min-score, --max-score, --title, --artist, --orphaned, or --in-index
     must be supplied so a bare invocation can never wipe the whole feedback
-    log. --exclude-track and --exclude-query-id (both repeatable) act as a
+    log. --query-id and --track-id are repeatable so a single call can
+    target multiple sessions or tracks (e.g. `--query-id q-a --query-id q-b`)
+    instead of looping the command. --exclude-track and --exclude-query-id
+    (both repeatable) act as a
     denylist on top of those positive filters so a bulk purge (e.g.
     `--vote -1 --until 30d`) can skip tracks or sessions you still want to
     keep; they cannot stand alone. Rows without a numeric ts are never
@@ -449,7 +460,7 @@ def feedback_delete(
     --in-index is its inverse and is mutually exclusive with --orphaned.
     """
     if (
-        query_id is None and track_id is None and vote is None
+        not query_id and not track_id and vote is None
         and since is None and until is None
         and min_score is None and max_score is None
         and title is None and artist is None
@@ -458,9 +469,11 @@ def feedback_delete(
         raise typer.BadParameter("supply at least one of --query-id, --track-id, --vote, --since, --until, --min-score, --max-score, --title, --artist, --orphaned, --in-index")
     excluded_track_set = {t.strip() for t in (exclude_track or []) if t and t.strip()}
     excluded_query_set = {q.strip() for q in (exclude_query_id or []) if q and q.strip()}
-    if track_id is not None and track_id in excluded_track_set:
+    track_id_set = {t.strip() for t in (track_id or []) if t and t.strip()}
+    query_id_set = {q.strip() for q in (query_id or []) if q and q.strip()}
+    if track_id_set & excluded_track_set:
         raise typer.BadParameter("--track-id and --exclude-track must not overlap")
-    if query_id is not None and query_id in excluded_query_set:
+    if query_id_set & excluded_query_set:
         raise typer.BadParameter("--query-id and --exclude-query-id must not overlap")
     if orphaned and in_index:
         raise typer.BadParameter("--orphaned and --in-index are mutually exclusive")
@@ -509,8 +522,23 @@ def feedback_delete(
             console.print("[dim]no matching feedback entries[/dim]")
             return
         resolved_track_ids = orphan_ids
+    # If the user supplied both --track-id and a resolver-based allowlist
+    # (--title/--artist/--in-index/--orphaned), the effective allowlist is the
+    # intersection: only tracks named explicitly AND matching the resolver.
+    if track_id_set and resolved_track_ids is not None:
+        effective_track_ids: set[str] | None = track_id_set & resolved_track_ids
+        if not effective_track_ids:
+            console.print("[dim]no matching feedback entries[/dim]")
+            return
+    elif track_id_set:
+        effective_track_ids = track_id_set
+    else:
+        effective_track_ids = resolved_track_ids
+
     matches = _filter_feedback(
-        rows, query_id=query_id, track_id=track_id, track_ids=resolved_track_ids,
+        rows,
+        query_ids=query_id_set or None,
+        track_ids=effective_track_ids,
         exclude_track_ids=excluded_track_set or None,
         exclude_query_ids=excluded_query_set or None,
         vote=vote,
@@ -529,7 +557,9 @@ def feedback_delete(
             console.print("[dim]aborted[/dim]")
             raise typer.Exit(code=1)
     removed = _delete_feedback(
-        s.feedback_path, query_id=query_id, track_id=track_id, track_ids=resolved_track_ids,
+        s.feedback_path,
+        query_ids=query_id_set or None,
+        track_ids=effective_track_ids,
         exclude_track_ids=excluded_track_set or None,
         exclude_query_ids=excluded_query_set or None,
         vote=vote,

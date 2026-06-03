@@ -47,6 +47,7 @@ def delete_feedback(
     path: str | Path,
     *,
     query_id: str | None = None,
+    query_ids: "Iterable[str] | None" = None,
     track_id: str | None = None,
     track_ids: "Iterable[str] | None" = None,
     exclude_track_ids: "Iterable[str] | None" = None,
@@ -81,10 +82,14 @@ def delete_feedback(
     track_id_set: set[str] | None = None
     if track_ids is not None:
         track_id_set = {str(t) for t in track_ids}
+    query_id_set: set[str] | None = None
+    if query_ids is not None:
+        query_id_set = {str(q) for q in query_ids}
     exclude_track_set: set[str] = {str(t) for t in (exclude_track_ids or [])}
     exclude_query_set: set[str] = {str(q) for q in (exclude_query_ids or [])}
     if (
         query_id is None
+        and query_id_set is None
         and track_id is None
         and track_id_set is None
         and vote is None
@@ -98,6 +103,8 @@ def delete_feedback(
         # Empty allowlist matches no rows; nothing to do. Returning early also
         # protects against the upstream resolver (e.g. title/artist with zero
         # matches) accidentally being treated as "no filter".
+        return 0
+    if query_id_set is not None and not query_id_set:
         return 0
     p = Path(path)
     if not p.exists():
@@ -117,6 +124,9 @@ def delete_feedback(
                 kept.append(row)
                 continue
             if query_id is not None and row.get("query_id") != query_id:
+                kept.append(row)
+                continue
+            if query_id_set is not None and str(row.get("query_id", "")) not in query_id_set:
                 kept.append(row)
                 continue
             if track_id is not None and row.get("track_id") != track_id:
