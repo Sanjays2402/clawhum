@@ -1088,6 +1088,19 @@ def feedback_list(
         file_okay=True,
         help="Load --exclude-artist names from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --exclude-artist values. Useful for a persistent 'never show me anything by these artists' list maintained outside the feedback log (e.g. covers/tribute artists that crowd the listing run after run).",
     ),
+    only_artist: list[str] = typer.Option(
+        None,
+        "--only-artist",
+        help="Restrict the listing to entries whose track artist matches this value (case-insensitive, whitespace-trimmed exact match). Repeatable. Implies --enrich. Useful as a 'show me only votes on <artist>' filter without grepping the table. Orphan tracks (no metadata) are dropped because we cannot prove they belong to the allowlisted artist; pair with --orphaned separately to inspect them. Mutually exclusive with --exclude-artist.",
+    ),
+    only_artist_file: Path | None = typer.Option(
+        None,
+        "--only-artist-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --only-artist names from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --only-artist values. Useful when the allowlist outgrows the command line (e.g. a saved set of favourite artists piped into a scheduled feedback-list run) and the same list is reused across many invocations.",
+    ),
     fmt: str | None = typer.Option(None, "--format", "-f", help="Output format: table, json, csv. Defaults to table on stdout, or inferred from --output extension (.json/.csv) when writing to a file."),
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
     orphaned: bool = typer.Option(False, "--orphaned", help="Only show entries whose track_id is no longer in the indexed library. Useful after pruning the library to find stale votes to delete with feedback-delete."),
@@ -1133,6 +1146,8 @@ def feedback_list(
         exclude_query_id = list(exclude_query_id or []) + _load_track_ids_from_file(exclude_query_id_file)
     if exclude_artist_file is not None:
         exclude_artist = list(exclude_artist or []) + _load_artist_names_from_file(exclude_artist_file)
+    if only_artist_file is not None:
+        only_artist = list(only_artist or []) + _load_artist_names_from_file(only_artist_file)
 
     only_ids = {t.strip() for t in (track_id or []) if t and t.strip()}
     excluded_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
@@ -1163,11 +1178,16 @@ def feedback_list(
     # filter on, so auto-enrich. --title/--artist additionally drop rows whose
     # track isn't in the indexed library (can't match a blank).
     excluded_artists = {a.strip().casefold() for a in (exclude_artist or []) if a and a.strip()}
+    only_artists = {a.strip().casefold() for a in (only_artist or []) if a and a.strip()}
+    if only_artists and excluded_artists:
+        raise typer.BadParameter(
+            "--only-artist and --exclude-artist are mutually exclusive"
+        )
     if artist is not None and excluded_artists and artist.strip().casefold() in excluded_artists:
         raise typer.BadParameter(
             "--artist and --exclude-artist must not target the same artist"
         )
-    needs_meta = enrich or title is not None or artist is not None or excluded_artists or orphaned or in_index
+    needs_meta = enrich or title is not None or artist is not None or excluded_artists or only_artists or orphaned or in_index
     meta = _load_track_metadata() if needs_meta else None
     if orphaned:
         known = set((meta or {}).keys())
@@ -1175,6 +1195,19 @@ def feedback_list(
     elif in_index:
         known = set((meta or {}).keys())
         rows = [r for r in rows if str(r.get("track_id", "")) in known]
+    if only_artists:
+        # Drop rows whose artist (case-insensitive, whitespace-trimmed) is not
+        # in the allowlist. Orphan tracks (no metadata row) are dropped because
+        # we cannot prove they belong to the allowlisted artist.
+        kept = []
+        for r in rows:
+            entry = (meta or {}).get(str(r.get("track_id", "")))
+            if entry is None:
+                continue
+            _, a_val = entry
+            if (a_val or "").strip().casefold() in only_artists:
+                kept.append(r)
+        rows = kept
     if excluded_artists:
         # Drop rows whose artist (case-insensitive, whitespace-trimmed) matches
         # any excluded value. Orphan tracks (no metadata row) are kept so they
