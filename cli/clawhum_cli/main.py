@@ -1462,6 +1462,11 @@ def feedback_stats(
     ),
     title: str | None = typer.Option(None, "--title", help="Only show tracks whose title contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
     artist: str | None = typer.Option(None, "--artist", help="Only show tracks whose artist contains this substring (case-insensitive). Implies --enrich. Tracks missing from the indexed library are excluded."),
+    exclude_artist: list[str] = typer.Option(
+        None,
+        "--exclude-artist",
+        help="Drop tracks whose artist matches this value (case-insensitive, whitespace-trimmed exact match). Repeatable. Implies --enrich. Useful to hide one noisy artist that dominates the stats (covers, alternate editions, smoke-test seeds) without rewriting the feedback file. Orphan tracks (no metadata) are kept so they remain visible for cleanup; pair with --in-index to drop them too.",
+    ),
     since: str | None = typer.Option(None, "--since", help="Only aggregate entries at/after this time (unix seconds, ISO-8601 naive = UTC, or relative offset from now like 24h/7d/30m/45s/2w)."),
     until: str | None = typer.Option(None, "--until", help="Only aggregate entries strictly before this time (unix seconds, ISO-8601 naive = UTC, or relative offset from now like 24h/7d/30m/45s/2w)."),
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
@@ -1603,11 +1608,30 @@ def feedback_stats(
             stats = [r for r in stats if r.get("track_id") not in known]
         else:
             stats = [r for r in stats if r.get("track_id") in known]
-    # --title/--artist need metadata to filter on, so auto-enrich and drop
-    # orphans (we can't prove a track without metadata matches a name needle).
-    needs_meta = enrich or title is not None or artist is not None
+    # --title/--artist/--exclude-artist need metadata to filter on, so
+    # auto-enrich. --title/--artist additionally drop orphans (can't prove a
+    # track without metadata matches a name needle); --exclude-artist keeps
+    # orphans so they stay visible for cleanup (pair with --in-index to drop).
+    excluded_artists = {a.strip().casefold() for a in (exclude_artist or []) if a and a.strip()}
+    if artist is not None and excluded_artists and artist.strip().casefold() in excluded_artists:
+        raise typer.BadParameter(
+            "--artist and --exclude-artist must not target the same artist"
+        )
+    needs_meta = enrich or title is not None or artist is not None or bool(excluded_artists)
     if needs_meta and meta_cache is None:
         meta_cache = _load_track_metadata()
+    if excluded_artists:
+        kept = []
+        for r in stats:
+            entry = (meta_cache or {}).get(str(r.get("track_id", "")))
+            if entry is None:
+                kept.append(r)
+                continue
+            _, a_val = entry
+            if (a_val or "").strip().casefold() in excluded_artists:
+                continue
+            kept.append(r)
+        stats = kept
     if title is not None or artist is not None:
         t_needle = title.lower() if title is not None else None
         a_needle = artist.lower() if artist is not None else None
