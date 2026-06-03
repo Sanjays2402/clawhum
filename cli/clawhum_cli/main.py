@@ -984,11 +984,27 @@ def feedback_list(
         "--track-id",
         help="Only show entries for this track_id. Repeatable. Useful for scoping the listing to a curated shortlist of tracks (e.g. the top candidates from a recent `clawhum match`) without grepping the table. Mutually exclusive with --exclude-track on the same id.",
     ),
+    track_id_file: Path | None = typer.Option(
+        None,
+        "--track-id-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --track-id values from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --track-id values. Useful when the shortlist (e.g. a saved set of candidate ids from an earlier `clawhum match`) has more ids than fit cleanly on a command line, or when the same shortlist is reused across many feedback-list runs in a script.",
+    ),
     exclude_track: list[str] = typer.Option(
         None,
         "--exclude-track",
         "-x",
         help="Drop entries for this track_id from the listing. Repeatable. Useful for looking past a known-noisy track (e.g. a duplicate edition that dominates recent votes) without re-querying.",
+    ),
+    exclude_track_file: Path | None = typer.Option(
+        None,
+        "--exclude-track-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --exclude-track values from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --exclude-track values. Useful for a persistent 'never include these tracks in the listing' set maintained outside the feedback log (e.g. duplicate editions or smoke-test seeds).",
     ),
     vote: int | None = typer.Option(None, "--vote", help="Filter by vote: 1 (up) or -1 (down)."),
     since: str | None = typer.Option(None, "--since", help="Only entries at/after this time (unix seconds, ISO-8601 naive = UTC, or relative offset from now like 24h/7d/30m/45s/2w)."),
@@ -1032,6 +1048,15 @@ def feedback_list(
     until_ts = _parse_time_bound(until, flag="--until") if until is not None else None
     if since_ts is not None and until_ts is not None and since_ts > until_ts:
         raise typer.BadParameter("--since must be <= --until")
+
+    # Merge file-sourced ids into the option lists before any filter logic so
+    # the downstream overlap check and filter see one combined view. File ids
+    # are appended after CLI ids; the downstream filters de-dup via sets so
+    # order only matters for accounting.
+    if track_id_file is not None:
+        track_id = list(track_id or []) + _load_track_ids_from_file(track_id_file)
+    if exclude_track_file is not None:
+        exclude_track = list(exclude_track or []) + _load_track_ids_from_file(exclude_track_file)
 
     only_ids = {t.strip() for t in (track_id or []) if t and t.strip()}
     excluded_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
