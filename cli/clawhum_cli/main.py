@@ -738,6 +738,18 @@ def feedback_delete(
     in_index: bool = typer.Option(False, "--in-index", help="Only delete entries whose track_id is still present in the indexed library. Skips orphaned feedback so a name- or score-based purge cannot accidentally wipe votes whose tracks have already been pruned."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Report how many rows would be deleted without writing."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
+    backup: Path | None = typer.Option(
+        None,
+        "--backup",
+        dir_okay=False,
+        file_okay=True,
+        help="Before deleting, write the matched rows as JSONL to this path so the purge is recoverable (replay with `cat backup.jsonl >> $CLAWHUM_FEEDBACK_PATH` or `feedback-replay`). Parent dirs are created. Refuses to clobber an existing file unless --backup-overwrite is set. Honoured for --dry-run too so you can preview what would be saved without writing the deletion. If the backup write fails the delete is aborted and the feedback log is left untouched.",
+    ),
+    backup_overwrite: bool = typer.Option(
+        False,
+        "--backup-overwrite",
+        help="Allow --backup to overwrite an existing file. Off by default so a re-run of the same purge does not silently clobber the prior backup.",
+    ),
 ):
     """Delete recorded feedback rows (undo a misclicked vote, or age out old data).
 
@@ -863,6 +875,20 @@ def feedback_delete(
     if not matches:
         console.print("[dim]no matching feedback entries[/dim]")
         return
+    if backup is not None:
+        if backup.exists() and not backup_overwrite:
+            raise typer.BadParameter(
+                f"--backup target already exists: {backup} (pass --backup-overwrite to replace it)"
+            )
+        try:
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            with open(backup, "w") as bf:
+                for r in matches:
+                    bf.write(json.dumps(r) + "\n")
+        except OSError as e:
+            console.print(f"[red]backup write failed: {e}; aborting delete[/red]")
+            raise typer.Exit(code=1)
+        console.print(f"[dim]backed up {len(matches)} entry(s) to {backup}[/dim]")
     if dry_run:
         console.print(f"[yellow]would delete {len(matches)} entry(s)[/yellow]")
         return
