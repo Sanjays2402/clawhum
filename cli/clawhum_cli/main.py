@@ -734,6 +734,32 @@ def feedback_delete(
     max_score: float | None = typer.Option(None, "--max-score", help="Only delete entries whose recorded score is at most this. Entries without a numeric score are never matched. Combine with --vote -1 --max-score 0.2 to purge down-votes on weak matches."),
     title: str | None = typer.Option(None, "--title", help="Only delete entries whose track title contains this substring (case-insensitive). Resolved against the indexed library; tracks missing from the library are skipped. Pair with --dry-run first to preview which votes would be removed."),
     artist: str | None = typer.Option(None, "--artist", help="Only delete entries whose track artist contains this substring (case-insensitive). Resolved against the indexed library; tracks missing from the library are skipped."),
+    only_artist: list[str] = typer.Option(
+        None,
+        "--only-artist",
+        help="Restrict deletion to entries whose track artist matches this value (case-insensitive, whitespace-trimmed exact match). Repeatable. Resolved against the indexed library; orphan tracks (no metadata) are skipped because we cannot prove they belong to the allowlisted artist, so they are never purged by an artist-based delete. Mutually exclusive with --exclude-artist. Useful for purging all votes by one cover/tribute artist without first looking up their internal track ids.",
+    ),
+    only_artist_file: Path | None = typer.Option(
+        None,
+        "--only-artist-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --only-artist names from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --only-artist values. Useful when the allowlist outgrows the command line (e.g. a saved set of artists whose votes you want to purge in a scheduled cleanup).",
+    ),
+    exclude_artist: list[str] = typer.Option(
+        None,
+        "--exclude-artist",
+        help="Never delete entries whose track artist matches this value (case-insensitive, whitespace-trimmed exact match). Repeatable. Resolved against the indexed library; orphan tracks (no metadata) are kept (never purged by an artist denylist) because we cannot prove they don't belong to the protected artist. Use as a safety net during bulk purges (e.g. `--vote -1 --until 30d --exclude-artist 'My Favourite Band'`). Cannot stand alone.",
+    ),
+    exclude_artist_file: Path | None = typer.Option(
+        None,
+        "--exclude-artist-file",
+        exists=True,
+        dir_okay=False,
+        file_okay=True,
+        help="Load --exclude-artist names from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --exclude-artist values. Useful for a persistent 'never purge votes for these artists' denylist (e.g. favourite artists) so bulk purges cannot accidentally wipe their feedback.",
+    ),
     orphaned: bool = typer.Option(False, "--orphaned", help="Only delete entries whose track_id is no longer in the indexed library. Intended for purging stale votes after pruning the library. Pair with --dry-run first."),
     in_index: bool = typer.Option(False, "--in-index", help="Only delete entries whose track_id is still present in the indexed library. Skips orphaned feedback so a name- or score-based purge cannot accidentally wipe votes whose tracks have already been pruned."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Report how many rows would be deleted without writing."),
@@ -768,9 +794,15 @@ def feedback_delete(
     not silently purged.
     --title / --artist are resolved against the indexed library, so feedback
     whose track has been removed from the index is never deleted by a
-    name-based purge. --orphaned deletes only votes pointing at track_ids
-    no longer in the index (typical use: clean up after a library prune);
-    --in-index is its inverse and is mutually exclusive with --orphaned.
+    name-based purge. --only-artist / --exclude-artist do an exact (case-
+    insensitive, whitespace-trimmed) artist match against the indexed
+    library: --only-artist narrows deletion to its allowlist (orphan tracks
+    are skipped because we cannot prove the artist), --exclude-artist
+    protects its denylist from deletion (orphans are also kept because we
+    cannot prove they are not the protected artist). --orphaned deletes
+    only votes pointing at track_ids no longer in the index (typical use:
+    clean up after a library prune); --in-index is its inverse and is
+    mutually exclusive with --orphaned.
     """
     # Merge file-sourced ids into the option lists before the no-positive-filter
     # guard and the overlap check so a positive filter supplied only via
@@ -785,15 +817,20 @@ def feedback_delete(
         exclude_track = list(exclude_track or []) + _load_track_ids_from_file(exclude_track_file)
     if exclude_query_id_file is not None:
         exclude_query_id = list(exclude_query_id or []) + _load_track_ids_from_file(exclude_query_id_file)
+    if only_artist_file is not None:
+        only_artist = list(only_artist or []) + _load_artist_names_from_file(only_artist_file)
+    if exclude_artist_file is not None:
+        exclude_artist = list(exclude_artist or []) + _load_artist_names_from_file(exclude_artist_file)
 
     if (
         not query_id and not track_id and vote is None
         and since is None and until is None
         and min_score is None and max_score is None
         and title is None and artist is None
+        and not only_artist
         and not orphaned and not in_index
     ):
-        raise typer.BadParameter("supply at least one of --query-id, --track-id, --vote, --since, --until, --min-score, --max-score, --title, --artist, --orphaned, --in-index")
+        raise typer.BadParameter("supply at least one of --query-id, --track-id, --vote, --since, --until, --min-score, --max-score, --title, --artist, --only-artist, --orphaned, --in-index")
     excluded_track_set = {t.strip() for t in (exclude_track or []) if t and t.strip()}
     excluded_query_set = {q.strip() for q in (exclude_query_id or []) if q and q.strip()}
     track_id_set = {t.strip() for t in (track_id or []) if t and t.strip()}
@@ -804,6 +841,12 @@ def feedback_delete(
         raise typer.BadParameter("--query-id and --exclude-query-id must not overlap")
     if orphaned and in_index:
         raise typer.BadParameter("--orphaned and --in-index are mutually exclusive")
+    only_artists_norm = {a.strip().casefold() for a in (only_artist or []) if a and a.strip()}
+    excluded_artists_norm = {a.strip().casefold() for a in (exclude_artist or []) if a and a.strip()}
+    if only_artists_norm and excluded_artists_norm:
+        raise typer.BadParameter("--only-artist and --exclude-artist are mutually exclusive")
+    if artist is not None and excluded_artists_norm and artist.strip().casefold() in excluded_artists_norm:
+        raise typer.BadParameter("--artist and --exclude-artist must not target the same artist")
     if vote is not None and vote not in (1, -1):
         raise typer.BadParameter("--vote must be 1 or -1")
     if min_score is not None and max_score is not None and min_score > max_score:
@@ -824,9 +867,12 @@ def feedback_delete(
     # whose track_id is NOT in the index, so it can clean up stale votes
     # after a library prune.
     resolved_track_ids: set[str] | None = None
-    needs_meta = title is not None or artist is not None or orphaned or in_index
+    needs_meta = (
+        title is not None or artist is not None or orphaned or in_index
+        or bool(only_artists_norm) or bool(excluded_artists_norm)
+    )
     meta = _load_track_metadata() if needs_meta else None
-    if title is not None or artist is not None or in_index:
+    if title is not None or artist is not None or in_index or only_artists_norm:
         t_needle = title.lower() if title is not None else None
         a_needle = artist.lower() if artist is not None else None
         resolved_track_ids = set()
@@ -835,10 +881,20 @@ def feedback_delete(
                 continue
             if a_needle is not None and a_needle not in (a_val or "").lower():
                 continue
+            if only_artists_norm and (a_val or "").strip().casefold() not in only_artists_norm:
+                continue
             resolved_track_ids.add(tid)
         if not resolved_track_ids:
             console.print("[dim]no matching feedback entries[/dim]")
             return
+    # --exclude-artist resolves to a set of track ids whose artist is on the
+    # denylist; we union that into excluded_track_set so the existing filter
+    # protects them. Orphan tracks (no metadata) are never on this set so they
+    # are never purged by an artist denylist alone.
+    if excluded_artists_norm:
+        for tid, (_t_val, a_val) in (meta or {}).items():
+            if (a_val or "").strip().casefold() in excluded_artists_norm:
+                excluded_track_set.add(tid)
 
     rows = read_feedback(s.feedback_path)
     if orphaned:
