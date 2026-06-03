@@ -60,6 +60,30 @@ def _downvoted_track_ids(rows: list[dict]) -> set[str]:
     return {tid for tid, d in down.items() if d > up.get(tid, 0)}
 
 
+def _upvoted_track_ids(rows: list[dict]) -> set[str]:
+    """Return track_ids whose recorded feedback is net positive (up > down).
+
+    Used by ``clawhum match --only-upvoted`` to restrict matches to tracks the
+    user has previously liked. The threshold is strict: a single up-vote that
+    is later cancelled by an equal down-vote does not qualify, so a track only
+    survives once the user has clearly stood by it. Rows with missing or
+    non-integer ``track_id`` / ``vote`` fields are ignored rather than raising,
+    so a malformed feedback line can never crash ``match``.
+    """
+    up: dict[str, int] = {}
+    down: dict[str, int] = {}
+    for r in rows:
+        tid = r.get("track_id")
+        if not isinstance(tid, str) or not tid:
+            continue
+        v = r.get("vote")
+        if v == 1:
+            up[tid] = up.get(tid, 0) + 1
+        elif v == -1:
+            down[tid] = down.get(tid, 0) + 1
+    return {tid for tid, u in up.items() if u > down.get(tid, 0)}
+
+
 def _load_track_ids_from_file(path: Path) -> list[str]:
     """Read newline-delimited track ids from ``path``.
 
@@ -271,6 +295,12 @@ def match(
         "-D",
         help="Drop matches for tracks whose recorded feedback is net negative (down-votes > up-votes). Lets a returning user re-hum a melody without the songs they already rejected crowding the top of the list. A single stray down-vote does not blacklist a track: only tracks where down-votes strictly outnumber up-votes are dropped, so an accidental thumbs-down that was later corrected with two thumbs-up will still appear. Unions with any --exclude-track ids; mutually exclusive with --only-track (where the user has explicitly opted into a shortlist).",
     ),
+    only_upvoted: bool = typer.Option(
+        False,
+        "--only-upvoted",
+        "-U",
+        help="Restrict matches to tracks whose recorded feedback is net positive (up-votes > down-votes). Useful as a 'find something I already like that matches this hum' filter, e.g. re-discovering a song from a playlist of past favourites. The threshold is strict: a track that has been up- and down-voted exactly once does not qualify, so only tracks the user has clearly stood by survive. Unions with --only-track (the resulting allowlist is the union of the two sets); mutually exclusive with --exclude-downvoted (redundant: a net-positive set never overlaps a net-negative set).",
+    ),
 ):
     """Match an audio file (hum/clip) against the index."""
     from clawhum_audio.io import load_audio
@@ -292,8 +322,14 @@ def match(
     excl_ids = {t.strip() for t in (exclude_track or []) if t and t.strip()}
     if only_ids and excl_ids:
         raise typer.BadParameter("--only-track and --exclude-track are mutually exclusive")
-    if exclude_downvoted and only_ids:
+    if exclude_downvoted and only_ids and not only_upvoted:
         raise typer.BadParameter("--exclude-downvoted and --only-track are mutually exclusive")
+    if exclude_downvoted and only_upvoted:
+        raise typer.BadParameter("--exclude-downvoted and --only-upvoted are mutually exclusive (a net-positive set never overlaps a net-negative set)")
+    if only_upvoted and excl_ids:
+        # An upvoted allowlist combined with an explicit exclude list is
+        # legitimate: "things I've liked, except this one edition". Allow it.
+        pass
     if exclude_downvoted:
         from clawhum_library.feedback import read_feedback
         s_fb = get_settings()
@@ -304,6 +340,24 @@ def match(
             # explicit ids still get whitespace-trimmed there.
             excl_ids = excl_ids | dv_ids
             exclude_track = list((exclude_track or [])) + sorted(dv_ids - {t.strip() for t in (exclude_track or []) if t and t.strip()})
+    if only_upvoted:
+        from clawhum_library.feedback import read_feedback
+        s_fb = get_settings()
+        uv_ids = _upvoted_track_ids(read_feedback(s_fb.feedback_path))
+        # Union with any user-supplied --only-track ids so the downstream
+        # filter and fetch_k accounting see one combined allowlist.
+        # If the user passed no --only-track and there are no up-voted tracks
+        # yet, fall through to an empty allowlist so the filter produces an
+        # empty result rather than silently returning the full top-K (which
+        # would defeat the point of --only-upvoted).
+        new_only = sorted(uv_ids - only_ids)
+        only_ids = only_ids | uv_ids
+        only_track = list((only_track or [])) + new_only
+        if not only_ids:
+            # Sentinel: a value that will never match any real track id, so the
+            # filter returns empty instead of being a no-op.
+            only_ids = {"__clawhum_no_upvoted_tracks__"}
+            only_track = ["__clawhum_no_upvoted_tracks__"]
 
     if min_results is not None and min_results < 1:
         raise typer.BadParameter("--min-results must be a positive integer")
