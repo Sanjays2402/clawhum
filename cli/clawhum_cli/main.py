@@ -776,6 +776,12 @@ def feedback_delete(
         "--backup-overwrite",
         help="Allow --backup to overwrite an existing file. Off by default so a re-run of the same purge does not silently clobber the prior backup.",
     ),
+    fail_on_empty: bool = typer.Option(
+        False,
+        "--fail-on-empty",
+        "-E",
+        help="Exit non-zero (code 2) when no feedback rows match the filters (nothing to delete). Useful in scheduled cleanup jobs so a purge that silently finds zero matches (e.g. filter typo, schema drift, or a denylist that already wiped the rows) does not look like a successful no-op. Honoured for --dry-run too. Mirrors --fail-on-empty on feedback-list / feedback-stats.",
+    ),
 ):
     """Delete recorded feedback rows (undo a misclicked vote, or age out old data).
 
@@ -886,6 +892,8 @@ def feedback_delete(
             resolved_track_ids.add(tid)
         if not resolved_track_ids:
             console.print("[dim]no matching feedback entries[/dim]")
+            if fail_on_empty:
+                raise typer.Exit(code=2)
             return
     # --exclude-artist resolves to a set of track ids whose artist is on the
     # denylist; we union that into excluded_track_set so the existing filter
@@ -903,6 +911,8 @@ def feedback_delete(
         orphan_ids.discard("")
         if not orphan_ids:
             console.print("[dim]no matching feedback entries[/dim]")
+            if fail_on_empty:
+                raise typer.Exit(code=2)
             return
         resolved_track_ids = orphan_ids
     # If the user supplied both --track-id and a resolver-based allowlist
@@ -912,6 +922,8 @@ def feedback_delete(
         effective_track_ids: set[str] | None = track_id_set & resolved_track_ids
         if not effective_track_ids:
             console.print("[dim]no matching feedback entries[/dim]")
+            if fail_on_empty:
+                raise typer.Exit(code=2)
             return
     elif track_id_set:
         effective_track_ids = track_id_set
@@ -930,6 +942,8 @@ def feedback_delete(
     )
     if not matches:
         console.print("[dim]no matching feedback entries[/dim]")
+        if fail_on_empty:
+            raise typer.Exit(code=2)
         return
     if backup is not None:
         if backup.exists() and not backup_overwrite:
