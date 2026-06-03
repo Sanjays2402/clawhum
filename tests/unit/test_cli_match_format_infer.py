@@ -46,6 +46,21 @@ def test_output_unknown_extension_falls_back_to_csv():
     assert _resolve_output_format(None, False, Path("hits")) == "csv"
 
 
+def test_output_jsonl_extension_infers_jsonl():
+    # .jsonl and .ndjson are the canonical newline-delimited JSON suffixes;
+    # users piping into jq / Spark / BigQuery expect one object per line.
+    assert _resolve_output_format(None, False, Path("out/hits.jsonl")) == "jsonl"
+    assert _resolve_output_format(None, False, Path("out/hits.ndjson")) == "jsonl"
+
+
+def test_explicit_jsonl_format_accepted():
+    assert _resolve_output_format("jsonl", False, None) == "jsonl"
+    assert _resolve_output_format("JSONL", False, None) == "jsonl"
+    # Explicit format wins over a mismatched output extension.
+    assert _resolve_output_format("jsonl", False, Path("hits.csv")) == "jsonl"
+    assert _resolve_output_format("csv", False, Path("hits.jsonl")) == "csv"
+
+
 def test_explicit_format_overrides_output_extension():
     # If the user explicitly asks for json, honor it even when the file ends in .csv.
     assert _resolve_output_format("json", False, Path("hits.csv")) == "json"

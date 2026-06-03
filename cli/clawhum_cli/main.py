@@ -261,18 +261,21 @@ def _resolve_output_format(fmt: str | None, json_out: bool = False, output: Path
     Precedence: --json shortcut > explicit --format > inferred from --output
     extension > stdout default (table). When an explicit --format=table is
     paired with --output we downgrade to csv since rich tables do not
-    round-trip cleanly to disk.
+    round-trip cleanly to disk. The `jsonl` format emits one JSON object per
+    line so output streams cleanly into jq/Spark/BigQuery loaders.
     """
     chosen = fmt.lower() if fmt else None
     if json_out:
         chosen = "json"
-    if chosen is not None and chosen not in {"table", "json", "csv"}:
-        raise typer.BadParameter("--format must be one of: table, json, csv")
+    if chosen is not None and chosen not in {"table", "json", "jsonl", "csv"}:
+        raise typer.BadParameter("--format must be one of: table, json, jsonl, csv")
     if chosen is None:
         if output is not None:
             suffix = output.suffix.lower()
             if suffix == ".json":
                 return "json"
+            if suffix in {".jsonl", ".ndjson"}:
+                return "jsonl"
             if suffix in {".csv", ".tsv", ".txt"}:
                 return "csv"
             # Unknown extension going to a file: fall back to csv rather than
@@ -291,7 +294,7 @@ def match(
     threshold: float = typer.Option(0.0, "--threshold", "-t"),
     no_clap: bool = typer.Option(False, "--no-clap"),
     json_out: bool = typer.Option(False, "--json", help="Emit JSON (shortcut for --format json)."),
-    fmt: str | None = typer.Option(None, "--format", "-f", help="Output format: table, json, csv. Defaults to table on stdout, or inferred from --output extension (.json/.csv) when writing to a file."),
+    fmt: str | None = typer.Option(None, "--format", "-f", help="Output format: table, json, jsonl, csv. Defaults to table on stdout, or inferred from --output extension (.json/.jsonl/.ndjson/.csv) when writing to a file."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write results to file instead of stdout."),
     exclude_track: list[str] = typer.Option(
         None,
@@ -538,6 +541,18 @@ def match(
             console.print(f"[green]wrote {len(results)} match(es) to {output} (query_id={query_id})[/green]")
         else:
             console.print_json(payload)
+        if _under_min_results():
+            raise typer.Exit(code=2)
+        return
+    if chosen == "jsonl":
+        rows = _results_as_dicts(results, query_id=query_id)
+        payload = "".join(json.dumps(r) + "\n" for r in rows)
+        if output is not None:
+            output.write_text(payload, encoding="utf-8")
+            console.print(f"[green]wrote {len(results)} match(es) to {output} (query_id={query_id})[/green]")
+        else:
+            sys.stdout.write(payload)
+            sys.stdout.flush()
         if _under_min_results():
             raise typer.Exit(code=2)
         return
@@ -1197,7 +1212,7 @@ def feedback_list(
         file_okay=True,
         help="Load --only-artist names from a newline-delimited file (blank lines and lines starting with '#' are ignored). Unions with any --only-artist values. Useful when the allowlist outgrows the command line (e.g. a saved set of favourite artists piped into a scheduled feedback-list run) and the same list is reused across many invocations.",
     ),
-    fmt: str | None = typer.Option(None, "--format", "-f", help="Output format: table, json, csv. Defaults to table on stdout, or inferred from --output extension (.json/.csv) when writing to a file."),
+    fmt: str | None = typer.Option(None, "--format", "-f", help="Output format: table, json, jsonl, csv. Defaults to table on stdout, or inferred from --output extension (.json/.jsonl/.ndjson/.csv) when writing to a file."),
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
     orphaned: bool = typer.Option(False, "--orphaned", help="Only show entries whose track_id is no longer in the indexed library. Useful after pruning the library to find stale votes to delete with feedback-delete."),
     in_index: bool = typer.Option(False, "--in-index", help="Only show entries whose track_id is still present in the indexed library. Skips orphaned feedback so the list reflects the live catalog."),
@@ -1364,6 +1379,17 @@ def feedback_list(
             console.print(f"[green]wrote {len(rows)} entry(s) to {output}[/green]")
         else:
             console.print_json(payload)
+        if fail_on_empty and not rows:
+            raise typer.Exit(code=2)
+        return
+    if chosen == "jsonl":
+        payload = "".join(json.dumps(r) + "\n" for r in rows)
+        if output is not None:
+            output.write_text(payload, encoding="utf-8")
+            console.print(f"[green]wrote {len(rows)} entry(s) to {output}[/green]")
+        else:
+            sys.stdout.write(payload)
+            sys.stdout.flush()
         if fail_on_empty and not rows:
             raise typer.Exit(code=2)
         return
@@ -1668,7 +1694,7 @@ def feedback_stats(
     enrich: bool = typer.Option(False, "--enrich", help="Join with the indexed library to add title/artist columns. Unknown tracks show blank values."),
     orphaned: bool = typer.Option(False, "--orphaned", help="Only show tracks with feedback that are no longer in the indexed library. Useful after pruning the library to find stale feedback to delete."),
     in_index: bool = typer.Option(False, "--in-index", help="Only show tracks that are still present in the indexed library. Skips orphaned feedback so stats reflect the live catalog."),
-    fmt: str | None = typer.Option(None, "--format", "-f", help="Output format: table, json, csv. Defaults to table on stdout, or inferred from --output extension (.json/.csv) when writing to a file."),
+    fmt: str | None = typer.Option(None, "--format", "-f", help="Output format: table, json, jsonl, csv. Defaults to table on stdout, or inferred from --output extension (.json/.jsonl/.ndjson/.csv) when writing to a file."),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write to file instead of stdout."),
     fail_on_empty: bool = typer.Option(
         False,
@@ -1885,6 +1911,17 @@ def feedback_stats(
             console.print(f"[green]wrote {len(stats)} row(s) to {output}[/green]")
         else:
             console.print_json(payload)
+        if fail_on_empty and not stats:
+            raise typer.Exit(code=2)
+        return
+    if chosen == "jsonl":
+        payload = "".join(json.dumps(r) + "\n" for r in stats)
+        if output is not None:
+            output.write_text(payload, encoding="utf-8")
+            console.print(f"[green]wrote {len(stats)} row(s) to {output}[/green]")
+        else:
+            sys.stdout.write(payload)
+            sys.stdout.flush()
         if fail_on_empty and not stats:
             raise typer.Exit(code=2)
         return
