@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM nvidia/cuda:13.2.1-cudnn-runtime-ubuntu22.04
+FROM nvidia/cuda:13.3.0-cudnn-runtime-ubuntu22.04
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 python3-pip libsndfile1 ffmpeg tini && rm -rf /var/lib/apt/lists/*
