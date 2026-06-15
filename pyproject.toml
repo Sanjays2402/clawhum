@@ -39,7 +39,7 @@ sentry = [
   "sentry-sdk[fastapi]>=2.62.0",
 ]
 dev = [
-  "pytest>=9.0.3",
+  "pytest>=9.1.0",
   "pytest-asyncio>=1.4.0",
   "pytest-cov>=5.0",
   "ruff>=0.15.16",
