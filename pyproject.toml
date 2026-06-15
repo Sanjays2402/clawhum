@@ -21,7 +21,7 @@ dependencies = [
   "soundfile>=0.14.0",
   "httpx>=0.28.1",
   "tenacity>=9.1.4",
-  "faiss-cpu>=1.14.2 ; platform_system != 'Darwin' or platform_machine != 'arm64'",
+  "faiss-cpu>=1.14.3 ; platform_system != 'Darwin' or platform_machine != 'arm64'",
   "opentelemetry-api>=1.42.1",
   "opentelemetry-sdk>=1.42.1",
   "opentelemetry-instrumentation-fastapi>=0.63b1",
