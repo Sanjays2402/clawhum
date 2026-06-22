@@ -36,7 +36,7 @@ ml = [
   "accelerate>=1.14.0",
 ]
 sentry = [
-  "sentry-sdk[fastapi]>=2.62.0",
+  "sentry-sdk[fastapi]>=2.63.0",
 ]
 dev = [
   "pytest>=9.1.0",
@@ -45,7 +45,7 @@ dev = [
   "ruff>=0.15.17",
   "mypy>=2.1.0",
   "httpx>=0.28.1",
-  "sentry-sdk[fastapi]>=2.62.0",
+  "sentry-sdk[fastapi]>=2.63.0",
 ]
 
 [project.scripts]
