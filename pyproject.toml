@@ -43,7 +43,7 @@ dev = [
   "pytest-asyncio>=1.4.0",
   "pytest-cov>=7.1.0",
   "ruff>=0.15.20",
-  "mypy>=2.1.0",
+  "mypy>=2.3.0",
   "httpx>=0.28.1",
   "sentry-sdk[fastapi]>=2.64.0",
 ]
